@@ -25,7 +25,7 @@ impl<Data: Differentiable> Operation<Data> for Mul {
         values[self.left.index()].clone() * values[self.right.index()].clone()
     }
 
-    fn backward(&self, values: &[Data], gradient: &Data, gradients: &mut [Data]) {
+    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
         let left = self.left.index();
         let right = self.right.index();
         gradients[left] = gradients[left].clone() + gradient.clone() * values[right].clone();

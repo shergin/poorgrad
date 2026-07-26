@@ -1,8 +1,8 @@
-use crate::{Differentiable, ValueId};
+use crate::{Differentiable, Elementary, ValueId};
 
 use static_assertions::assert_impl_all;
 
-use super::{Add, Leaf, Mul, Neg, Operation, Parameter};
+use super::{Add, Leaf, Mul, Neg, Operation, Parameter, Tanh};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -22,6 +22,7 @@ pub(crate) enum Function<Data> {
     Add(Add),
     Mul(Mul),
     Neg(Neg),
+    Tanh(Tanh),
 }
 
 impl<Data> Function<Data> {
@@ -50,6 +51,11 @@ impl<Data> Function<Data> {
         Function::Neg(Neg { operand })
     }
 
+    /// Creates the hyperbolic tangent of `operand`.
+    pub(crate) fn tanh(operand: ValueId) -> Self {
+        Function::Tanh(Tanh { operand })
+    }
+
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, visitor: impl FnMut(ValueId)) {
         match self {
@@ -58,6 +64,7 @@ impl<Data> Function<Data> {
             Function::Add(add) => add.visit_operands(visitor),
             Function::Mul(mul) => mul.visit_operands(visitor),
             Function::Neg(neg) => neg.visit_operands(visitor),
+            Function::Tanh(tanh) => tanh.visit_operands(visitor),
         }
     }
 
@@ -82,8 +89,10 @@ impl<Data> Function<Data> {
 
 /// It hand-rolls the delegation an enum-dispatch macro would generate: a
 /// plain `match` per method. Exhaustiveness makes adding a variant a
-/// compile error until every method handles it.
-impl<Data: Differentiable> Operation<Data> for Function<Data> {
+/// compile error until every method handles it. The bound is `Elementary`
+/// rather than `Differentiable` because the transcendental variants need
+/// it; building and updating graphs stays arithmetic-only.
+impl<Data: Elementary> Operation<Data> for Function<Data> {
     fn forward(&self, values: &[Data]) -> Data {
         match self {
             Function::Leaf(leaf) => leaf.forward(values),
@@ -91,16 +100,20 @@ impl<Data: Differentiable> Operation<Data> for Function<Data> {
             Function::Add(add) => add.forward(values),
             Function::Mul(mul) => mul.forward(values),
             Function::Neg(neg) => neg.forward(values),
+            Function::Tanh(tanh) => tanh.forward(values),
         }
     }
 
-    fn backward(&self, values: &[Data], gradient: &Data, gradients: &mut [Data]) {
+    fn backward(&self, values: &[Data], output: &Data, gradient: &Data, gradients: &mut [Data]) {
         match self {
-            Function::Leaf(leaf) => leaf.backward(values, gradient, gradients),
-            Function::Parameter(parameter) => parameter.backward(values, gradient, gradients),
-            Function::Add(add) => add.backward(values, gradient, gradients),
-            Function::Mul(mul) => mul.backward(values, gradient, gradients),
-            Function::Neg(neg) => neg.backward(values, gradient, gradients),
+            Function::Leaf(leaf) => leaf.backward(values, output, gradient, gradients),
+            Function::Parameter(parameter) => {
+                parameter.backward(values, output, gradient, gradients)
+            }
+            Function::Add(add) => add.backward(values, output, gradient, gradients),
+            Function::Mul(mul) => mul.backward(values, output, gradient, gradients),
+            Function::Neg(neg) => neg.backward(values, output, gradient, gradients),
+            Function::Tanh(tanh) => tanh.backward(values, output, gradient, gradients),
         }
     }
 }

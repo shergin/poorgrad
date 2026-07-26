@@ -21,5 +21,12 @@ impl<Data: Differentiable> Operation<Data> for Parameter<Data> {
         self.0.clone()
     }
 
-    fn backward(&self, _values: &[Data], _gradient: &Data, _gradients: &mut [Data]) {}
+    fn backward(
+        &self,
+        _values: &[Data],
+        _output: &Data,
+        _gradient: &Data,
+        _gradients: &mut [Data],
+    ) {
+    }
 }

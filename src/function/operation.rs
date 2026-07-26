@@ -13,6 +13,7 @@ pub(crate) trait Operation<Data: Differentiable> {
     /// Computes this node's payload from the values of earlier nodes.
     fn forward(&self, values: &[Data]) -> Data;
 
-    /// Accumulates operand gradients, given this node's own `gradient`.
-    fn backward(&self, values: &[Data], gradient: &Data, gradients: &mut [Data]);
+    /// Accumulates operand gradients, given this node's computed
+    /// `output` payload and its own `gradient`.
+    fn backward(&self, values: &[Data], output: &Data, gradient: &Data, gradients: &mut [Data]);
 }

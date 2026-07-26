@@ -20,5 +20,12 @@ impl<Data: Differentiable> Operation<Data> for Leaf<Data> {
         self.0.clone()
     }
 
-    fn backward(&self, _values: &[Data], _gradient: &Data, _gradients: &mut [Data]) {}
+    fn backward(
+        &self,
+        _values: &[Data],
+        _output: &Data,
+        _gradient: &Data,
+        _gradients: &mut [Data],
+    ) {
+    }
 }

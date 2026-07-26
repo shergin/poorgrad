@@ -23,7 +23,7 @@ impl<Data: Differentiable> Operation<Data> for Neg {
         -values[self.operand.index()].clone()
     }
 
-    fn backward(&self, _values: &[Data], gradient: &Data, gradients: &mut [Data]) {
+    fn backward(&self, _values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
         let operand = self.operand.index();
         gradients[operand] = gradients[operand].clone() + -gradient.clone();
     }

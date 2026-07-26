@@ -74,7 +74,7 @@ fn main() {
                 let loss = network.resolve(loss_symbol).expect("loss is recorded");
                 let evaluation = network.forward();
                 let gradients = network.backward(&evaluation, loss);
-                network = network.updated(&gradients, |parameter, gradient| {
+                network = network.updated(gradients.as_field(), |parameter, gradient| {
                     parameter - learning_rate * gradient
                 });
             }

@@ -1,6 +1,6 @@
 use std::thread;
 
-use crate::Function;
+use crate::{Field, Function};
 
 use super::Network;
 
@@ -132,6 +132,20 @@ fn backward_routes_negation() {
 }
 
 #[test]
+fn tanh_routes_gradient_through_its_output() {
+    let network = Network::new();
+    let x = network.leaf(0.5_f64);
+    let y = x.tanh();
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(y), 0.5_f64.tanh());
+
+    let gradients = network.backward(&evaluation, y);
+    let expected = 1.0 - 0.5_f64.tanh().powi(2);
+    assert!((gradients.of(x) - expected).abs() < 1e-12);
+}
+
+#[test]
 #[should_panic(expected = "stale")]
 fn backward_rejects_stale_evaluation() {
     let network = Network::new();
@@ -182,7 +196,9 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
 
     let evaluation = network.forward();
     let gradients = network.backward(&evaluation, y);
-    let updated = network.updated(&gradients, |parameter, gradient| parameter - gradient);
+    let updated = network.updated(gradients.as_field(), |parameter, gradient| {
+        parameter - gradient
+    });
 
     assert_eq!(updated.len(), network.len());
     // The gradient of `y` with respect to `w` is `x`, so the parameter
@@ -210,11 +226,44 @@ fn gradient_descent_converges() {
         let loss = network.resolve(loss_symbol).unwrap();
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
-        network = network.updated(&gradients, |parameter, gradient| parameter - 0.3 * gradient);
+        network = network.updated(gradients.as_field(), |parameter, gradient| {
+            parameter - 0.3 * gradient
+        });
     }
 
     let learned = network.resolve(w_symbol).unwrap().data().unwrap();
     assert!((learned - 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn momentum_descent_converges() {
+    // Minimizes `(w - 3)^2` with heavy-ball momentum, the velocity kept
+    // as a field carried across generations.
+    let network = Network::new();
+    let w = network.parameter(0.0_f64);
+    let target = network.leaf(3.0);
+    let error = w + -target;
+    let loss = error * error;
+
+    let w_symbol = w.symbol();
+    let loss_symbol = loss.symbol();
+
+    let mut network = network;
+    let mut velocity: Option<Field<f64>> = None;
+    for _ in 0..40 {
+        let loss = network.resolve(loss_symbol).unwrap();
+        let evaluation = network.forward();
+        let gradients = network.backward(&evaluation, loss);
+        let step = match velocity {
+            Some(previous) => previous.scaled(0.5) + gradients.into_field(),
+            None => gradients.into_field(),
+        };
+        network = network.updated(&step, |parameter, direction| parameter - 0.1 * direction);
+        velocity = Some(step);
+    }
+
+    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    assert!((learned - 3.0).abs() < 1e-3);
 }
 
 #[test]
@@ -225,7 +274,9 @@ fn updated_rejects_stale_gradients() {
     let evaluation = network.forward();
     let gradients = network.backward(&evaluation, w);
     network.leaf(2.0);
-    network.updated(&gradients, |parameter, _gradient| parameter.clone());
+    network.updated(gradients.as_field(), |parameter, _gradient| {
+        parameter.clone()
+    });
 }
 
 #[test]
@@ -236,7 +287,9 @@ fn updated_rejects_foreign_gradients() {
     let evaluation = first.forward();
     let gradients = first.backward(&evaluation, w);
     let second = Network::<f64>::new();
-    second.updated(&gradients, |parameter, _gradient| parameter.clone());
+    second.updated(gradients.as_field(), |parameter, _gradient| {
+        parameter.clone()
+    });
 }
 
 #[test]

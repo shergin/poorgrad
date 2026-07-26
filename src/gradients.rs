@@ -1,50 +1,46 @@
-use std::ptr;
-
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Tape, Value};
+use super::{Differentiable, Field, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
-assert_impl_all!(Gradients<'static, f64>: Send, Sync);
+assert_impl_all!(Gradients<f64>: Send, Sync);
 
 /// The gradients of one backward run over a `Network`.
 ///
-/// It holds the derivative of the run's output with respect to every node,
-/// produced into per-run storage so the network itself stays untouched. It
-/// borrows the network it was computed from and is read back with the same
-/// `Value` proxies that built the graph.
-#[derive(Debug)]
-pub struct Gradients<'network, Data> {
-    tape: &'network Tape<Data>,
-    gradients: Vec<Data>,
+/// It holds the derivative of the run's target with respect to every node:
+/// the gradient role of a `Field`. Read it per value with `of`, or enter
+/// the field algebra with `as_field`/`into_field` to combine gradients
+/// across runs and build update directions such as a momentum velocity.
+/// Like every field it is tied to a network lineage rather than to a
+/// single generation, so it carries no borrow of the network that
+/// produced it.
+#[derive(Debug, Clone)]
+pub struct Gradients<Data> {
+    field: Field<Data>,
 }
 
-impl<'network, Data: Differentiable> Gradients<'network, Data> {
-    pub(crate) fn new(tape: &'network Tape<Data>, gradients: Vec<Data>) -> Self {
-        Self { tape, gradients }
+impl<Data: Differentiable> Gradients<Data> {
+    pub(crate) fn new(field: Field<Data>) -> Self {
+        Self { field }
     }
 
-    pub(crate) fn tape(&self) -> &'network Tape<Data> {
-        self.tape
-    }
-
-    pub(crate) fn as_slice(&self) -> &[Data] {
-        &self.gradients
-    }
-
-    /// Returns the gradient of the run's output with respect to `value`.
+    /// Returns the gradient of the run's target with respect to `value`.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different network or was allocated
-    /// after the underlying evaluation ran.
+    /// Panics if `value` belongs to a different lineage or was allocated
+    /// after this backward run.
     pub fn of(&self, value: Value<'_, Data>) -> &Data {
-        assert!(
-            ptr::eq(self.tape, value.tape()),
-            "value belongs to a different network"
-        );
-        self.gradients
-            .get(value.id().index())
-            .expect("value was allocated after the underlying evaluation ran")
+        self.field.of(value)
+    }
+
+    /// Returns the underlying value-aligned field.
+    pub fn as_field(&self) -> &Field<Data> {
+        &self.field
+    }
+
+    /// Converts into the underlying value-aligned field.
+    pub fn into_field(self) -> Field<Data> {
+        self.field
     }
 }

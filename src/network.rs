@@ -2,7 +2,10 @@ use std::ptr;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Evaluation, Function, Gradients, Operation, Symbol, Tape, Value};
+use super::{
+    Differentiable, Elementary, Evaluation, Field, Function, Gradients, Operation, Symbol, Tape,
+    Value,
+};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
@@ -75,6 +78,36 @@ impl<Data: Differentiable> Network<Data> {
         self.len() == 0
     }
 
+    /// Returns a new network generation with every parameter's payload
+    /// replaced by `update(current, direction)`.
+    ///
+    /// It is the training-step state transition, and `direction` is any
+    /// field over this network's lineage: a raw gradient buffer via
+    /// `Gradients::as_field`, or a derived update direction such as a
+    /// momentum velocity. The new generation shares every node except the
+    /// parameters, positions stay stable (so every `Symbol` keeps
+    /// resolving), and the old generation stays fully usable with its own
+    /// proxies and runs. The update scans the tape once and allocates only
+    /// the replaced parameters.
+    ///
+    /// # Panics
+    /// Panics if `direction` belongs to a different network lineage or is
+    /// stale.
+    pub fn updated(&self, direction: &Field<Data>, update: impl Fn(&Data, &Data) -> Data) -> Self {
+        assert!(
+            direction.lineage().is_same(self.tape.lineage()),
+            "field belongs to a different network lineage"
+        );
+        Self {
+            tape: self.tape.updated(direction.as_slice(), update),
+        }
+    }
+}
+
+// Running the tape requires the full payload contract (`Elementary`, for
+// the transcendental operations), while building and updating the graph
+// needs only arithmetic.
+impl<Data: Elementary> Network<Data> {
     /// Evaluates every node in allocation order, materializing the payload
     /// of each value into a fresh `Evaluation`.
     ///
@@ -105,11 +138,11 @@ impl<Data: Differentiable> Network<Data> {
     /// # Panics
     /// Panics if `evaluation` or `output` belongs to a different network,
     /// or if the network has grown since `evaluation` ran.
-    pub fn backward<'network>(
-        &'network self,
+    pub fn backward(
+        &self,
         evaluation: &Evaluation<'_, Data>,
         output: Value<'_, Data>,
-    ) -> Gradients<'network, Data> {
+    ) -> Gradients<Data> {
         assert!(
             ptr::eq(evaluation.tape(), &self.tape),
             "evaluation belongs to a different network"
@@ -132,34 +165,9 @@ impl<Data: Differentiable> Network<Data> {
         for index in (0..nodes.len()).rev() {
             let function = nodes.get(index).expect("snapshot cannot shrink");
             let gradient = gradients[index].clone();
-            function.backward(values, &gradient, &mut gradients);
+            function.backward(values, &values[index], &gradient, &mut gradients);
         }
-        Gradients::new(&self.tape, gradients)
-    }
-
-    /// Returns a new network generation with every parameter's payload
-    /// replaced by `update(current, gradient)`.
-    ///
-    /// It is the training-step state transition: the new generation shares
-    /// every node except the parameters, positions stay stable (so every
-    /// `Symbol` keeps resolving), and the old generation stays fully usable
-    /// with its own proxies and runs. The update scans the tape once and
-    /// allocates only the replaced parameters.
-    ///
-    /// # Panics
-    /// Panics if `gradients` belongs to a different network or is stale.
-    pub fn updated(
-        &self,
-        gradients: &Gradients<'_, Data>,
-        update: impl Fn(&Data, &Data) -> Data,
-    ) -> Self {
-        assert!(
-            ptr::eq(gradients.tape(), &self.tape),
-            "gradients belong to a different network"
-        );
-        Self {
-            tape: self.tape.updated(gradients.as_slice(), update),
-        }
+        Gradients::new(Field::new(self.tape.lineage().clone(), gradients))
     }
 }
 

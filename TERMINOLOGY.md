@@ -71,8 +71,10 @@ changes once recorded.
 operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
 [`Operation`](src/function/operation.rs) trait, implemented by each
-`Function` variant (`Leaf`, `Parameter`, `Add`, `Mul`, `Neg` under
+`Function` variant (`Leaf`, `Parameter`, `Add`, `Mul`, `Neg`, `Tanh` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
+Arithmetic variants need only `Differentiable`; the transcendental ones
+raise the bound of running (not building) a graph to `Elementary`.
 
 **Leaf.** A node with no operands: an input or constant supplied at
 recording time. Gradients stop there and get read out; its `backward` is a
@@ -120,8 +122,25 @@ snapshot isolation.
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
 are per-run buffers read back with the same proxies that built the graph:
-[`Evaluation`](src/evaluation.rs) (a payload per node) and
-[`Gradients`](src/gradients.rs) (a gradient per node, for one target).
+[`Evaluation`](src/evaluation.rs) (a payload per node, generation-pinned)
+and [`Gradients`](src/gradients.rs) (a gradient per node, for one target;
+convertible into a `Field` for combination and optimizer state).
+
+**Field.** A value-aligned buffer: one payload per node, tied to a network
+*lineage* rather than to a single generation, so it can be combined across
+runs (averaging data-parallel gradients) and carried across generations
+(momentum velocity, Adam moments). Supports elementwise algebra — `+`,
+`scaled`, `zip`, `map` — with kinship (same lineage, same length) checked
+on every combination; `Network::updated` takes any field as its update
+direction. In physics terms, a `Gradients` is a discrete gradient field
+over the graph. In poorgrad: [`Field`](src/field.rs).
+
+**Lineage.** The family of networks descending from a common origin
+through forks and updates. Positions are stable within a lineage, which is
+what makes symbols resolve and fields combine across generations. Tracked
+by an opaque token cloned through every transition; kinship is token
+identity. In poorgrad: the crate-internal `Lineage` in
+[`src/tape.rs`](src/tape.rs).
 
 **Payload (`Data`).** The numeric value a node carries: `f32`/`f64` today,
 tensors later. Its contract is the
@@ -138,6 +157,29 @@ inside `Tape`.
 **Fork.** An O(1) copy of a network sharing the underlying arena but owning
 an independent node list; later recordings on either side never affect the
 other. In poorgrad: `Network::clone`, built on [`Tape::fork`](src/tape.rs).
+
+## Neural building blocks
+
+**Neuron.** The smallest learnable unit: a weighted sum of inputs plus a
+bias, passed through an activation —
+`activation(weights . inputs + bias)`. Its parameters are allocated on a
+network at construction but held as symbols, so the neuron itself is
+detached: it survives generations, and `express` records its expression
+against whichever generation it is given. In poorgrad:
+[`Neuron`](src/neuron.rs).
+
+**Layer.** A row of neurons sharing the same inputs: a dense (fully
+connected) layer computing one output per neuron. Layers chain by feeding
+one layer's outputs to the next as inputs. Detached like its neurons —
+parameters live on the network, symbols in the layer. In poorgrad:
+[`Layer`](src/layer.rs).
+
+**Activation.** The nonlinearity applied to a neuron's weighted sum, which
+is what gives stacked neurons expressive power beyond affine maps. It is a
+graph operation like any other, so it participates in differentiation
+(`Function::Tanh`, recorded by `Value::tanh`; the derivative
+`1 - tanh(x)^2` reuses the node's own output). In poorgrad: the
+[`Activation`](src/neuron.rs) enum selecting `Identity` or `Tanh`.
 
 ## Further reading
 

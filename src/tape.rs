@@ -1,4 +1,4 @@
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use cow_vec::CowVec;
 
@@ -9,6 +9,31 @@ use super::{Differentiable, Function, ValueId};
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
 assert_impl_all!(Tape<f64>: Send, Sync);
+
+// Compile-time thread-safety contract; the anchor rationale is documented
+// in `network.rs`. The token is what lets fields cross threads detached
+// from any network, so its thread-safety is load-bearing on its own.
+assert_impl_all!(Lineage: Send, Sync);
+
+/// An opaque token identifying a family of related tapes.
+///
+/// Every fork and update clones the token, so two tapes share a lineage
+/// exactly when they descend from a common origin; kinship is pointer
+/// identity of the token. Positions are stable within a lineage, which is
+/// what lets symbols resolve and fields combine across generations.
+#[derive(Debug, Clone)]
+pub(crate) struct Lineage(Arc<()>);
+
+impl Lineage {
+    fn new() -> Self {
+        Self(Arc::new(()))
+    }
+
+    /// Returns `true` if `self` and `other` identify the same lineage.
+    pub(crate) fn is_same(&self, other: &Lineage) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
 
 /// The shared, append-only record of every node of one computation graph.
 ///
@@ -24,6 +49,7 @@ assert_impl_all!(Tape<f64>: Send, Sync);
 #[derive(Debug)]
 pub(crate) struct Tape<Data> {
     nodes: Mutex<CowVec<Function<Data>>>,
+    lineage: Lineage,
 }
 
 impl<Data: Differentiable> Tape<Data> {
@@ -31,7 +57,13 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn new() -> Self {
         Self {
             nodes: Mutex::new(CowVec::new()),
+            lineage: Lineage::new(),
         }
+    }
+
+    /// Returns the token of the lineage this tape belongs to.
+    pub(crate) fn lineage(&self) -> &Lineage {
+        &self.lineage
     }
 
     /// Records `function` and returns its handle.
@@ -82,6 +114,7 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn fork(&self) -> Self {
         Self {
             nodes: Mutex::new(self.snapshot()),
+            lineage: self.lineage.clone(),
         }
     }
 
@@ -103,7 +136,7 @@ impl<Data: Differentiable> Tape<Data> {
         assert_eq!(
             nodes.len(),
             gradients.len(),
-            "gradients are stale: the network has grown since backward ran"
+            "field is stale: the network has grown since it was produced"
         );
         for index in 0..nodes.len() {
             let payload = match nodes
@@ -118,6 +151,7 @@ impl<Data: Differentiable> Tape<Data> {
         }
         Self {
             nodes: Mutex::new(nodes),
+            lineage: self.lineage.clone(),
         }
     }
 

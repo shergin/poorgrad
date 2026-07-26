@@ -5,6 +5,7 @@ mod mul;
 mod neg;
 mod operation;
 mod parameter;
+mod tanh;
 
 pub(crate) use add::Add;
 pub(crate) use function::Function;
@@ -13,3 +14,4 @@ pub(crate) use mul::Mul;
 pub(crate) use neg::Neg;
 pub(crate) use operation::Operation;
 pub(crate) use parameter::Parameter;
+pub(crate) use tanh::Tanh;

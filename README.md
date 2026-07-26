@@ -61,6 +61,11 @@ The core types:
   the per-run results of `forward` and `backward`, read back with the same
   `Value` proxies that built the graph. Runs never mutate the network, so
   any number of them can execute concurrently.
+- [`Field`](src/field.rs) — a value-aligned buffer tied to a network
+  lineage rather than one generation, with elementwise algebra (`+`,
+  `scaled`, `zip`, `map`). Gradients convert into fields to be combined
+  across runs and carried across generations as optimizer state (momentum,
+  Adam); `updated` takes any field as its update direction.
 - [`Tape`](src/tape.rs) — internal: the append-only record (a Wengert list)
   shared by a network and all of its proxies, and the engine's single
   synchronization point.
@@ -68,8 +73,13 @@ The core types:
   the differentiable operations, each variant owning its operand links and
   parameters and implementing the `Operation` trait (forward math and
   gradient routing per operation, dispatched with a plain `match`).
-- [`Neuron`](src/neuron.rs) — the smallest learnable building block
-  (placeholder).
+- [`Neuron`](src/neuron.rs) — the smallest learnable building block:
+  weights and a bias (allocated as parameters, held as symbols so the
+  neuron survives generations) plus an `Activation`; `express` records
+  `activation(weights . inputs + bias)` against a given generation.
+- [`Layer`](src/layer.rs) — a dense row of neurons sharing the same
+  inputs, one output value per neuron; layers chain by feeding one
+  layer's outputs to the next.
 
 ## Terminology
 

@@ -4,7 +4,7 @@ use std::ptr;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Function, Symbol, Tape};
+use super::{Differentiable, Elementary, Function, Symbol, Tape};
 
 // Compile-time contract: proxies stay thread-safe and `Copy`; the anchor
 // rationale is documented in `network.rs`.
@@ -86,6 +86,14 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
             ptr::eq(self.tape, other.tape),
             "values belong to different networks"
         );
+    }
+}
+
+impl<'network, Data: Elementary> Value<'network, Data> {
+    /// Records the hyperbolic tangent of this value on the same network
+    /// and returns a proxy to it.
+    pub fn tanh(self) -> Self {
+        self.apply(Function::tanh(self.id))
     }
 }
 
