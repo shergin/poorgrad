@@ -92,7 +92,8 @@ tensor-native ones raise the bound of running (not building) a graph to
 **Leaf.** A node with no operands: an input or constant supplied at
 recording time. Gradients stop there and get read out; its `backward` is a
 no-op. In poorgrad: `Function::Leaf`, allocated with
-[`Network::leaf`](src/network.rs).
+[`Network::leaf`](src/network.rs); payload literals in expressions
+(`x * 2.0`) record leaves implicitly, one per appearance.
 
 **Parameter.** A trainable leaf: identical to `Leaf` during runs, but
 designated as updatable so a training step knows which leaves to replace.

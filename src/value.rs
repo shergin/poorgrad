@@ -31,7 +31,10 @@ impl ValueId {
 /// view into it that cannot outlive it. Being `Copy`, proxies are never
 /// consumed: arithmetic operators build the graph (`let x = v1 + v2;`
 /// records a new computed node on the same network) while the operands stay
-/// usable for further expressions. Accessors such as `data` briefly take
+/// usable for further expressions. Payload literals mix directly into
+/// expressions (`x * 2.0` on scalar networks, tensor literals on tensor
+/// networks, in either order); each literal appearance records its own
+/// fresh leaf on the same network. Accessors such as `data` briefly take
 /// the tape lock and clone the payload out.
 pub struct Value<'network, Data> {
     tape: &'network Tape<Data>,
@@ -83,6 +86,15 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     fn apply(&self, function: Function<Data>) -> Self {
         let id = self.tape.record(function);
         Self::bind(self.tape, id)
+    }
+
+    /// Records `data` as a fresh leaf on the same network and returns a
+    /// proxy to it.
+    ///
+    /// It backs the payload-literal operator sugar: every literal
+    /// appearance records its own leaf.
+    pub(crate) fn literal(&self, data: Data) -> Self {
+        Self::bind(self.tape, self.tape.record(Function::leaf(data)))
     }
 
     /// Panics if `other` belongs to a different network.
@@ -205,3 +217,81 @@ impl<'network, Data: Differentiable> Neg for Value<'network, Data> {
         self.apply(Function::neg(self.id))
     }
 }
+
+impl<'network, Data: Differentiable> Add<Data> for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn add(self, rhs: Data) -> Self::Output {
+        let literal = self.literal(rhs);
+        self + literal
+    }
+}
+
+impl<'network, Data: Differentiable> Sub<Data> for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn sub(self, rhs: Data) -> Self::Output {
+        let literal = self.literal(rhs);
+        self - literal
+    }
+}
+
+impl<'network, Data: Differentiable> Mul<Data> for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn mul(self, rhs: Data) -> Self::Output {
+        let literal = self.literal(rhs);
+        self * literal
+    }
+}
+
+impl<'network, Data: Differentiable> Div<Data> for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn div(self, rhs: Data) -> Self::Output {
+        let literal = self.literal(rhs);
+        self / literal
+    }
+}
+
+// Coherence forbids the generic reverse (`impl Mul<Value<Data>> for Data`
+// leaves the `Data` parameter uncovered), so the foreign scalar payloads
+// get concrete implementations instead; `Tensor`, being a local type,
+// gets its own generic ones in `tensor.rs`.
+macro_rules! literal_operand_for {
+    ($($payload:ty),*) => {$(
+        impl<'network> Add<Value<'network, $payload>> for $payload {
+            type Output = Value<'network, $payload>;
+
+            fn add(self, rhs: Value<'network, $payload>) -> Self::Output {
+                rhs.literal(self) + rhs
+            }
+        }
+
+        impl<'network> Sub<Value<'network, $payload>> for $payload {
+            type Output = Value<'network, $payload>;
+
+            fn sub(self, rhs: Value<'network, $payload>) -> Self::Output {
+                rhs.literal(self) - rhs
+            }
+        }
+
+        impl<'network> Mul<Value<'network, $payload>> for $payload {
+            type Output = Value<'network, $payload>;
+
+            fn mul(self, rhs: Value<'network, $payload>) -> Self::Output {
+                rhs.literal(self) * rhs
+            }
+        }
+
+        impl<'network> Div<Value<'network, $payload>> for $payload {
+            type Output = Value<'network, $payload>;
+
+            fn div(self, rhs: Value<'network, $payload>) -> Self::Output {
+                rhs.literal(self) / rhs
+            }
+        }
+    )*};
+}
+
+literal_operand_for!(f32, f64);

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Elementary, Shape, Tensorial};
+use super::{Differentiable, Elementary, Shape, Tensorial, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -252,6 +252,40 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             shape: reference.shape.clone(),
             elements: Arc::new(vec![self.elements[0].clone(); reference.elements.len()]),
         }
+    }
+}
+
+// `Tensor` is a local type, so unlike the foreign scalars in `value.rs`
+// it gets the reversed literal operators generically.
+impl<'network, Element: Differentiable> Add<Value<'network, Tensor<Element>>> for Tensor<Element> {
+    type Output = Value<'network, Tensor<Element>>;
+
+    fn add(self, rhs: Value<'network, Tensor<Element>>) -> Self::Output {
+        rhs.literal(self) + rhs
+    }
+}
+
+impl<'network, Element: Differentiable> Sub<Value<'network, Tensor<Element>>> for Tensor<Element> {
+    type Output = Value<'network, Tensor<Element>>;
+
+    fn sub(self, rhs: Value<'network, Tensor<Element>>) -> Self::Output {
+        rhs.literal(self) - rhs
+    }
+}
+
+impl<'network, Element: Differentiable> Mul<Value<'network, Tensor<Element>>> for Tensor<Element> {
+    type Output = Value<'network, Tensor<Element>>;
+
+    fn mul(self, rhs: Value<'network, Tensor<Element>>) -> Self::Output {
+        rhs.literal(self) * rhs
+    }
+}
+
+impl<'network, Element: Differentiable> Div<Value<'network, Tensor<Element>>> for Tensor<Element> {
+    type Output = Value<'network, Tensor<Element>>;
+
+    fn div(self, rhs: Value<'network, Tensor<Element>>) -> Self::Output {
+        rhs.literal(self) / rhs
     }
 }
 

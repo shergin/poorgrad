@@ -208,6 +208,17 @@ fn linear_regression_trains_in_matrix_form() {
 }
 
 #[test]
+fn tensor_literals_mix_into_expressions() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+
+    let y = Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0);
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.value(y).elements(), &[11.0, 21.0]);
+}
+
+#[test]
 fn shapes_are_known_before_anything_runs() {
     let network = Network::new();
     let x = network.leaf(Tensor::new([3, 2], vec![1.0_f64; 6]));

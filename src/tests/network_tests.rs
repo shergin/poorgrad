@@ -230,6 +230,26 @@ fn backward_rejects_stale_evaluation() {
 }
 
 #[test]
+fn payload_literals_mix_into_expressions() {
+    let network = Network::new();
+    let x = network.leaf(3.0_f64);
+
+    let y = 2.0 * x + 1.0;
+    let z = 6.0 / x;
+
+    // Every literal appearance records its own leaf: x, 2, the product,
+    // 1, the sum, 6, and the quotient.
+    assert_eq!(network.len(), 7);
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(y), 7.0);
+    assert_eq!(*evaluation.value(z), 2.0);
+
+    let gradients = network.backward(&evaluation, y);
+    assert_eq!(*gradients.of(x), 2.0);
+}
+
+#[test]
 fn values_chain_inside_scoped_threads() {
     let network = Network::new();
     let v1 = network.leaf(1.0_f64);
