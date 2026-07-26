@@ -1,44 +1,77 @@
 # poorgrad
 
-**An experiment in what a fully concurrent, thread-safe autograd engine could
-look like in idiomatic Rust.**
+**A fully concurrent, thread-safe scalar autograd engine, written the way
+Rust wants it written.**
 
-`poorgrad` is a small, self-educational scalar automatic differentiation engine,
-loosely inspired by [Karpathy's `micrograd`](https://github.com/karpathy/micrograd).
-It is deliberately experimental: it exists to explore a design question, not to
-be a production framework or to compete with anything.
+`poorgrad` starts where every scalar autograd engine starts — with
+[Karpathy's `micrograd`](https://github.com/karpathy/micrograd) — and then
+takes the road the others don't: no `Rc<RefCell<...>>`, no single-threaded
+assumption, no graph rebuilt on every pass. Sharing a computation graph
+across threads is not a feature bolted on with locks; it is what the types
+guarantee.
 
-## The question
+## The bet
 
-What would a *completely concurrent and thread-safe* autograd library look like
-if it were written the way Rust wants it to be written?
+Most autograd engines are define-by-run: the graph is built dynamically as
+code executes, mutated in place, and single-threaded by assumption.
+`poorgrad` bets the other way — and the bet has landed:
 
-Most autograd engines are define-by-run: the graph is built dynamically as code
-executes, mutated in place, and single-threaded by assumption. `poorgrad` bets
-the other way:
+- **Record once, run anywhere.** Expressions record a static tape;
+  `forward` and `backward` replay an O(1) snapshot of it, so runs never
+  lock the graph and never disturb each other. One shared network serves
+  any number of threads, each differentiating its own target.
+- **Values are `Copy`.** A `Value` is a borrow of its network plus a
+  position: operators never consume their operands, handles cross threads
+  freely, and a value outliving its graph is a compile error, not a bug
+  report. Every type's `Send + Sync` contract is asserted at compile time.
+- **Mutation is a state transition.** A gradient step produces the next
+  network generation in O(parameters): the replaced parameters are freshly
+  allocated, everything else is shared through an append-only arena, and
+  older generations stay fully usable. Snapshot isolation, for networks.
+- **Performance falls out of structure.** One `Mutex` in the entire
+  engine, taken briefly per operation; O(1) forks; not a single line of
+  `unsafe` — and `#![forbid(unsafe_code)]` keeps it a promise, not a
+  claim. CPU-only, on purpose: the engine is the point.
 
-- **Mostly static.** The computation graph is described up front and then
-  executed, rather than rebuilt on every pass. A graph that is known ahead of
-  time is far easier to schedule, parallelize, and optimize.
-- **Completely concurrent and thread-safe.** The graph is safe to share and
-  evaluate across threads by construction, not as an afterthought bolted on with
-  locks.
-- **Hyper-optimized, but idiomatic.** The goal is to be fast *without* leaning on
-  pervasive `unsafe` or un-Rust-like tricks. Arena-backed nodes, copy-on-mutation
-  state, and ownership that models the data flow — performance that falls out of
-  good structure rather than fighting it.
-- **CPU-only.** No GPU, no accelerators. The interesting part is the engine
-  itself.
+## A taste
 
-## The name
+```rust
+use poorgrad::Network;
 
-`poorgrad` is a poor man's autograd — the joke being "no GPU required." That is
-still true, but the real reason it exists is the question above.
+let network = Network::new();
+let w = network.parameter(0.0_f64);
+let x = network.leaf(3.0);
+let y = network.leaf(15.0);
 
-## Status
+// Operators record the graph; values are `Copy` and never consumed.
+let error = w * x + -y;
+let loss = error * error;
+
+let w_symbol = w.symbol();
+let loss_symbol = loss.symbol();
+
+// A training step is a state transition: each generation shares
+// everything but the parameters with the one before it.
+let mut network = network;
+for _ in 0..100 {
+    let loss = network.resolve(loss_symbol).unwrap();
+    let evaluation = network.forward();
+    let gradients = network.backward(&evaluation, loss);
+    network = network.updated(gradients.as_field(), |w, g| w - 0.01 * g);
+}
+
+let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+assert!((learned - 5.0).abs() < 1e-6);
+```
+
+The [threaded example](examples/gradient_descent.rs) goes further:
+per-sample gradients computed on separate rayon threads over one shared
+network, then three learning rates trained in parallel on O(1) forks.
+
+## What's inside
 
 The engine builds, evaluates, differentiates, and trains scalar graphs.
-The core types:
+The complete machinery, from tape to training:
 
 - [`Value`](src/value.rs) — a `Copy` proxy to a value allocated in a
   `Network`, and the only graph handle in the public API. It borrows the
@@ -80,6 +113,11 @@ The core types:
 - [`Layer`](src/layer.rs) — a dense row of neurons sharing the same
   inputs, one output value per neuron; layers chain by feeding one
   layer's outputs to the next.
+
+## The name
+
+A poor man's autograd: no GPU required, none wanted. The name is the only
+modest thing about the design.
 
 ## Terminology
 
