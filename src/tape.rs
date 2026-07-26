@@ -2,7 +2,13 @@ use std::sync::{Mutex, MutexGuard};
 
 use cow_vec::CowVec;
 
+use static_assertions::assert_impl_all;
+
 use super::{Differentiable, Function, ValueId};
+
+// Compile-time thread-safety contract; the anchor rationale is documented
+// in `network.rs`. The tape is the root every other guarantee rests on.
+assert_impl_all!(Tape<f64>: Send, Sync);
 
 /// The shared, append-only record of every node of one computation graph.
 ///
@@ -76,6 +82,42 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn fork(&self) -> Self {
         Self {
             nodes: Mutex::new(self.snapshot()),
+        }
+    }
+
+    /// Returns a new tape with every parameter's payload replaced by
+    /// `update(current, gradient)`.
+    ///
+    /// The new tape shares every node except the parameters, which are
+    /// re-recorded in the shared arena; positions are preserved, so
+    /// symbols keep resolving across the transition.
+    ///
+    /// # Panics
+    /// Panics if `gradients` does not cover the whole tape.
+    pub(crate) fn updated(
+        &self,
+        gradients: &[Data],
+        update: impl Fn(&Data, &Data) -> Data,
+    ) -> Self {
+        let mut nodes = self.snapshot();
+        assert_eq!(
+            nodes.len(),
+            gradients.len(),
+            "gradients are stale: the network has grown since backward ran"
+        );
+        for index in 0..nodes.len() {
+            let payload = match nodes
+                .get(index)
+                .expect("index is in bounds")
+                .parameter_data()
+            {
+                Some(current) => update(current, &gradients[index]),
+                None => continue,
+            };
+            nodes.set(index, Function::parameter(payload));
+        }
+        Self {
+            nodes: Mutex::new(nodes),
         }
     }
 

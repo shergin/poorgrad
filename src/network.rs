@@ -1,6 +1,14 @@
 use std::ptr;
 
-use super::{Differentiable, Evaluation, Function, Gradients, Operation, Tape, Value};
+use static_assertions::assert_impl_all;
+
+use super::{Differentiable, Evaluation, Function, Gradients, Operation, Symbol, Tape, Value};
+
+// Compile-time thread-safety contract. `Differentiable` already requires
+// `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
+// raw pointer) could break sharing across threads; a single concrete anchor
+// is enough to catch that.
+assert_impl_all!(Network<f64>: Send, Sync);
 
 /// A memory management bag owning the state of every value of one
 /// computation graph.
@@ -33,23 +41,28 @@ impl<Data: Differentiable> Network<Data> {
         Value::bind(&self.tape, id)
     }
 
-    /// Returns this network's own proxy for the node behind `value`, or
-    /// `None` if no node with that position is allocated here.
+    /// Allocates a learnable parameter and returns a proxy to it.
     ///
-    /// Proxies borrow the network that created them, so a proxy taken
-    /// before a fork resolves against the original network; `rebind`
-    /// produces the equivalent proxy for this network. It checks only the
-    /// node's position, so `value` is expected to come from this network or
+    /// Parameters behave like leaves during runs; they are the leaves that
+    /// `updated` replaces when a gradient step is applied.
+    pub fn parameter(&self, data: Data) -> Value<'_, Data> {
+        let id = self.tape.record(Function::parameter(data));
+        Value::bind(&self.tape, id)
+    }
+
+    /// Resolves `symbol` in this generation, returning its `Value`, or
+    /// `None` if no value with that name is allocated here.
+    ///
+    /// Proxies borrow the generation that created them, so a proxy taken
+    /// before a fork or an update belongs to the old generation; `resolve`
+    /// produces the equivalent proxy for this one. Resolution is
+    /// positional, so `symbol` is expected to come from this network or
     /// from a network sharing its history.
-    pub fn rebind<'network>(
-        &'network self,
-        value: Value<'_, Data>,
-    ) -> Option<Value<'network, Data>> {
-        let id = value.id();
-        if id.index() >= self.len() {
+    pub fn resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
+        if symbol.0.index() >= self.len() {
             return None;
         }
-        Some(Value::bind(&self.tape, id))
+        Some(Value::bind(&self.tape, symbol.0))
     }
 
     /// Returns the number of allocated values.
@@ -122,6 +135,31 @@ impl<Data: Differentiable> Network<Data> {
             function.backward(values, &gradient, &mut gradients);
         }
         Gradients::new(&self.tape, gradients)
+    }
+
+    /// Returns a new network generation with every parameter's payload
+    /// replaced by `update(current, gradient)`.
+    ///
+    /// It is the training-step state transition: the new generation shares
+    /// every node except the parameters, positions stay stable (so every
+    /// `Symbol` keeps resolving), and the old generation stays fully usable
+    /// with its own proxies and runs. The update scans the tape once and
+    /// allocates only the replaced parameters.
+    ///
+    /// # Panics
+    /// Panics if `gradients` belongs to a different network or is stale.
+    pub fn updated(
+        &self,
+        gradients: &Gradients<'_, Data>,
+        update: impl Fn(&Data, &Data) -> Data,
+    ) -> Self {
+        assert!(
+            ptr::eq(gradients.tape(), &self.tape),
+            "gradients belong to a different network"
+        );
+        Self {
+            tape: self.tape.updated(gradients.as_slice(), update),
+        }
     }
 }
 

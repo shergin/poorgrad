@@ -10,3 +10,7 @@ categories = ["science", "mathematics"]
 
 [dependencies]
 cow_vec = "1.4"
+static_assertions = "1.1"
+
+[dev-dependencies]
+rayon = "1.12.0"

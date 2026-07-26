@@ -2,7 +2,7 @@ use std::thread;
 
 use crate::Function;
 
-use super::{Network, Value};
+use super::Network;
 
 #[test]
 fn new_network_is_empty() {
@@ -12,11 +12,24 @@ fn new_network_is_empty() {
 }
 
 #[test]
-fn rebind_rejects_unallocated_nodes() {
+fn resolve_rejects_unallocated_symbols() {
     let network = Network::<f64>::new();
     let other = Network::new();
     let foreign = other.leaf(1.0);
-    assert!(network.rebind(foreign).is_none());
+    assert!(network.resolve(foreign.symbol()).is_none());
+}
+
+#[test]
+fn parameter_carries_payload_like_a_leaf() {
+    let network = Network::new();
+    let w = network.parameter(1.5_f64);
+    let x = network.leaf(2.0);
+    assert_eq!(w.data(), Some(1.5));
+
+    let y = w * x;
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(y), 3.0);
 }
 
 #[test]
@@ -156,8 +169,74 @@ fn clone_forks_the_network() {
 
     assert_eq!(network.len(), 2);
     assert_eq!(fork.len(), 1);
-    let rebound = fork.rebind(v1).unwrap();
+    let rebound = fork.resolve(v1.symbol()).unwrap();
     assert_eq!(rebound.data(), Some(1.0));
+}
+
+#[test]
+fn updated_replaces_parameters_and_keeps_everything_else() {
+    let network = Network::new();
+    let w = network.parameter(1.0_f64);
+    let x = network.leaf(2.0);
+    let y = w * x;
+
+    let evaluation = network.forward();
+    let gradients = network.backward(&evaluation, y);
+    let updated = network.updated(&gradients, |parameter, gradient| parameter - gradient);
+
+    assert_eq!(updated.len(), network.len());
+    // The gradient of `y` with respect to `w` is `x`, so the parameter
+    // moves from 1 to -1; the plain leaf stays untouched.
+    assert_eq!(updated.resolve(w.symbol()).unwrap().data(), Some(-1.0));
+    assert_eq!(updated.resolve(x.symbol()).unwrap().data(), Some(2.0));
+    // The old generation is untouched as well.
+    assert_eq!(w.data(), Some(1.0));
+}
+
+#[test]
+fn gradient_descent_converges() {
+    // Minimizes `(w - 3)^2` starting from `w = 0`.
+    let network = Network::new();
+    let w = network.parameter(0.0_f64);
+    let target = network.leaf(3.0);
+    let error = w + -target;
+    let loss = error * error;
+
+    let w_symbol = w.symbol();
+    let loss_symbol = loss.symbol();
+
+    let mut network = network;
+    for _ in 0..30 {
+        let loss = network.resolve(loss_symbol).unwrap();
+        let evaluation = network.forward();
+        let gradients = network.backward(&evaluation, loss);
+        network = network.updated(&gradients, |parameter, gradient| parameter - 0.3 * gradient);
+    }
+
+    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    assert!((learned - 3.0).abs() < 1e-6);
+}
+
+#[test]
+#[should_panic(expected = "stale")]
+fn updated_rejects_stale_gradients() {
+    let network = Network::new();
+    let w = network.parameter(1.0_f64);
+    let evaluation = network.forward();
+    let gradients = network.backward(&evaluation, w);
+    network.leaf(2.0);
+    network.updated(&gradients, |parameter, _gradient| parameter.clone());
+}
+
+#[test]
+#[should_panic(expected = "different network")]
+fn updated_rejects_foreign_gradients() {
+    let first = Network::new();
+    let w = first.parameter(1.0_f64);
+    let evaluation = first.forward();
+    let gradients = first.backward(&evaluation, w);
+    let second = Network::<f64>::new();
+    second.updated(&gradients, |parameter, _gradient| parameter.clone());
 }
 
 #[test]
@@ -168,11 +247,4 @@ fn cross_network_operation_panics() {
     let a = first.leaf(1.0_f64);
     let b = second.leaf(2.0);
     let _ = a + b;
-}
-
-#[test]
-fn network_and_value_are_send_and_sync() {
-    fn assert_send_sync<T: Send + Sync>() {}
-    assert_send_sync::<Network<f64>>();
-    assert_send_sync::<Value<'static, f64>>();
 }

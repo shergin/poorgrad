@@ -37,7 +37,8 @@ still true, but the real reason it exists is the question above.
 
 ## Status
 
-Early scaffolding. The core types:
+The engine builds, evaluates, differentiates, and trains scalar graphs.
+The core types:
 
 - [`Value`](src/value.rs) — a `Copy` proxy to a value allocated in a
   `Network`, and the only graph handle in the public API. It borrows the
@@ -48,7 +49,14 @@ Early scaffolding. The core types:
   of a graph, backed by the arena-based
   [`cow_vec`](https://crates.io/crates/cow_vec) crate: allocation is
   append-only, cloning forks the network in O(1), and the whole structure is
-  `Send + Sync`.
+  `Send + Sync`. A gradient step is a state transition: `updated` produces
+  the next generation, replacing only the parameter leaves while sharing
+  everything else.
+- [`Symbol`](src/symbol.rs) — a detached, `Copy` name of a value: the
+  identity that persists across network generations, while a proxy is that
+  identity's view in one generation. `Network::resolve` looks a symbol up
+  in a generation. Training loops keep symbols of the loss and the
+  parameters across `updated` steps.
 - [`Evaluation`](src/evaluation.rs) and [`Gradients`](src/gradients.rs) —
   the per-run results of `forward` and `backward`, read back with the same
   `Value` proxies that built the graph. Runs never mutate the network, so
@@ -63,11 +71,21 @@ Early scaffolding. The core types:
 - [`Neuron`](src/neuron.rs) — the smallest learnable building block
   (placeholder).
 
+## Terminology
+
+The vocabulary used across code and docs — the scientific meaning of each
+term and its mapping to the Rust types — is collected in
+[TERMINOLOGY.md](TERMINOLOGY.md).
+
 ## Examples
 
 - [`chain`](examples/chain.rs) — build a small expression graph by chaining
   `Value` proxies with arithmetic operators, then evaluate it and compute
   gradients: `cargo run --example chain`.
+- [`gradient_descent`](examples/gradient_descent.rs) — fit `w * x + b` to a
+  line, threaded with rayon: one shared network differentiated for
+  per-sample targets on separate threads, then trained in parallel on O(1)
+  forks, one per learning rate: `cargo run --example gradient_descent`.
 
 ## License
 

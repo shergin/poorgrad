@@ -2,7 +2,13 @@ use std::fmt;
 use std::ops::{Add, Mul, Neg};
 use std::ptr;
 
-use super::{Differentiable, Function, Tape};
+use static_assertions::assert_impl_all;
+
+use super::{Differentiable, Function, Symbol, Tape};
+
+// Compile-time contract: proxies stay thread-safe and `Copy`; the anchor
+// rationale is documented in `network.rs`.
+assert_impl_all!(Value<'static, f64>: Send, Sync, Copy);
 
 /// A lightweight, `Copy` handle to a value allocated in a `Network`.
 ///
@@ -46,6 +52,13 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     /// Returns the tape this proxy points into.
     pub(crate) fn tape(&self) -> &'network Tape<Data> {
         self.tape
+    }
+
+    /// Returns the detached name of this value: its identity across
+    /// network generations, resolved back into a proxy by
+    /// `Network::resolve`.
+    pub fn symbol(&self) -> Symbol {
+        Symbol(self.id)
     }
 
     /// Returns a clone of the `Function` that produced this value.

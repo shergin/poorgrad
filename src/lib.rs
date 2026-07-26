@@ -7,6 +7,7 @@ mod function;
 mod gradients;
 mod network;
 mod neuron;
+mod symbol;
 mod tape;
 mod value;
 
@@ -16,6 +17,7 @@ pub use evaluation::Evaluation;
 pub use gradients::Gradients;
 pub use network::Network;
 pub use neuron::Neuron;
+pub use symbol::Symbol;
 pub use value::Value;
 
 pub(crate) use function::{Function, Operation};
