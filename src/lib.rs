@@ -5,6 +5,7 @@ mod elementary;
 mod function;
 mod network;
 mod neuron;
+mod tape;
 mod value;
 mod value_inner;
 
@@ -15,5 +16,6 @@ pub use neuron::Neuron;
 pub use value::Value;
 
 pub(crate) use function::Function;
+pub(crate) use tape::Tape;
 pub(crate) use value::ValueId;
 pub(crate) use value_inner::ValueInner;

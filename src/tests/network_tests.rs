@@ -1,3 +1,5 @@
+use std::thread;
+
 use crate::Function;
 
 use super::{Network, Value};
@@ -14,7 +16,7 @@ fn rebind_rejects_unallocated_nodes() {
     let network = Network::<f64>::new();
     let other = Network::new();
     let foreign = other.leaf(1.0);
-    assert!(network.rebind(&foreign).is_none());
+    assert!(network.rebind(foreign).is_none());
 }
 
 #[test]
@@ -34,7 +36,7 @@ fn operator_sugar_allocates_on_the_same_network() {
     let v1 = network.leaf(2.0_f64);
     let v2 = network.leaf(3.0);
 
-    let x = &v1 + &v2;
+    let x = v1 + v2;
 
     assert_eq!(network.len(), 3);
     assert_eq!(x.function(), Function::Add(v1.id(), v2.id()));
@@ -42,18 +44,19 @@ fn operator_sugar_allocates_on_the_same_network() {
 }
 
 #[test]
-fn owned_and_borrowed_operator_forms_agree() {
+fn copy_values_are_reusable_across_expressions() {
     let network = Network::new();
     let v1 = network.leaf(2.0_f64);
     let v2 = network.leaf(3.0);
 
-    let borrowed = &v1 * &v2;
-    let negated = -&borrowed;
-    let owned = v1 * v2;
+    let x = v1 * v2;
+    let y = v1 + v2;
+    let z = x + y;
+    let negated = -z;
 
-    assert_eq!(network.len(), 5);
-    assert_eq!(owned.function(), borrowed.function());
-    assert_eq!(negated.function(), Function::Neg(borrowed.id()));
+    assert_eq!(network.len(), 6);
+    assert_eq!(z.function(), Function::Add(x.id(), y.id()));
+    assert_eq!(negated.function(), Function::Neg(z.id()));
 }
 
 #[test]
@@ -63,10 +66,28 @@ fn expression_chain_allocates_intermediate_values() {
     let v2 = network.leaf(3.0);
     let v3 = network.leaf(4.0);
 
-    let x = &v1 * &v2 + v3;
+    let x = v1 * v2 + v3;
 
     assert_eq!(network.len(), 5);
     assert!(matches!(x.function(), Function::Add(_, _)));
+}
+
+#[test]
+fn values_chain_inside_scoped_threads() {
+    let network = Network::new();
+    let v1 = network.leaf(1.0_f64);
+    let v2 = network.leaf(2.0);
+
+    thread::scope(|scope| {
+        scope.spawn(move || {
+            let _ = v1 + v2;
+        });
+        scope.spawn(move || {
+            let _ = v1 * v2;
+        });
+    });
+
+    assert_eq!(network.len(), 4);
 }
 
 #[test]
@@ -79,7 +100,7 @@ fn clone_forks_the_network() {
 
     assert_eq!(network.len(), 2);
     assert_eq!(fork.len(), 1);
-    let rebound = fork.rebind(&v1).unwrap();
+    let rebound = fork.rebind(v1).unwrap();
     assert_eq!(rebound.data(), Some(1.0));
 }
 
@@ -97,5 +118,5 @@ fn cross_network_operation_panics() {
 fn network_and_value_are_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Network<f64>>();
-    assert_send_sync::<Value<f64>>();
+    assert_send_sync::<Value<'static, f64>>();
 }

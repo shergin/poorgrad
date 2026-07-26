@@ -39,20 +39,29 @@ still true, but the real reason it exists is the question above.
 
 Early scaffolding. The core types:
 
-- [`Value`](src/value.rs) — a cheap proxy to a value allocated in a `Network`,
-  and the only graph handle in the public API. Arithmetic operators on
-  proxies build the graph: `let x = v1 + v2;` allocates a new computed node
-  on the same network, without cloning it.
-- [`Network`](src/network.rs) — a memory management bag owning the values of
-  a graph, backed by the arena-based
+- [`Value`](src/value.rs) — a `Copy` proxy to a value allocated in a
+  `Network`, and the only graph handle in the public API. It borrows the
+  network, so it cannot outlive it. Arithmetic operators build the graph
+  (`let x = v1 + v2;` allocates a new computed node on the same network) and
+  never consume their operands.
+- [`Network`](src/network.rs) — the single owner of the state of every value
+  of a graph, backed by the arena-based
   [`cow_vec`](https://crates.io/crates/cow_vec) crate: allocation is
   append-only, cloning forks the network in O(1), and the whole structure is
   `Send + Sync`.
+- [`Tape`](src/tape.rs) — internal: the append-only record (a Wengert list)
+  shared by a network and all of its proxies, and the engine's single
+  synchronization point.
 - [`ValueInner`](src/value_inner.rs) and [`Function`](src/function.rs) —
   internal: the stored node, and the operation that produced it referencing
   its inputs by index.
 - [`Neuron`](src/neuron.rs) — the smallest learnable building block
   (placeholder).
+
+## Examples
+
+- [`chain`](examples/chain.rs) — build a small expression graph by chaining
+  `Value` proxies with arithmetic operators: `cargo run --example chain`.
 
 ## License
 
