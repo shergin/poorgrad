@@ -1,4 +1,4 @@
-use crate::{Differentiable, Elementary, Network};
+use crate::{Differentiable, Elementary, Network, Tensorial};
 
 use super::Tensor;
 
@@ -100,4 +100,109 @@ fn engine_trains_tensor_payloads_unchanged() {
     let learned = network.resolve(w_symbol).unwrap().data().unwrap();
     assert!((learned.elements()[0] - 5.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn matmul_transpose_and_sum_compute() {
+    let matrix = Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]);
+    let column = Tensor::new([2, 1], [5.0, 6.0]);
+
+    let product = matrix.matmul(&column);
+    assert_eq!(product.shape(), &[2, 1]);
+    assert_eq!(product.elements(), &[17.0, 39.0]);
+
+    let transposed = matrix.transposed();
+    assert_eq!(transposed.elements(), &[1.0, 3.0, 2.0, 4.0]);
+
+    let total = matrix.sum();
+    assert_eq!(total.shape(), &[] as &[usize]);
+    assert_eq!(total.elements(), &[10.0]);
+
+    let spread = total.broadcast_like(&column);
+    assert_eq!(spread.shape(), &[2, 1]);
+    assert_eq!(spread.elements(), &[10.0, 10.0]);
+}
+
+#[test]
+#[should_panic(expected = "inner dimensions")]
+fn matmul_rejects_disagreeing_shapes() {
+    let left = Tensor::new([2, 2], vec![1.0_f64; 4]);
+    let right = Tensor::new([3, 1], vec![1.0_f64; 3]);
+    left.matmul(&right);
+}
+
+#[test]
+#[should_panic(expected = "single-element")]
+fn broadcast_rejects_multi_element_sources() {
+    let source = Tensor::new([2], [1.0_f64, 2.0]);
+    let reference = Tensor::new([3], vec![0.0_f64; 3]);
+    source.broadcast_like(&reference);
+}
+
+#[test]
+fn matmul_routes_gradients_through_transposed_operands() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let b = network.leaf(Tensor::new([2, 1], [5.0, 6.0]));
+
+    let loss = a.matmul(b).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(loss), Tensor::new([], [56.0]));
+
+    // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
+    // `dB = A^T . 1` column-summed.
+    let gradients = network.backward(&evaluation, loss);
+    assert_eq!(gradients.of(a).elements(), &[5.0, 6.0, 5.0, 6.0]);
+    assert_eq!(gradients.of(b).elements(), &[4.0, 6.0]);
+}
+
+#[test]
+fn broadcast_and_sum_are_adjoint() {
+    let network = Network::new();
+    let scalar = network.leaf(Tensor::new([], [2.0_f64]));
+    let reference = network.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
+
+    let loss = scalar.broadcast_like(reference).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(loss), Tensor::new([], [6.0]));
+
+    // The broadcast spreads to three positions, so the scalar's gradient
+    // is the sum of three ones; the shape reference receives none.
+    let gradients = network.backward(&evaluation, loss);
+    assert_eq!(gradients.of(scalar).elements(), &[3.0]);
+    assert_eq!(gradients.of(reference).elements(), &[0.0, 0.0, 0.0]);
+}
+
+#[test]
+fn linear_regression_trains_in_matrix_form() {
+    // Fit `X . w = y` for `w = [[2], [-1]]`: the layer-sized problem that
+    // took O(inputs * outputs) scalar nodes now takes a handful of tensor
+    // nodes.
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3, 2], [1.0_f64, 0.0, 0.0, 1.0, 1.0, 1.0]));
+    let y = network.leaf(Tensor::new([3, 1], [2.0, -1.0, 1.0]));
+    let w = network.parameter(Tensor::filled([2, 1], 0.0_f64));
+
+    let error = x.matmul(w) + -y;
+    let loss = (error * error).sum();
+
+    let w_symbol = w.symbol();
+    let loss_symbol = loss.symbol();
+
+    let learning_rate = Tensor::new([], [0.05]);
+    let mut network = network;
+    for _ in 0..300 {
+        let loss = network.resolve(loss_symbol).unwrap();
+        let evaluation = network.forward();
+        let gradients = network.backward(&evaluation, loss);
+        network = network.updated(gradients.as_field(), |parameter, gradient| {
+            parameter.clone() + -(gradient.clone() * learning_rate.broadcast_like(gradient))
+        });
+    }
+
+    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    assert!((learned.elements()[0] - 2.0).abs() < 1e-6);
+    assert!((learned.elements()[1] + 1.0).abs() < 1e-6);
 }

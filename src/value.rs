@@ -4,7 +4,7 @@ use std::ptr;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Elementary, Function, Symbol, Tape};
+use super::{Differentiable, Elementary, Function, Symbol, Tape, Tensorial};
 
 // Compile-time contract: proxies stay thread-safe and `Copy`; the anchor
 // rationale is documented in `network.rs`.
@@ -94,6 +94,34 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     /// and returns a proxy to it.
     pub fn tanh(self) -> Self {
         self.apply(Function::tanh(self.id))
+    }
+}
+
+impl<'network, Data: Tensorial> Value<'network, Data> {
+    /// Records the matrix product of this value and `rhs` on the same
+    /// network and returns a proxy to it.
+    pub fn matmul(self, rhs: Self) -> Self {
+        self.assert_same_network(&rhs);
+        self.apply(Function::matmul(self.id, rhs.id))
+    }
+
+    /// Records the transposition of this value on the same network and
+    /// returns a proxy to it.
+    pub fn transposed(self) -> Self {
+        self.apply(Function::transpose(self.id))
+    }
+
+    /// Records the sum of every value in this payload on the same network
+    /// and returns a proxy to it.
+    pub fn sum(self) -> Self {
+        self.apply(Function::sum(self.id))
+    }
+
+    /// Records the explicit broadcast of this single-value payload across
+    /// `reference`'s shape on the same network and returns a proxy to it.
+    pub fn broadcast_like(self, reference: Self) -> Self {
+        self.assert_same_network(&reference);
+        self.apply(Function::broadcast(self.id, reference.id))
     }
 }
 

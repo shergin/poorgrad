@@ -13,6 +13,7 @@ mod neuron;
 mod symbol;
 mod tape;
 mod tensor;
+mod tensorial;
 mod value;
 
 pub use differentiable::Differentiable;
@@ -25,6 +26,7 @@ pub use network::Network;
 pub use neuron::{Activation, Neuron};
 pub use symbol::Symbol;
 pub use tensor::Tensor;
+pub use tensorial::Tensorial;
 pub use value::Value;
 
 pub(crate) use function::{Function, Operation};

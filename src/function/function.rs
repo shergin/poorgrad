@@ -1,8 +1,8 @@
-use crate::{Differentiable, Elementary, ValueId};
+use crate::{Differentiable, Tensorial, ValueId};
 
 use static_assertions::assert_impl_all;
 
-use super::{Add, Leaf, Mul, Neg, Operation, Parameter, Tanh};
+use super::{Add, Broadcast, Leaf, MatMul, Mul, Neg, Operation, Parameter, Sum, Tanh, Transpose};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -23,6 +23,10 @@ pub(crate) enum Function<Data> {
     Mul(Mul),
     Neg(Neg),
     Tanh(Tanh),
+    MatMul(MatMul),
+    Transpose(Transpose),
+    Sum(Sum),
+    Broadcast(Broadcast),
 }
 
 impl<Data> Function<Data> {
@@ -56,6 +60,26 @@ impl<Data> Function<Data> {
         Function::Tanh(Tanh { operand })
     }
 
+    /// Creates the matrix product of `left` and `right`.
+    pub(crate) fn matmul(left: ValueId, right: ValueId) -> Self {
+        Function::MatMul(MatMul { left, right })
+    }
+
+    /// Creates the transposition of `operand`.
+    pub(crate) fn transpose(operand: ValueId) -> Self {
+        Function::Transpose(Transpose { operand })
+    }
+
+    /// Creates the sum of every value in `operand`.
+    pub(crate) fn sum(operand: ValueId) -> Self {
+        Function::Sum(Sum { operand })
+    }
+
+    /// Creates the explicit broadcast of `operand` across `like`'s shape.
+    pub(crate) fn broadcast(operand: ValueId, like: ValueId) -> Self {
+        Function::Broadcast(Broadcast { operand, like })
+    }
+
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, visitor: impl FnMut(ValueId)) {
         match self {
@@ -65,6 +89,10 @@ impl<Data> Function<Data> {
             Function::Mul(mul) => mul.visit_operands(visitor),
             Function::Neg(neg) => neg.visit_operands(visitor),
             Function::Tanh(tanh) => tanh.visit_operands(visitor),
+            Function::MatMul(matmul) => matmul.visit_operands(visitor),
+            Function::Transpose(transpose) => transpose.visit_operands(visitor),
+            Function::Sum(sum) => sum.visit_operands(visitor),
+            Function::Broadcast(broadcast) => broadcast.visit_operands(visitor),
         }
     }
 
@@ -89,10 +117,11 @@ impl<Data> Function<Data> {
 
 /// It hand-rolls the delegation an enum-dispatch macro would generate: a
 /// plain `match` per method. Exhaustiveness makes adding a variant a
-/// compile error until every method handles it. The bound is `Elementary`
-/// rather than `Differentiable` because the transcendental variants need
-/// it; building and updating graphs stays arithmetic-only.
-impl<Data: Elementary> Operation<Data> for Function<Data> {
+/// compile error until every method handles it. The bound is `Tensorial`
+/// rather than `Differentiable` because the transcendental and
+/// tensor-native variants need it; building and updating graphs stays
+/// arithmetic-only.
+impl<Data: Tensorial> Operation<Data> for Function<Data> {
     fn forward(&self, values: &[Data]) -> Data {
         match self {
             Function::Leaf(leaf) => leaf.forward(values),
@@ -101,6 +130,10 @@ impl<Data: Elementary> Operation<Data> for Function<Data> {
             Function::Mul(mul) => mul.forward(values),
             Function::Neg(neg) => neg.forward(values),
             Function::Tanh(tanh) => tanh.forward(values),
+            Function::MatMul(matmul) => matmul.forward(values),
+            Function::Transpose(transpose) => transpose.forward(values),
+            Function::Sum(sum) => sum.forward(values),
+            Function::Broadcast(broadcast) => broadcast.forward(values),
         }
     }
 
@@ -114,6 +147,14 @@ impl<Data: Elementary> Operation<Data> for Function<Data> {
             Function::Mul(mul) => mul.backward(values, output, gradient, gradients),
             Function::Neg(neg) => neg.backward(values, output, gradient, gradients),
             Function::Tanh(tanh) => tanh.backward(values, output, gradient, gradients),
+            Function::MatMul(matmul) => matmul.backward(values, output, gradient, gradients),
+            Function::Transpose(transpose) => {
+                transpose.backward(values, output, gradient, gradients)
+            }
+            Function::Sum(sum) => sum.backward(values, output, gradient, gradients),
+            Function::Broadcast(broadcast) => {
+                broadcast.backward(values, output, gradient, gradients)
+            }
         }
     }
 }

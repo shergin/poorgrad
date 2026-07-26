@@ -3,7 +3,7 @@ use std::ptr;
 use static_assertions::assert_impl_all;
 
 use super::{
-    Differentiable, Elementary, Evaluation, Field, Function, Gradients, Operation, Symbol, Tape,
+    Differentiable, Evaluation, Field, Function, Gradients, Operation, Symbol, Tape, Tensorial,
     Value,
 };
 
@@ -104,10 +104,10 @@ impl<Data: Differentiable> Network<Data> {
     }
 }
 
-// Running the tape requires the full payload contract (`Elementary`, for
-// the transcendental operations), while building and updating the graph
-// needs only arithmetic.
-impl<Data: Elementary> Network<Data> {
+// Running the tape requires the full payload contract (`Tensorial`, for
+// the transcendental and tensor-native operations), while building and
+// updating the graph needs only arithmetic.
+impl<Data: Tensorial> Network<Data> {
     /// Evaluates every node in allocation order, materializing the payload
     /// of each value into a fresh `Evaluation`.
     ///

@@ -71,10 +71,12 @@ changes once recorded.
 operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
 [`Operation`](src/function/operation.rs) trait, implemented by each
-`Function` variant (`Leaf`, `Parameter`, `Add`, `Mul`, `Neg`, `Tanh` under
+`Function` variant (`Leaf`, `Parameter`, `Add`, `Mul`, `Neg`, `Tanh`,
+`MatMul`, `Transpose`, `Sum`, `Broadcast` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
-Arithmetic variants need only `Differentiable`; the transcendental ones
-raise the bound of running (not building) a graph to `Elementary`.
+Arithmetic variants need only `Differentiable`; the transcendental and
+tensor-native ones raise the bound of running (not building) a graph to
+`Elementary` and `Tensorial` respectively.
 
 **Leaf.** A node with no operands: an input or constant supplied at
 recording time. Gradients stop there and get read out; its `backward` is a
@@ -149,13 +151,22 @@ operators, `zero_like`/`one_like`, and `Send + Sync`;
 [`Elementary`](src/elementary.rs) adds the transcendentals activations
 need.
 
-**Tensor.** A dense, fixed-shape payload with elementwise arithmetic:
-proof that the payload contract holds beyond scalars, since a
-`Network<Tensor<f64>>` runs the engine unchanged. Shape and elements live
-behind `Arc`s so cloning is O(1); binary operations require identical
-shapes (no implicit broadcasting). Tensor-native operations (matrix
-multiplication, reductions) arrive with a later trait tier. In poorgrad:
-[`Tensor`](src/tensor.rs).
+**Tensor.** A dense, fixed-shape payload: proof that the payload
+contract holds beyond scalars, since a `Network<Tensor<f64>>` runs the
+engine unchanged. Shape and elements live behind `Arc`s so cloning is
+O(1); elementwise operations require identical shapes, and the
+tensor-native tier adds `matmul`, `transposed`, `sum`, and the explicit
+`broadcast_like`. In poorgrad: [`Tensor`](src/tensor.rs).
+
+**Tensorial.** The payload tier of tensor-native operations — matrix
+multiplication, transposition, reduction, and explicit broadcast — with
+scalars implementing it degenerately (a scalar is a rank-0 tensor).
+Summation and broadcasting are adjoint: each is the other's gradient
+rule. Broadcasting is explicit by design: `broadcast_like` spreads a
+single value across a named reference's shape, and no operation aligns
+shapes implicitly. In poorgrad: the [`Tensorial`](src/tensorial.rs)
+trait, recorded into graphs via `Value::matmul`, `transposed`, `sum`,
+and `broadcast_like`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

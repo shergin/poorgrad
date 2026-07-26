@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Elementary};
+use super::{Differentiable, Elementary, Tensorial};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -160,6 +160,100 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
         self.zip(&exponent, |element, exponent| {
             element.powf(exponent.clone())
         })
+    }
+}
+
+impl<Element: Elementary> Tensorial for Tensor<Element> {
+    /// Returns the matrix product of two rank-2 tensors.
+    ///
+    /// # Panics
+    /// Panics if either operand is not rank 2, the inner dimensions do not
+    /// agree, or any dimension is empty.
+    fn matmul(&self, rhs: &Self) -> Self {
+        assert_eq!(self.shape.len(), 2, "matmul requires rank-2 tensors");
+        assert_eq!(rhs.shape.len(), 2, "matmul requires rank-2 tensors");
+        let (rows, inner) = (self.shape[0], self.shape[1]);
+        let (rhs_inner, columns) = (rhs.shape[0], rhs.shape[1]);
+        assert_eq!(inner, rhs_inner, "matmul inner dimensions do not agree");
+        assert!(
+            rows > 0 && inner > 0 && columns > 0,
+            "matmul requires non-empty dimensions"
+        );
+
+        let mut elements = Vec::with_capacity(rows * columns);
+        for row in 0..rows {
+            for column in 0..columns {
+                let mut total = self.elements[row * inner].clone() * rhs.elements[column].clone();
+                for step in 1..inner {
+                    total = total
+                        + self.elements[row * inner + step].clone()
+                            * rhs.elements[step * columns + column].clone();
+                }
+                elements.push(total);
+            }
+        }
+        Self {
+            shape: Arc::new(vec![rows, columns]),
+            elements: Arc::new(elements),
+        }
+    }
+
+    /// Returns the tensor with its two axes swapped.
+    ///
+    /// Rank-0 and rank-1 tensors are returned unchanged.
+    ///
+    /// # Panics
+    /// Panics if the tensor's rank exceeds 2.
+    fn transposed(&self) -> Self {
+        if self.shape.len() < 2 {
+            return self.clone();
+        }
+        assert_eq!(self.shape.len(), 2, "transpose supports rank 2 at most");
+        let (rows, columns) = (self.shape[0], self.shape[1]);
+        let mut elements = Vec::with_capacity(rows * columns);
+        for column in 0..columns {
+            for row in 0..rows {
+                elements.push(self.elements[row * columns + column].clone());
+            }
+        }
+        Self {
+            shape: Arc::new(vec![columns, rows]),
+            elements: Arc::new(elements),
+        }
+    }
+
+    /// Returns the sum of every element as a rank-0 tensor.
+    ///
+    /// # Panics
+    /// Panics if the tensor holds no elements.
+    fn sum(&self) -> Self {
+        let mut elements = self.elements.iter();
+        let first = elements
+            .next()
+            .expect("sum requires a non-empty tensor")
+            .clone();
+        let total = elements.fold(first, |total, element| total + element.clone());
+        Self {
+            shape: Arc::new(Vec::new()),
+            elements: Arc::new(vec![total]),
+        }
+    }
+
+    /// Returns this tensor's single element spread across `reference`'s
+    /// shape: the one explicit form of broadcasting.
+    ///
+    /// # Panics
+    /// Panics if `self` holds more than one element.
+    fn broadcast_like(&self, reference: &Self) -> Self {
+        assert_eq!(
+            self.elements.len(),
+            1,
+            "broadcast requires a single-element tensor"
+        );
+        Self {
+            shape: Arc::clone(&reference.shape),
+            elements: Arc::new(vec![self.elements[0].clone(); reference.elements.len()]),
+        }
     }
 }
 

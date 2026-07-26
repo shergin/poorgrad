@@ -1,0 +1,37 @@
+use crate::{Tensorial, ValueId};
+
+use super::Operation;
+
+/// The explicit broadcast of a single-value payload across another
+/// value's shape.
+///
+/// It is the only shape-changing expansion in the engine, and it is
+/// deliberately explicit: the target shape comes from a named reference
+/// value, never from an alignment rule. Broadcasting and summation are
+/// adjoint, so the operand's gradient is the sum of the incoming
+/// gradient; the reference contributes only its shape and receives no
+/// gradient.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Broadcast {
+    pub(crate) operand: ValueId,
+    pub(crate) like: ValueId,
+}
+
+impl Broadcast {
+    /// Calls `visitor` with each operand link.
+    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
+        visitor(self.operand);
+        visitor(self.like);
+    }
+}
+
+impl<Data: Tensorial> Operation<Data> for Broadcast {
+    fn forward(&self, values: &[Data]) -> Data {
+        values[self.operand.index()].broadcast_like(&values[self.like.index()])
+    }
+
+    fn backward(&self, _values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
+        let operand = self.operand.index();
+        gradients[operand] = gradients[operand].clone() + gradient.sum();
+    }
+}

@@ -100,11 +100,14 @@ machinery, from tape to training:
   `scaled`, `zip`, `map`). Gradients convert into fields to be combined
   across runs and carried across generations as optimizer state (momentum,
   Adam); `updated` takes any field as its update direction.
-- [`Tensor`](src/tensor.rs) — the first non-scalar payload: dense,
-  fixed-shape, elementwise, with O(1) clones behind `Arc`s. A
-  `Network<Tensor<f64>>` runs the whole engine — training loop, fields,
-  momentum — unchanged. Matrix multiplication and reductions arrive with
-  the next trait tier.
+- [`Tensor`](src/tensor.rs) — the first non-scalar payload: dense and
+  fixed-shape, with O(1) clones behind `Arc`s. A `Network<Tensor<f64>>`
+  runs the whole engine — training loop, fields, momentum — unchanged,
+  and the [`Tensorial`](src/tensorial.rs) tier adds `matmul`,
+  `transposed`, `sum`, and the explicit `broadcast_like` (scalars
+  implement it degenerately, so one bound covers both worlds).
+  Broadcasting is explicit by design: a single value spread across a
+  named reference's shape, never an implicit alignment rule.
 - [`Tape`](src/tape.rs) — internal: the append-only record (a Wengert list)
   shared by a network and all of its proxies, and the engine's single
   synchronization point.
