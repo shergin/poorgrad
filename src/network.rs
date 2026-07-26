@@ -1,19 +1,20 @@
-use super::{Differentiable, Tape, Value, ValueInner};
+use std::ptr;
+
+use super::{Differentiable, Evaluation, Function, Gradients, Operation, Tape, Value};
 
 /// A memory management bag owning the state of every value of one
 /// computation graph.
 ///
 /// It is the single place where value state lives: it owns the `Tape` the
 /// nodes are recorded on, and every `Value` it hands out is a `Copy` proxy
-/// borrowing that tape, unable to outlive the network. An expression such as
-/// `let x = v1 + v2;` grows this same network without cloning it and without
-/// disturbing anything allocated before; independent state only comes from
-/// cloning the network itself, which forks it in O(1) into a fork sharing
-/// the underlying arena but keeping an independent tape. All
+/// borrowing that tape, unable to outlive the network. An expression such
+/// as `let x = v1 + v2;` grows this same network without cloning it and
+/// without disturbing anything allocated before; independent state only
+/// comes from cloning the network itself, which forks it in O(1) into a
+/// fork sharing the underlying arena but keeping an independent tape. All
 /// synchronization lives inside the tape's single `Mutex`, taken briefly
 /// per operation. The network is `Send + Sync` whenever `Data` is, so
-/// scoped threads can build and (later) evaluate the same graph
-/// concurrently.
+/// scoped threads can build and evaluate the same graph concurrently.
 #[derive(Debug)]
 pub struct Network<Data> {
     tape: Tape<Data>,
@@ -28,7 +29,7 @@ impl<Data: Differentiable> Network<Data> {
     /// Allocates a leaf (a network input or a learnable parameter) and
     /// returns a proxy to it.
     pub fn leaf(&self, data: Data) -> Value<'_, Data> {
-        let id = self.tape.record(ValueInner::leaf(data));
+        let id = self.tape.record(Function::leaf(data));
         Value::bind(&self.tape, id)
     }
 
@@ -45,7 +46,7 @@ impl<Data: Differentiable> Network<Data> {
         value: Value<'_, Data>,
     ) -> Option<Value<'network, Data>> {
         let id = value.id();
-        if id.0 >= self.len() {
+        if id.index() >= self.len() {
             return None;
         }
         Some(Value::bind(&self.tape, id))
@@ -61,21 +62,66 @@ impl<Data: Differentiable> Network<Data> {
         self.len() == 0
     }
 
-    /// Evaluates every node in dependency order, returning a value buffer
-    /// indexed by allocation order.
-    pub fn forward(&self) -> Vec<Data> {
-        todo!("evaluate each node from its inputs into a fresh value buffer")
+    /// Evaluates every node in allocation order, materializing the payload
+    /// of each value into a fresh `Evaluation`.
+    ///
+    /// It replays an O(1) snapshot of the tape, so the network is never
+    /// locked during the run and concurrent recordings do not disturb it.
+    /// Allocation order is dependency order by construction, which is what
+    /// makes the single forward scan sufficient.
+    pub fn forward(&self) -> Evaluation<'_, Data> {
+        let nodes = self.tape.snapshot();
+        let mut values = Vec::with_capacity(nodes.len());
+        for function in nodes.iter() {
+            let value = function.forward(&values);
+            values.push(value);
+        }
+        Evaluation::new(&self.tape, values)
     }
 
-    /// Propagates gradients backward from `output`, returning a gradient
-    /// buffer indexed by allocation order.
+    /// Propagates gradients backward from `output`, returning the gradient
+    /// of `output` with respect to every value.
     ///
     /// It seeds the output gradient with `one_like` and accumulates into a
-    /// buffer initialized with `zero_like`, leaving the network untouched.
-    /// That separation of per-run state from the shared structure is what
-    /// lets many threads differentiate the same network at once.
-    pub fn backward(&self, _values: &[Data], _output: Value<'_, Data>) -> Vec<Data> {
-        todo!("reverse-mode accumulation into a fresh gradient buffer")
+    /// fresh buffer initialized with `zero_like`, scanning the tape in
+    /// reverse allocation order and leaving both the network and the
+    /// evaluation untouched. That separation of per-run state from the
+    /// shared structure is what lets many threads differentiate the same
+    /// network at once.
+    ///
+    /// # Panics
+    /// Panics if `evaluation` or `output` belongs to a different network,
+    /// or if the network has grown since `evaluation` ran.
+    pub fn backward<'network>(
+        &'network self,
+        evaluation: &Evaluation<'_, Data>,
+        output: Value<'_, Data>,
+    ) -> Gradients<'network, Data> {
+        assert!(
+            ptr::eq(evaluation.tape(), &self.tape),
+            "evaluation belongs to a different network"
+        );
+        assert!(
+            ptr::eq(output.tape(), &self.tape),
+            "output belongs to a different network"
+        );
+        let nodes = self.tape.snapshot();
+        let values = evaluation.values();
+        assert_eq!(
+            values.len(),
+            nodes.len(),
+            "evaluation is stale: the network has grown since it ran"
+        );
+
+        let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
+        let output_index = output.id().index();
+        gradients[output_index] = values[output_index].one_like();
+        for index in (0..nodes.len()).rev() {
+            let function = nodes.get(index).expect("snapshot cannot shrink");
+            let gradient = gradients[index].clone();
+            function.backward(values, &gradient, &mut gradients);
+        }
+        Gradients::new(&self.tape, gradients)
     }
 }
 

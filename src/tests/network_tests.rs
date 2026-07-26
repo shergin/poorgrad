@@ -39,7 +39,7 @@ fn operator_sugar_allocates_on_the_same_network() {
     let x = v1 + v2;
 
     assert_eq!(network.len(), 3);
-    assert_eq!(x.function(), Function::Add(v1.id(), v2.id()));
+    assert_eq!(x.function(), Function::add(v1.id(), v2.id()));
     assert_eq!(x.data(), None);
 }
 
@@ -55,8 +55,8 @@ fn copy_values_are_reusable_across_expressions() {
     let negated = -z;
 
     assert_eq!(network.len(), 6);
-    assert_eq!(z.function(), Function::Add(x.id(), y.id()));
-    assert_eq!(negated.function(), Function::Neg(z.id()));
+    assert_eq!(z.function(), Function::add(x.id(), y.id()));
+    assert_eq!(negated.function(), Function::neg(z.id()));
 }
 
 #[test]
@@ -69,7 +69,63 @@ fn expression_chain_allocates_intermediate_values() {
     let x = v1 * v2 + v3;
 
     assert_eq!(network.len(), 5);
-    assert!(matches!(x.function(), Function::Add(_, _)));
+    assert!(matches!(x.function(), Function::Add(_)));
+}
+
+#[test]
+fn forward_materializes_every_value() {
+    let network = Network::new();
+    let a = network.leaf(2.0_f64);
+    let b = network.leaf(3.0);
+    let c = network.leaf(4.0);
+
+    let expression = -((a + b) * c);
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(a), 2.0);
+    assert_eq!(*evaluation.value(expression), -20.0);
+}
+
+#[test]
+fn backward_accumulates_gradients_through_fan_out() {
+    let network = Network::new();
+    let a = network.leaf(2.0_f64);
+    let b = network.leaf(3.0);
+
+    // `a` feeds both the product and the sum, so its gradient must
+    // accumulate: d(a * b + a)/da = b + 1.
+    let f = a * b + a;
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(f), 8.0);
+
+    let gradients = network.backward(&evaluation, f);
+    assert_eq!(*gradients.of(f), 1.0);
+    assert_eq!(*gradients.of(a), 4.0);
+    assert_eq!(*gradients.of(b), 2.0);
+}
+
+#[test]
+fn backward_routes_negation() {
+    let network = Network::new();
+    let a = network.leaf(2.0_f64);
+    let f = -(a * a);
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(f), -4.0);
+
+    let gradients = network.backward(&evaluation, f);
+    assert_eq!(*gradients.of(a), -4.0);
+}
+
+#[test]
+#[should_panic(expected = "stale")]
+fn backward_rejects_stale_evaluation() {
+    let network = Network::new();
+    let a = network.leaf(2.0_f64);
+    let evaluation = network.forward();
+    network.leaf(3.0);
+    network.backward(&evaluation, a);
 }
 
 #[test]

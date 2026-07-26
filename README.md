@@ -49,19 +49,25 @@ Early scaffolding. The core types:
   [`cow_vec`](https://crates.io/crates/cow_vec) crate: allocation is
   append-only, cloning forks the network in O(1), and the whole structure is
   `Send + Sync`.
+- [`Evaluation`](src/evaluation.rs) and [`Gradients`](src/gradients.rs) —
+  the per-run results of `forward` and `backward`, read back with the same
+  `Value` proxies that built the graph. Runs never mutate the network, so
+  any number of them can execute concurrently.
 - [`Tape`](src/tape.rs) — internal: the append-only record (a Wengert list)
   shared by a network and all of its proxies, and the engine's single
   synchronization point.
-- [`ValueInner`](src/value_inner.rs) and [`Function`](src/function.rs) —
-  internal: the stored node, and the operation that produced it referencing
-  its inputs by index.
+- [`Function`](src/function/mod.rs) — internal: a statically sized enum of
+  the differentiable operations, each variant owning its operand links and
+  parameters and implementing the `Operation` trait (forward math and
+  gradient routing per operation, dispatched with a plain `match`).
 - [`Neuron`](src/neuron.rs) — the smallest learnable building block
   (placeholder).
 
 ## Examples
 
 - [`chain`](examples/chain.rs) — build a small expression graph by chaining
-  `Value` proxies with arithmetic operators: `cargo run --example chain`.
+  `Value` proxies with arithmetic operators, then evaluate it and compute
+  gradients: `cargo run --example chain`.
 
 ## License
 

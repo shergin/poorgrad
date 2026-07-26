@@ -1,5 +1,5 @@
 //! Demonstrates how values allocated on a `Network` chain into an
-//! expression graph.
+//! expression graph that can be evaluated and differentiated.
 //!
 //! Run with: `cargo run --example chain`
 
@@ -15,12 +15,6 @@ fn main() {
     let b = network.leaf(3.0);
     let c = network.leaf(4.0);
     println!("allocated {} leaves", network.len());
-    println!(
-        "leaf payloads: a = {:?}, b = {:?}, c = {:?}",
-        a.data(),
-        b.data(),
-        c.data()
-    );
 
     // Operators record computed nodes on the same network. Proxies are
     // never consumed, so the same value can feed any number of expressions.
@@ -31,7 +25,19 @@ fn main() {
     println!("chained -((a + b) * c) + a * c as {expression:?}");
     println!("the network now holds {} values", network.len());
 
-    // Computed values have no payload until the forward pass materializes
-    // them into a per-run buffer.
-    println!("computed payload before forward: {:?}", expression.data());
+    // The forward pass materializes every payload into per-run storage,
+    // leaving the network untouched.
+    let evaluation = network.forward();
+    println!("forward: expression = {}", evaluation.value(expression));
+
+    // The backward pass produces the gradient of the expression with
+    // respect to every value. `a` feeds two subexpressions whose
+    // contributions cancel exactly, hence its zero gradient.
+    let gradients = network.backward(&evaluation, expression);
+    println!(
+        "gradients: d/da = {}, d/db = {}, d/dc = {}",
+        gradients.of(a),
+        gradients.of(b),
+        gradients.of(c)
+    );
 }

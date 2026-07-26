@@ -2,7 +2,7 @@ use std::fmt;
 use std::ops::{Add, Mul, Neg};
 use std::ptr;
 
-use super::{Differentiable, Function, Tape, ValueInner};
+use super::{Differentiable, Function, Tape};
 
 /// A lightweight, `Copy` handle to a value allocated in a `Network`.
 ///
@@ -11,6 +11,13 @@ use super::{Differentiable, Function, Tape, ValueInner};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ValueId(pub(crate) usize);
 
+impl ValueId {
+    /// Returns the position of the value on its tape.
+    pub(crate) fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// A `Copy` proxy to a value allocated in a `Network`.
 ///
 /// It pairs a borrow of the network's `Tape` with the position of its node:
@@ -18,8 +25,8 @@ pub(crate) struct ValueId(pub(crate) usize);
 /// view into it that cannot outlive it. Being `Copy`, proxies are never
 /// consumed: arithmetic operators build the graph (`let x = v1 + v2;`
 /// records a new computed node on the same network) while the operands stay
-/// usable for further expressions. Accessors such as `data` briefly take the
-/// tape lock and clone the payload out.
+/// usable for further expressions. Accessors such as `data` briefly take
+/// the tape lock and clone the payload out.
 pub struct Value<'network, Data> {
     tape: &'network Tape<Data>,
     id: ValueId,
@@ -36,23 +43,27 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.id
     }
 
-    /// Returns a clone of the `Function` that produced this value.
-    // Scaffolding: only tests read it until `backward` is implemented.
-    #[allow(dead_code)]
-    pub(crate) fn function(&self) -> Function {
+    /// Returns the tape this proxy points into.
+    pub(crate) fn tape(&self) -> &'network Tape<Data> {
         self.tape
-            .with_node(self.id, |inner| inner.function().clone())
+    }
+
+    /// Returns a clone of the `Function` that produced this value.
+    #[cfg(test)]
+    pub(crate) fn function(&self) -> Function<Data> {
+        self.tape.with_node(self.id, |function| function.clone())
     }
 
     /// Returns a clone of the leaf payload, or `None` for computed values.
     pub fn data(&self) -> Option<Data> {
-        self.tape.with_node(self.id, |inner| inner.data().cloned())
+        self.tape
+            .with_node(self.id, |function| function.data().cloned())
     }
 
     /// Records a computed node produced by `function` on the same network
     /// and returns a proxy to it.
-    fn apply(&self, function: Function) -> Self {
-        let id = self.tape.record(ValueInner::computed(function));
+    fn apply(&self, function: Function<Data>) -> Self {
+        let id = self.tape.record(function);
         Self::bind(self.tape, id)
     }
 
@@ -90,7 +101,7 @@ impl<'network, Data: Differentiable> Add for Value<'network, Data> {
 
     fn add(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::Add(self.id, rhs.id))
+        self.apply(Function::add(self.id, rhs.id))
     }
 }
 
@@ -99,7 +110,7 @@ impl<'network, Data: Differentiable> Mul for Value<'network, Data> {
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::Mul(self.id, rhs.id))
+        self.apply(Function::mul(self.id, rhs.id))
     }
 }
 
@@ -107,6 +118,6 @@ impl<'network, Data: Differentiable> Neg for Value<'network, Data> {
     type Output = Value<'network, Data>;
 
     fn neg(self) -> Self::Output {
-        self.apply(Function::Neg(self.id))
+        self.apply(Function::neg(self.id))
     }
 }
