@@ -1,4 +1,4 @@
-use crate::{Differentiable, ValueId};
+use crate::{Differentiable, Shape, ValueId};
 
 use super::Operation;
 
@@ -17,6 +17,17 @@ impl Mul {
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.left);
         visitor(self.right);
+    }
+
+    /// Infers the shape of the result, which both operands must share.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        let left = shape_of(self.left);
+        let right = shape_of(self.right);
+        assert_eq!(
+            left, right,
+            "multiplication requires operands of equal shapes"
+        );
+        left
     }
 }
 

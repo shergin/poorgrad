@@ -132,6 +132,36 @@ fn backward_routes_negation() {
 }
 
 #[test]
+fn subtraction_routes_signed_gradients() {
+    let network = Network::new();
+    let a = network.leaf(5.0_f64);
+    let b = network.leaf(3.0);
+    let difference = a - b;
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(difference), 2.0);
+
+    let gradients = network.backward(&evaluation, difference);
+    assert_eq!(*gradients.of(a), 1.0);
+    assert_eq!(*gradients.of(b), -1.0);
+}
+
+#[test]
+fn division_reuses_its_output_in_backward() {
+    let network = Network::new();
+    let a = network.leaf(6.0_f64);
+    let b = network.leaf(2.0);
+    let quotient = a / b;
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.value(quotient), 3.0);
+
+    let gradients = network.backward(&evaluation, quotient);
+    assert_eq!(*gradients.of(a), 0.5);
+    assert_eq!(*gradients.of(b), -1.5);
+}
+
+#[test]
 fn tanh_routes_gradient_through_its_output() {
     let network = Network::new();
     let x = network.leaf(0.5_f64);
@@ -215,7 +245,7 @@ fn gradient_descent_converges() {
     let network = Network::new();
     let w = network.parameter(0.0_f64);
     let target = network.leaf(3.0);
-    let error = w + -target;
+    let error = w - target;
     let loss = error * error;
 
     let w_symbol = w.symbol();
@@ -242,7 +272,7 @@ fn momentum_descent_converges() {
     let network = Network::new();
     let w = network.parameter(0.0_f64);
     let target = network.leaf(3.0);
-    let error = w + -target;
+    let error = w - target;
     let loss = error * error;
 
     let w_symbol = w.symbol();

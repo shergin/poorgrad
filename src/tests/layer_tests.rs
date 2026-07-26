@@ -42,7 +42,7 @@ fn layer_trains_toward_targets() {
     let outputs = layer.express(&network, &[input]);
     let mut loss = None;
     for (output, target) in outputs.iter().zip(targets) {
-        let error = *output + -target;
+        let error = *output - target;
         let squared = error * error;
         loss = Some(match loss {
             Some(total) => total + squared,

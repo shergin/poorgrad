@@ -1,8 +1,10 @@
-use crate::{Differentiable, Tensorial, ValueId};
+use crate::{Differentiable, Shape, Tensorial, ValueId};
 
 use static_assertions::assert_impl_all;
 
-use super::{Add, Broadcast, Leaf, MatMul, Mul, Neg, Operation, Parameter, Sum, Tanh, Transpose};
+use super::{
+    Add, Broadcast, Div, Leaf, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum, Tanh, Transpose,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -20,7 +22,9 @@ pub(crate) enum Function<Data> {
     Leaf(Leaf<Data>),
     Parameter(Parameter<Data>),
     Add(Add),
+    Sub(Sub),
     Mul(Mul),
+    Div(Div),
     Neg(Neg),
     Tanh(Tanh),
     MatMul(MatMul),
@@ -45,9 +49,19 @@ impl<Data> Function<Data> {
         Function::Add(Add { left, right })
     }
 
+    /// Creates the difference of `left` and `right`.
+    pub(crate) fn sub(left: ValueId, right: ValueId) -> Self {
+        Function::Sub(Sub { left, right })
+    }
+
     /// Creates the product of `left` and `right`.
     pub(crate) fn mul(left: ValueId, right: ValueId) -> Self {
         Function::Mul(Mul { left, right })
+    }
+
+    /// Creates the quotient of `left` and `right`.
+    pub(crate) fn div(left: ValueId, right: ValueId) -> Self {
+        Function::Div(Div { left, right })
     }
 
     /// Creates the negation of `operand`.
@@ -86,7 +100,9 @@ impl<Data> Function<Data> {
             Function::Leaf(leaf) => leaf.visit_operands(visitor),
             Function::Parameter(parameter) => parameter.visit_operands(visitor),
             Function::Add(add) => add.visit_operands(visitor),
+            Function::Sub(sub) => sub.visit_operands(visitor),
             Function::Mul(mul) => mul.visit_operands(visitor),
+            Function::Div(div) => div.visit_operands(visitor),
             Function::Neg(neg) => neg.visit_operands(visitor),
             Function::Tanh(tanh) => tanh.visit_operands(visitor),
             Function::MatMul(matmul) => matmul.visit_operands(visitor),
@@ -103,6 +119,31 @@ impl<Data> Function<Data> {
             Function::Leaf(leaf) => Some(&leaf.0),
             Function::Parameter(parameter) => Some(&parameter.0),
             _ => None,
+        }
+    }
+
+    /// Infers the shape of this function's result from its operands'
+    /// shapes, panicking on incompatibility.
+    ///
+    /// It is the shape-level mirror of `forward`: the same fold over the
+    /// tape, run once per node at record time instead of once per run.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape
+    where
+        Data: Differentiable,
+    {
+        match self {
+            Function::Leaf(leaf) => leaf.inferred_shape(),
+            Function::Parameter(parameter) => parameter.inferred_shape(),
+            Function::Add(add) => add.inferred_shape(shape_of),
+            Function::Sub(sub) => sub.inferred_shape(shape_of),
+            Function::Mul(mul) => mul.inferred_shape(shape_of),
+            Function::Div(div) => div.inferred_shape(shape_of),
+            Function::Neg(neg) => neg.inferred_shape(shape_of),
+            Function::Tanh(tanh) => tanh.inferred_shape(shape_of),
+            Function::MatMul(matmul) => matmul.inferred_shape(shape_of),
+            Function::Transpose(transpose) => transpose.inferred_shape(shape_of),
+            Function::Sum(sum) => sum.inferred_shape(shape_of),
+            Function::Broadcast(broadcast) => broadcast.inferred_shape(shape_of),
         }
     }
 
@@ -127,7 +168,9 @@ impl<Data: Tensorial> Operation<Data> for Function<Data> {
             Function::Leaf(leaf) => leaf.forward(values),
             Function::Parameter(parameter) => parameter.forward(values),
             Function::Add(add) => add.forward(values),
+            Function::Sub(sub) => sub.forward(values),
             Function::Mul(mul) => mul.forward(values),
+            Function::Div(div) => div.forward(values),
             Function::Neg(neg) => neg.forward(values),
             Function::Tanh(tanh) => tanh.forward(values),
             Function::MatMul(matmul) => matmul.forward(values),
@@ -144,7 +187,9 @@ impl<Data: Tensorial> Operation<Data> for Function<Data> {
                 parameter.backward(values, output, gradient, gradients)
             }
             Function::Add(add) => add.backward(values, output, gradient, gradients),
+            Function::Sub(sub) => sub.backward(values, output, gradient, gradients),
             Function::Mul(mul) => mul.backward(values, output, gradient, gradients),
+            Function::Div(div) => div.backward(values, output, gradient, gradients),
             Function::Neg(neg) => neg.backward(values, output, gradient, gradients),
             Function::Tanh(tanh) => tanh.backward(values, output, gradient, gradients),
             Function::MatMul(matmul) => matmul.backward(values, output, gradient, gradients),

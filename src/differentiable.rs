@@ -1,6 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use super::Shape;
+
 /// The numeric payload a `Value` node carries through the computation graph.
 ///
 /// It captures exactly the operations the autograd engine requires of an
@@ -31,6 +33,12 @@ pub trait Differentiable:
 
     /// Returns a one shaped like `self`, used to seed the output gradient.
     fn one_like(&self) -> Self;
+
+    /// Returns the shape of this payload: its extent along every axis.
+    ///
+    /// It is what record-time shape inference seeds leaves with. Scalars
+    /// are rank 0.
+    fn shape(&self) -> Shape;
 }
 
 impl Differentiable for f32 {
@@ -41,6 +49,10 @@ impl Differentiable for f32 {
     fn one_like(&self) -> Self {
         1.0
     }
+
+    fn shape(&self) -> Shape {
+        Shape::scalar()
+    }
 }
 
 impl Differentiable for f64 {
@@ -50,5 +62,9 @@ impl Differentiable for f64 {
 
     fn one_like(&self) -> Self {
         1.0
+    }
+
+    fn shape(&self) -> Shape {
+        Shape::scalar()
     }
 }

@@ -29,7 +29,7 @@ fn main() {
     for (x, y) in samples {
         let x = network.leaf(x);
         let y = network.leaf(y);
-        let error = w * x + b + -y;
+        let error = w * x + b - y;
         let squared = error * error;
         sample_losses.push(squared);
         total = Some(match total {

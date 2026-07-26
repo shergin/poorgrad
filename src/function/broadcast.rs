@@ -1,4 +1,4 @@
-use crate::{Tensorial, ValueId};
+use crate::{Shape, Tensorial, ValueId};
 
 use super::Operation;
 
@@ -22,6 +22,18 @@ impl Broadcast {
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.operand);
         visitor(self.like);
+    }
+
+    /// Infers the shape of the result: the reference's shape, reachable
+    /// only from a single-value operand.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        let operand = shape_of(self.operand);
+        assert_eq!(
+            operand.volume(),
+            1,
+            "broadcast requires a single-element operand, got {operand}"
+        );
+        shape_of(self.like)
     }
 }
 

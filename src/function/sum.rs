@@ -1,4 +1,4 @@
-use crate::{Tensorial, ValueId};
+use crate::{Shape, Tensorial, ValueId};
 
 use super::Operation;
 
@@ -16,6 +16,11 @@ impl Sum {
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.operand);
+    }
+
+    /// Infers the shape of the result: a rank-0 single value.
+    pub(crate) fn inferred_shape(&self, _shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        Shape::scalar()
     }
 }
 

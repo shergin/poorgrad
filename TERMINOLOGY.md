@@ -64,15 +64,26 @@ of its proxies, and the engine's single synchronization point.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In poorgrad a node is a
-[`Function<Data>`](src/function/function.rs) stored on the tape; it never
-changes once recorded.
+[`Function<Data>`](src/function/function.rs) stored on the tape beside its
+inferred `Shape`; neither changes once recorded.
+
+**Shape.** The extent of a payload along every axis; a scalar is rank 0.
+Shapes are inferred for every node when its expression is recorded — the
+shape-level mirror of `forward`, an abstract interpretation of the tape —
+so shape mismatches panic at the offending expression, before anything
+runs. In the record-once model this recovers most of the benefit of
+type-level shapes at no type-system cost. Shapes are lineage-invariant
+and stored as a separate cold column beside the hot function column
+(data-oriented layout: runs replay functions, never shapes). In poorgrad:
+[`Shape`](src/shape.rs), reachable via `Value::shape` and
+`Differentiable::shape`.
 
 **Operation.** A differentiable primitive: how to compute a payload from
 operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
 [`Operation`](src/function/operation.rs) trait, implemented by each
-`Function` variant (`Leaf`, `Parameter`, `Add`, `Mul`, `Neg`, `Tanh`,
-`MatMul`, `Transpose`, `Sum`, `Broadcast` under
+`Function` variant (`Leaf`, `Parameter`, `Add`, `Sub`, `Mul`, `Div`,
+`Neg`, `Tanh`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
 Arithmetic variants need only `Differentiable`; the transcendental and
 tensor-native ones raise the bound of running (not building) a graph to

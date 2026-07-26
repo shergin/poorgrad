@@ -1,4 +1,4 @@
-use crate::{Tensorial, ValueId};
+use crate::{Shape, Tensorial, ValueId};
 
 use super::Operation;
 
@@ -15,6 +15,16 @@ impl Transpose {
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.operand);
+    }
+
+    /// Infers the shape of the result: the operand's axes reversed.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        let operand = shape_of(self.operand);
+        assert!(
+            operand.rank() <= 2,
+            "transpose supports rank 2 at most, got {operand}"
+        );
+        Shape::new(operand.axes().iter().rev().copied())
     }
 }
 

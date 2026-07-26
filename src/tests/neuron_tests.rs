@@ -57,7 +57,7 @@ fn neuron_trains_toward_a_target() {
     let target = network.leaf(0.5);
 
     let output = neuron.express(&network, &[input]);
-    let error = output + -target;
+    let error = output - target;
     let loss = error * error;
 
     let output_symbol = output.symbol();

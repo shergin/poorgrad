@@ -44,7 +44,7 @@ let x = network.leaf(3.0);
 let y = network.leaf(15.0);
 
 // Operators record the graph; values are `Copy` and never consumed.
-let error = w * x + -y;
+let error = w * x - y;
 let loss = error * error;
 
 let w_symbol = w.symbol();
@@ -107,7 +107,10 @@ machinery, from tape to training:
   `transposed`, `sum`, and the explicit `broadcast_like` (scalars
   implement it degenerately, so one bound covers both worlds).
   Broadcasting is explicit by design: a single value spread across a
-  named reference's shape, never an implicit alignment rule.
+  named reference's shape, never an implicit alignment rule. Shapes are
+  inferred and checked when expressions are recorded — a shape mismatch
+  panics at the offending line, before anything runs: the record-once
+  answer to type-level shape checking.
 - [`Tape`](src/tape.rs) — internal: the append-only record (a Wengert list)
   shared by a network and all of its proxies, and the engine's single
   synchronization point.

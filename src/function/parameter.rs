@@ -1,4 +1,4 @@
-use crate::{Differentiable, ValueId};
+use crate::{Differentiable, Shape, ValueId};
 
 use super::Operation;
 
@@ -14,6 +14,13 @@ pub(crate) struct Parameter<Data>(pub(crate) Data);
 impl<Data> Parameter<Data> {
     /// Calls `visitor` with each operand link; a parameter has none.
     pub(crate) fn visit_operands(&self, _visitor: impl FnMut(ValueId)) {}
+}
+
+impl<Data: Differentiable> Parameter<Data> {
+    /// Infers the shape of the result: the payload's own shape.
+    pub(crate) fn inferred_shape(&self) -> Shape {
+        self.0.shape()
+    }
 }
 
 impl<Data: Differentiable> Operation<Data> for Parameter<Data> {

@@ -1,4 +1,4 @@
-use crate::{Tensorial, ValueId};
+use crate::{Shape, Tensorial, ValueId};
 
 use super::Operation;
 
@@ -17,6 +17,28 @@ impl MatMul {
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.left);
         visitor(self.right);
+    }
+
+    /// Infers the shape `[m, n]` of a `[m, k] . [k, n]` product.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        let left = shape_of(self.left);
+        let right = shape_of(self.right);
+        assert_eq!(
+            left.rank(),
+            2,
+            "matmul requires rank-2 operands, got {left}"
+        );
+        assert_eq!(
+            right.rank(),
+            2,
+            "matmul requires rank-2 operands, got {right}"
+        );
+        assert_eq!(
+            left.axes()[1],
+            right.axes()[0],
+            "matmul cannot multiply {left} by {right}"
+        );
+        Shape::new([left.axes()[0], right.axes()[1]])
     }
 }
 

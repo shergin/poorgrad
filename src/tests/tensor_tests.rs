@@ -1,11 +1,11 @@
-use crate::{Differentiable, Elementary, Network, Tensorial};
+use crate::{Differentiable, Elementary, Network, Shape, Tensorial};
 
 use super::Tensor;
 
 #[test]
 fn new_builds_from_shape_and_elements() {
     let tensor = Tensor::new([2, 3], vec![1.0_f64; 6]);
-    assert_eq!(tensor.shape(), &[2, 3]);
+    assert_eq!(tensor.shape(), Shape::new([2, 3]));
     assert_eq!(tensor.elements().len(), 6);
 }
 
@@ -45,7 +45,7 @@ fn likes_preserve_shape() {
     let tensor = Tensor::new([2, 2], vec![7.0_f64; 4]);
     let zero = tensor.zero_like();
     let one = tensor.one_like();
-    assert_eq!(zero.shape(), &[2, 2]);
+    assert_eq!(zero.shape(), Shape::new([2, 2]));
     assert_eq!(zero.elements(), &[0.0; 4]);
     assert_eq!(one.elements(), &[1.0; 4]);
 }
@@ -80,7 +80,7 @@ fn engine_trains_tensor_payloads_unchanged() {
     let x = network.leaf(Tensor::new([2], [3.0, 2.0]));
     let y = network.leaf(Tensor::new([2], [15.0, -6.0]));
 
-    let error = w * x + -y;
+    let error = w * x - y;
     let loss = error * error;
 
     let w_symbol = w.symbol();
@@ -93,7 +93,7 @@ fn engine_trains_tensor_payloads_unchanged() {
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
-            parameter.clone() + -(gradient.clone() * learning_rate.clone())
+            parameter.clone() - gradient.clone() * learning_rate.clone()
         });
     }
 
@@ -108,18 +108,18 @@ fn matmul_transpose_and_sum_compute() {
     let column = Tensor::new([2, 1], [5.0, 6.0]);
 
     let product = matrix.matmul(&column);
-    assert_eq!(product.shape(), &[2, 1]);
+    assert_eq!(product.shape(), Shape::new([2, 1]));
     assert_eq!(product.elements(), &[17.0, 39.0]);
 
     let transposed = matrix.transposed();
     assert_eq!(transposed.elements(), &[1.0, 3.0, 2.0, 4.0]);
 
     let total = matrix.sum();
-    assert_eq!(total.shape(), &[] as &[usize]);
+    assert_eq!(total.shape(), Shape::scalar());
     assert_eq!(total.elements(), &[10.0]);
 
     let spread = total.broadcast_like(&column);
-    assert_eq!(spread.shape(), &[2, 1]);
+    assert_eq!(spread.shape(), Shape::new([2, 1]));
     assert_eq!(spread.elements(), &[10.0, 10.0]);
 }
 
@@ -185,7 +185,7 @@ fn linear_regression_trains_in_matrix_form() {
     let y = network.leaf(Tensor::new([3, 1], [2.0, -1.0, 1.0]));
     let w = network.parameter(Tensor::filled([2, 1], 0.0_f64));
 
-    let error = x.matmul(w) + -y;
+    let error = x.matmul(w) - y;
     let loss = (error * error).sum();
 
     let w_symbol = w.symbol();
@@ -198,11 +198,52 @@ fn linear_regression_trains_in_matrix_form() {
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
-            parameter.clone() + -(gradient.clone() * learning_rate.broadcast_like(gradient))
+            parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
 
     let learned = network.resolve(w_symbol).unwrap().data().unwrap();
     assert!((learned.elements()[0] - 2.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn shapes_are_known_before_anything_runs() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3, 2], vec![1.0_f64; 6]));
+    let w = network.parameter(Tensor::filled([2, 1], 0.0_f64));
+
+    let prediction = x.matmul(w);
+    let loss = (prediction * prediction).sum();
+
+    // No forward has run; the shapes were inferred at record time.
+    assert_eq!(prediction.shape(), Shape::new([3, 1]));
+    assert_eq!(loss.shape(), Shape::scalar());
+}
+
+#[test]
+#[should_panic(expected = "matmul cannot multiply [2, 2] by [3, 1]")]
+fn recording_rejects_disagreeing_matmul_shapes() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
+    let b = network.leaf(Tensor::new([3, 1], vec![1.0_f64; 3]));
+    a.matmul(b);
+}
+
+#[test]
+#[should_panic(expected = "equal shapes")]
+fn recording_rejects_mismatched_addition() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2], vec![1.0_f64; 2]));
+    let b = network.leaf(Tensor::new([3], vec![1.0_f64; 3]));
+    let _ = a + b;
+}
+
+#[test]
+#[should_panic(expected = "single-element operand")]
+fn recording_rejects_broadcast_of_multi_element_sources() {
+    let network = Network::new();
+    let source = network.leaf(Tensor::new([2], vec![1.0_f64; 2]));
+    let reference = network.leaf(Tensor::new([3], vec![0.0_f64; 3]));
+    source.broadcast_like(reference);
 }

@@ -1,10 +1,10 @@
 use std::fmt;
-use std::ops::{Add, Mul, Neg};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 use std::ptr;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Elementary, Function, Symbol, Tape, Tensorial};
+use super::{Differentiable, Elementary, Function, Shape, Symbol, Tape, Tensorial};
 
 // Compile-time contract: proxies stay thread-safe and `Copy`; the anchor
 // rationale is documented in `network.rs`.
@@ -65,6 +65,11 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     #[cfg(test)]
     pub(crate) fn function(&self) -> Function<Data> {
         self.tape.with_node(self.id, |function| function.clone())
+    }
+
+    /// Returns the shape of this value, inferred when it was recorded.
+    pub fn shape(&self) -> Shape {
+        self.tape.shape(self.id)
     }
 
     /// Returns a clone of the leaf payload, or `None` for computed values.
@@ -154,12 +159,30 @@ impl<'network, Data: Differentiable> Add for Value<'network, Data> {
     }
 }
 
+impl<'network, Data: Differentiable> Sub for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.assert_same_network(&rhs);
+        self.apply(Function::sub(self.id, rhs.id))
+    }
+}
+
 impl<'network, Data: Differentiable> Mul for Value<'network, Data> {
     type Output = Value<'network, Data>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
         self.apply(Function::mul(self.id, rhs.id))
+    }
+}
+
+impl<'network, Data: Differentiable> Div for Value<'network, Data> {
+    type Output = Value<'network, Data>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self.assert_same_network(&rhs);
+        self.apply(Function::div(self.id, rhs.id))
     }
 }
 

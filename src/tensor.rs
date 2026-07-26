@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Elementary, Tensorial};
+use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -21,7 +21,7 @@ assert_impl_all!(Tensor<f64>: Send, Sync);
 /// multiplication, reductions) arrive with a later trait tier.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<Element> {
-    shape: Arc<Vec<usize>>,
+    shape: Shape,
     elements: Arc<Vec<Element>>,
 }
 
@@ -30,34 +30,28 @@ impl<Element: Differentiable> Tensor<Element> {
     ///
     /// # Panics
     /// Panics if the number of elements differs from the shape's volume.
-    pub fn new(shape: impl Into<Vec<usize>>, elements: impl Into<Vec<Element>>) -> Self {
-        let shape = shape.into();
+    pub fn new(shape: impl IntoIterator<Item = usize>, elements: impl Into<Vec<Element>>) -> Self {
+        let shape = Shape::new(shape);
         let elements = elements.into();
-        let volume: usize = shape.iter().product();
         assert_eq!(
-            volume,
+            shape.volume(),
             elements.len(),
             "tensor shape does not match its number of elements"
         );
         Self {
-            shape: Arc::new(shape),
+            shape,
             elements: Arc::new(elements),
         }
     }
 
     /// Creates a tensor of `shape` with every element set to `element`.
-    pub fn filled(shape: impl Into<Vec<usize>>, element: Element) -> Self {
-        let shape = shape.into();
-        let volume = shape.iter().product();
+    pub fn filled(shape: impl IntoIterator<Item = usize>, element: Element) -> Self {
+        let shape = Shape::new(shape);
+        let volume = shape.volume();
         Self {
-            shape: Arc::new(shape),
+            shape,
             elements: Arc::new(vec![element; volume]),
         }
-    }
-
-    /// Returns the shape.
-    pub fn shape(&self) -> &[usize] {
-        &self.shape
     }
 
     /// Returns the elements in row-major order.
@@ -69,7 +63,7 @@ impl<Element: Differentiable> Tensor<Element> {
     /// sharing this tensor's shape.
     fn map(&self, transform: impl Fn(&Element) -> Element) -> Self {
         Self {
-            shape: Arc::clone(&self.shape),
+            shape: self.shape.clone(),
             elements: Arc::new(self.elements.iter().map(transform).collect()),
         }
     }
@@ -81,7 +75,7 @@ impl<Element: Differentiable> Tensor<Element> {
     fn zip(&self, other: &Self, combine: impl Fn(&Element, &Element) -> Element) -> Self {
         assert_eq!(self.shape, other.shape, "tensors have different shapes");
         Self {
-            shape: Arc::clone(&self.shape),
+            shape: self.shape.clone(),
             elements: Arc::new(
                 self.elements
                     .iter()
@@ -141,6 +135,10 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
     fn one_like(&self) -> Self {
         self.map(|element| element.one_like())
     }
+
+    fn shape(&self) -> Shape {
+        self.shape.clone()
+    }
 }
 
 impl<Element: Elementary> Elementary for Tensor<Element> {
@@ -170,10 +168,10 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// Panics if either operand is not rank 2, the inner dimensions do not
     /// agree, or any dimension is empty.
     fn matmul(&self, rhs: &Self) -> Self {
-        assert_eq!(self.shape.len(), 2, "matmul requires rank-2 tensors");
-        assert_eq!(rhs.shape.len(), 2, "matmul requires rank-2 tensors");
-        let (rows, inner) = (self.shape[0], self.shape[1]);
-        let (rhs_inner, columns) = (rhs.shape[0], rhs.shape[1]);
+        assert_eq!(self.shape.rank(), 2, "matmul requires rank-2 tensors");
+        assert_eq!(rhs.shape.rank(), 2, "matmul requires rank-2 tensors");
+        let (rows, inner) = (self.shape.axes()[0], self.shape.axes()[1]);
+        let (rhs_inner, columns) = (rhs.shape.axes()[0], rhs.shape.axes()[1]);
         assert_eq!(inner, rhs_inner, "matmul inner dimensions do not agree");
         assert!(
             rows > 0 && inner > 0 && columns > 0,
@@ -193,7 +191,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             }
         }
         Self {
-            shape: Arc::new(vec![rows, columns]),
+            shape: Shape::new([rows, columns]),
             elements: Arc::new(elements),
         }
     }
@@ -205,11 +203,11 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// # Panics
     /// Panics if the tensor's rank exceeds 2.
     fn transposed(&self) -> Self {
-        if self.shape.len() < 2 {
+        if self.shape.rank() < 2 {
             return self.clone();
         }
-        assert_eq!(self.shape.len(), 2, "transpose supports rank 2 at most");
-        let (rows, columns) = (self.shape[0], self.shape[1]);
+        assert_eq!(self.shape.rank(), 2, "transpose supports rank 2 at most");
+        let (rows, columns) = (self.shape.axes()[0], self.shape.axes()[1]);
         let mut elements = Vec::with_capacity(rows * columns);
         for column in 0..columns {
             for row in 0..rows {
@@ -217,7 +215,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             }
         }
         Self {
-            shape: Arc::new(vec![columns, rows]),
+            shape: Shape::new([columns, rows]),
             elements: Arc::new(elements),
         }
     }
@@ -234,7 +232,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             .clone();
         let total = elements.fold(first, |total, element| total + element.clone());
         Self {
-            shape: Arc::new(Vec::new()),
+            shape: Shape::scalar(),
             elements: Arc::new(vec![total]),
         }
     }
@@ -251,7 +249,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             "broadcast requires a single-element tensor"
         );
         Self {
-            shape: Arc::clone(&reference.shape),
+            shape: reference.shape.clone(),
             elements: Arc::new(vec![self.elements[0].clone(); reference.elements.len()]),
         }
     }

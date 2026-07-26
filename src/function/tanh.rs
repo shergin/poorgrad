@@ -1,4 +1,4 @@
-use crate::{Elementary, ValueId};
+use crate::{Elementary, Shape, ValueId};
 
 use super::Operation;
 
@@ -16,6 +16,11 @@ impl Tanh {
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
         visitor(self.operand);
+    }
+
+    /// Infers the shape of the result: the operand's shape.
+    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+        shape_of(self.operand)
     }
 }
 
