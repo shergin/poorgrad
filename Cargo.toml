@@ -1,0 +1,12 @@
+[package]
+name = "poorgrad"
+version = "0.1.0"
+edition = "2024"
+description = "A poor man's autograd: a tiny scalar autograd engine for the GPU-poor, written in idiomatic Rust."
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
+categories = ["science", "mathematics"]
+
+[dependencies]
+cow_vec = "1.4"
