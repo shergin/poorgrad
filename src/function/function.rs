@@ -3,7 +3,8 @@ use crate::{Differentiable, Shape, Tensorial, ValueId};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, Div, Leaf, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum, Tanh, Transpose,
+    Add, Broadcast, Div, Exp, Leaf, Ln, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum, Tanh,
+    Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -27,6 +28,8 @@ pub(crate) enum Function<Data> {
     Div(Div),
     Neg(Neg),
     Tanh(Tanh),
+    Exp(Exp),
+    Ln(Ln),
     MatMul(MatMul),
     Transpose(Transpose),
     Sum(Sum),
@@ -74,6 +77,16 @@ impl<Data> Function<Data> {
         Function::Tanh(Tanh { operand })
     }
 
+    /// Creates the exponential of `operand`.
+    pub(crate) fn exp(operand: ValueId) -> Self {
+        Function::Exp(Exp { operand })
+    }
+
+    /// Creates the natural logarithm of `operand`.
+    pub(crate) fn ln(operand: ValueId) -> Self {
+        Function::Ln(Ln { operand })
+    }
+
     /// Creates the matrix product of `left` and `right`.
     pub(crate) fn matmul(left: ValueId, right: ValueId) -> Self {
         Function::MatMul(MatMul { left, right })
@@ -105,6 +118,8 @@ impl<Data> Function<Data> {
             Function::Div(div) => div.visit_operands(visitor),
             Function::Neg(neg) => neg.visit_operands(visitor),
             Function::Tanh(tanh) => tanh.visit_operands(visitor),
+            Function::Exp(exp) => exp.visit_operands(visitor),
+            Function::Ln(ln) => ln.visit_operands(visitor),
             Function::MatMul(matmul) => matmul.visit_operands(visitor),
             Function::Transpose(transpose) => transpose.visit_operands(visitor),
             Function::Sum(sum) => sum.visit_operands(visitor),
@@ -140,6 +155,8 @@ impl<Data> Function<Data> {
             Function::Div(div) => div.inferred_shape(shape_of),
             Function::Neg(neg) => neg.inferred_shape(shape_of),
             Function::Tanh(tanh) => tanh.inferred_shape(shape_of),
+            Function::Exp(exp) => exp.inferred_shape(shape_of),
+            Function::Ln(ln) => ln.inferred_shape(shape_of),
             Function::MatMul(matmul) => matmul.inferred_shape(shape_of),
             Function::Transpose(transpose) => transpose.inferred_shape(shape_of),
             Function::Sum(sum) => sum.inferred_shape(shape_of),
@@ -173,6 +190,8 @@ impl<Data: Tensorial> Operation<Data> for Function<Data> {
             Function::Div(div) => div.forward(values),
             Function::Neg(neg) => neg.forward(values),
             Function::Tanh(tanh) => tanh.forward(values),
+            Function::Exp(exp) => exp.forward(values),
+            Function::Ln(ln) => ln.forward(values),
             Function::MatMul(matmul) => matmul.forward(values),
             Function::Transpose(transpose) => transpose.forward(values),
             Function::Sum(sum) => sum.forward(values),
@@ -192,6 +211,8 @@ impl<Data: Tensorial> Operation<Data> for Function<Data> {
             Function::Div(div) => div.backward(values, output, gradient, gradients),
             Function::Neg(neg) => neg.backward(values, output, gradient, gradients),
             Function::Tanh(tanh) => tanh.backward(values, output, gradient, gradients),
+            Function::Exp(exp) => exp.backward(values, output, gradient, gradients),
+            Function::Ln(ln) => ln.backward(values, output, gradient, gradients),
             Function::MatMul(matmul) => matmul.backward(values, output, gradient, gradients),
             Function::Transpose(transpose) => {
                 transpose.backward(values, output, gradient, gradients)

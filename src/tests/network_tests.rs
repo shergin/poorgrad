@@ -176,6 +176,50 @@ fn tanh_routes_gradient_through_its_output() {
 }
 
 #[test]
+fn exp_reuses_its_output_in_backward() {
+    let network = Network::new();
+    let x = network.leaf(1.0_f64);
+    let y = x.exp();
+
+    let evaluation = network.forward();
+    let value = *evaluation.value(y);
+    assert!((value - std::f64::consts::E).abs() < 1e-12);
+
+    // The derivative of the exponential is the output itself.
+    let gradients = network.backward(&evaluation, y);
+    assert!((gradients.of(x) - value).abs() < 1e-12);
+}
+
+#[test]
+fn ln_routes_gradient_through_its_operand() {
+    let network = Network::new();
+    let x = network.leaf(2.0_f64);
+    let y = x.ln();
+
+    let evaluation = network.forward();
+    assert!((evaluation.value(y) - 2.0_f64.ln()).abs() < 1e-12);
+
+    let gradients = network.backward(&evaluation, y);
+    assert!((gradients.of(x) - 0.5).abs() < 1e-12);
+}
+
+#[test]
+fn sigmoid_composes_from_primitives() {
+    let network = Network::new();
+    let x = network.leaf(0.0_f64);
+    let one = network.leaf(1.0);
+
+    let sigmoid = one / (one + (-x).exp());
+
+    let evaluation = network.forward();
+    assert!((evaluation.value(sigmoid) - 0.5).abs() < 1e-12);
+
+    // The classic identity: d sigmoid / dx = sigmoid * (1 - sigmoid).
+    let gradients = network.backward(&evaluation, sigmoid);
+    assert!((gradients.of(x) - 0.25).abs() < 1e-12);
+}
+
+#[test]
 #[should_panic(expected = "stale")]
 fn backward_rejects_stale_evaluation() {
     let network = Network::new();

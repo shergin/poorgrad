@@ -83,7 +83,7 @@ operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
 [`Operation`](src/function/operation.rs) trait, implemented by each
 `Function` variant (`Leaf`, `Parameter`, `Add`, `Sub`, `Mul`, `Div`,
-`Neg`, `Tanh`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
+`Neg`, `Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
 Arithmetic variants need only `Differentiable`; the transcendental and
 tensor-native ones raise the bound of running (not building) a graph to

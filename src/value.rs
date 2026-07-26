@@ -100,6 +100,18 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     pub fn tanh(self) -> Self {
         self.apply(Function::tanh(self.id))
     }
+
+    /// Records the exponential of this value on the same network and
+    /// returns a proxy to it.
+    pub fn exp(self) -> Self {
+        self.apply(Function::exp(self.id))
+    }
+
+    /// Records the natural logarithm of this value on the same network
+    /// and returns a proxy to it.
+    pub fn ln(self) -> Self {
+        self.apply(Function::ln(self.id))
+    }
 }
 
 impl<'network, Data: Tensorial> Value<'network, Data> {
