@@ -142,11 +142,20 @@ by an opaque token cloned through every transition; kinship is token
 identity. In poorgrad: the crate-internal `Lineage` in
 [`src/tape.rs`](src/tape.rs).
 
-**Payload (`Data`).** The numeric value a node carries: `f32`/`f64` today,
-tensors later. Its contract is the
-[`Differentiable`](src/differentiable.rs) trait — arithmetic operators,
-`zero_like`/`one_like`, and `Send + Sync`; [`Elementary`](src/elementary.rs)
-adds the transcendentals activations need.
+**Payload (`Data`).** The numeric value a node carries: a scalar
+(`f32`/`f64`) or an elementwise [`Tensor`](src/tensor.rs). Its contract is
+the [`Differentiable`](src/differentiable.rs) trait — arithmetic
+operators, `zero_like`/`one_like`, and `Send + Sync`;
+[`Elementary`](src/elementary.rs) adds the transcendentals activations
+need.
+
+**Tensor.** A dense, fixed-shape payload with elementwise arithmetic:
+proof that the payload contract holds beyond scalars, since a
+`Network<Tensor<f64>>` runs the engine unchanged. Shape and elements live
+behind `Arc`s so cloning is O(1); binary operations require identical
+shapes (no implicit broadcasting). Tensor-native operations (matrix
+multiplication, reductions) arrive with a later trait tier. In poorgrad:
+[`Tensor`](src/tensor.rs).
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or
