@@ -9,8 +9,8 @@ use super::Operation;
 /// deliberately explicit: the target shape comes from a named reference
 /// value, never from an alignment rule. Broadcasting and summation are
 /// adjoint, so the operand's gradient is the sum of the incoming
-/// gradient; the reference contributes only its shape and receives no
-/// gradient.
+/// gradient, restored to the operand's own single-value shape; the
+/// reference contributes only its shape and receives no gradient.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Broadcast {
     pub(crate) operand: ValueId,
@@ -42,8 +42,12 @@ impl<Data: Tensorial> Operation<Data> for Broadcast {
         values[self.operand.index()].broadcast_like(&values[self.like.index()])
     }
 
-    fn backward(&self, _values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
+    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
         let operand = self.operand.index();
-        gradients[operand] = gradients[operand].clone() + gradient.sum();
+        // The reduced gradient is rank 0, but the operand may be any
+        // volume-1 shape (such as `[1]`); broadcasting the sum back to
+        // the operand's own shape keeps the accumulation well-formed.
+        let contribution = gradient.sum().broadcast_like(&values[operand]);
+        gradients[operand] = gradients[operand].clone() + contribution;
     }
 }

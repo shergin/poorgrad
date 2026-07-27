@@ -176,6 +176,19 @@ fn broadcast_and_sum_are_adjoint() {
 }
 
 #[test]
+fn broadcast_restores_singleton_shapes_in_backward() {
+    let network = Network::new();
+    let source = network.leaf(Tensor::new([1], [2.0_f64]));
+    let reference = network.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
+
+    let loss = source.broadcast_like(reference).sum();
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(loss);
+    assert_eq!(*gradients.of(source), Tensor::new([1], [3.0]));
+}
+
+#[test]
 #[should_panic(expected = "preserve the parameter's shape")]
 fn updated_rejects_shape_changing_updates() {
     let network = Network::new();
