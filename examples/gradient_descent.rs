@@ -45,11 +45,11 @@ fn main() {
     let per_sample: Vec<f64> = sample_losses
         .par_iter()
         .map(|&sample_loss| {
-            let gradients = network.backward(&evaluation, sample_loss);
+            let gradients = evaluation.backward(sample_loss);
             *gradients.of(w)
         })
         .collect();
-    let total_gradient = *network.backward(&evaluation, loss).of(w);
+    let total_gradient = *evaluation.backward(loss).of(w);
     println!("per-sample d/dw, computed on separate threads: {per_sample:?}");
     println!(
         "their sum {} equals the total-loss d/dw {} by linearity",
@@ -73,7 +73,7 @@ fn main() {
             for _ in 0..500 {
                 let loss = network.resolve(loss_symbol);
                 let evaluation = network.forward();
-                let gradients = network.backward(&evaluation, loss);
+                let gradients = evaluation.backward(loss);
                 network = network.updated(gradients.as_field(), |parameter, gradient| {
                     parameter - learning_rate * gradient
                 });

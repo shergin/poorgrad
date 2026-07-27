@@ -121,7 +121,7 @@ fn backward_accumulates_gradients_through_fan_out() {
     let evaluation = network.forward();
     assert_eq!(*evaluation.of(f), 8.0);
 
-    let gradients = network.backward(&evaluation, f);
+    let gradients = evaluation.backward(f);
     assert_eq!(*gradients.of(f), 1.0);
     assert_eq!(*gradients.of(a), 4.0);
     assert_eq!(*gradients.of(b), 2.0);
@@ -136,7 +136,7 @@ fn backward_routes_negation() {
     let evaluation = network.forward();
     assert_eq!(*evaluation.of(f), -4.0);
 
-    let gradients = network.backward(&evaluation, f);
+    let gradients = evaluation.backward(f);
     assert_eq!(*gradients.of(a), -4.0);
 }
 
@@ -150,7 +150,7 @@ fn subtraction_routes_signed_gradients() {
     let evaluation = network.forward();
     assert_eq!(*evaluation.of(difference), 2.0);
 
-    let gradients = network.backward(&evaluation, difference);
+    let gradients = evaluation.backward(difference);
     assert_eq!(*gradients.of(a), 1.0);
     assert_eq!(*gradients.of(b), -1.0);
 }
@@ -165,7 +165,7 @@ fn division_reuses_its_output_in_backward() {
     let evaluation = network.forward();
     assert_eq!(*evaluation.of(quotient), 3.0);
 
-    let gradients = network.backward(&evaluation, quotient);
+    let gradients = evaluation.backward(quotient);
     assert_eq!(*gradients.of(a), 0.5);
     assert_eq!(*gradients.of(b), -1.5);
 }
@@ -179,7 +179,7 @@ fn tanh_routes_gradient_through_its_output() {
     let evaluation = network.forward();
     assert_eq!(*evaluation.of(y), 0.5_f64.tanh());
 
-    let gradients = network.backward(&evaluation, y);
+    let gradients = evaluation.backward(y);
     let expected = 1.0 - 0.5_f64.tanh().powi(2);
     assert!((gradients.of(x) - expected).abs() < 1e-12);
 }
@@ -195,7 +195,7 @@ fn exp_reuses_its_output_in_backward() {
     assert!((value - std::f64::consts::E).abs() < 1e-12);
 
     // The derivative of the exponential is the output itself.
-    let gradients = network.backward(&evaluation, y);
+    let gradients = evaluation.backward(y);
     assert!((gradients.of(x) - value).abs() < 1e-12);
 }
 
@@ -208,7 +208,7 @@ fn ln_routes_gradient_through_its_operand() {
     let evaluation = network.forward();
     assert!((evaluation.of(y) - 2.0_f64.ln()).abs() < 1e-12);
 
-    let gradients = network.backward(&evaluation, y);
+    let gradients = evaluation.backward(y);
     assert!((gradients.of(x) - 0.5).abs() < 1e-12);
 }
 
@@ -224,18 +224,43 @@ fn sigmoid_composes_from_primitives() {
     assert!((evaluation.of(sigmoid) - 0.5).abs() < 1e-12);
 
     // The classic identity: d sigmoid / dx = sigmoid * (1 - sigmoid).
-    let gradients = network.backward(&evaluation, sigmoid);
+    let gradients = evaluation.backward(sigmoid);
     assert!((gradients.of(x) - 0.25).abs() < 1e-12);
 }
 
 #[test]
-#[should_panic(expected = "stale")]
-fn backward_rejects_stale_evaluation() {
+fn backward_survives_later_recordings() {
     let network = Network::new();
     let a = network.leaf(2.0_f64);
     let evaluation = network.forward();
     network.leaf(3.0);
-    network.backward(&evaluation, a);
+
+    // The evaluation carries its own snapshot, so differentiating it
+    // stays coherent after the network grows; later values are simply
+    // absent from the result.
+    let gradients = evaluation.backward(a);
+    assert_eq!(*gradients.of(a), 1.0);
+}
+
+#[test]
+#[should_panic(expected = "allocated after")]
+fn backward_rejects_later_targets() {
+    let network = Network::new();
+    let _ = network.leaf(2.0_f64);
+    let evaluation = network.forward();
+    let late = network.leaf(3.0);
+    evaluation.backward(late);
+}
+
+#[test]
+#[should_panic(expected = "different network")]
+fn backward_rejects_foreign_targets() {
+    let first = Network::new();
+    let second = Network::new();
+    let _ = first.leaf(1.0_f64);
+    let foreign = second.leaf(2.0);
+    let evaluation = first.forward();
+    evaluation.backward(foreign);
 }
 
 #[test]
@@ -254,7 +279,7 @@ fn payload_literals_mix_into_expressions() {
     assert_eq!(*evaluation.of(y), 7.0);
     assert_eq!(*evaluation.of(z), 2.0);
 
-    let gradients = network.backward(&evaluation, y);
+    let gradients = evaluation.backward(y);
     assert_eq!(*gradients.of(x), 2.0);
 }
 
@@ -298,7 +323,7 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
     let y = w * x;
 
     let evaluation = network.forward();
-    let gradients = network.backward(&evaluation, y);
+    let gradients = evaluation.backward(y);
     let updated = network.updated(gradients.as_field(), |parameter, gradient| {
         parameter - gradient
     });
@@ -328,7 +353,7 @@ fn gradient_descent_converges() {
     for _ in 0..30 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
-        let gradients = network.backward(&evaluation, loss);
+        let gradients = evaluation.backward(loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
             parameter - 0.3 * gradient
         });
@@ -356,7 +381,7 @@ fn momentum_descent_converges() {
     for _ in 0..40 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
-        let gradients = network.backward(&evaluation, loss);
+        let gradients = evaluation.backward(loss);
         let step = match velocity {
             Some(previous) => previous.scaled(0.5) + gradients.into_field(),
             None => gradients.into_field(),
@@ -375,7 +400,7 @@ fn updated_rejects_stale_gradients() {
     let network = Network::new();
     let w = network.parameter(1.0_f64);
     let evaluation = network.forward();
-    let gradients = network.backward(&evaluation, w);
+    let gradients = evaluation.backward(w);
     network.leaf(2.0);
     network.updated(gradients.as_field(), |parameter, _gradient| {
         parameter.clone()
@@ -388,7 +413,7 @@ fn updated_rejects_foreign_gradients() {
     let first = Network::new();
     let w = first.parameter(1.0_f64);
     let evaluation = first.forward();
-    let gradients = first.backward(&evaluation, w);
+    let gradients = evaluation.backward(w);
     let second = Network::<f64>::new();
     second.updated(gradients.as_field(), |parameter, _gradient| {
         parameter.clone()

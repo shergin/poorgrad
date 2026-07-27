@@ -91,7 +91,7 @@ fn engine_trains_tensor_payloads_unchanged() {
     for _ in 0..200 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
-        let gradients = network.backward(&evaluation, loss);
+        let gradients = evaluation.backward(loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.clone()
         });
@@ -152,7 +152,7 @@ fn matmul_routes_gradients_through_transposed_operands() {
 
     // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
     // `dB = A^T . 1` column-summed.
-    let gradients = network.backward(&evaluation, loss);
+    let gradients = evaluation.backward(loss);
     assert_eq!(gradients.of(a).elements(), &[5.0, 6.0, 5.0, 6.0]);
     assert_eq!(gradients.of(b).elements(), &[4.0, 6.0]);
 }
@@ -170,7 +170,7 @@ fn broadcast_and_sum_are_adjoint() {
 
     // The broadcast spreads to three positions, so the scalar's gradient
     // is the sum of three ones; the shape reference receives none.
-    let gradients = network.backward(&evaluation, loss);
+    let gradients = evaluation.backward(loss);
     assert_eq!(gradients.of(scalar).elements(), &[3.0]);
     assert_eq!(gradients.of(reference).elements(), &[0.0, 0.0, 0.0]);
 }
@@ -196,7 +196,7 @@ fn linear_regression_trains_in_matrix_form() {
     for _ in 0..300 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
-        let gradients = network.backward(&evaluation, loss);
+        let gradients = evaluation.backward(loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });

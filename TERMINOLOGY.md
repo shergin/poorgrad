@@ -19,7 +19,8 @@ reverse-mode AD over scalar programs.
 derivative of *one* output with respect to *all* inputs in a single backward
 sweep costing about one forward evaluation. Its mirror image, forward mode,
 computes one input against all outputs. Reverse mode wins for machine
-learning (one loss, many parameters). In poorgrad: [`Network::backward`](src/network.rs).
+learning (one loss, many parameters). In poorgrad:
+[`Evaluation::backward`](src/evaluation.rs).
 
 **Chain rule.** The composition law of derivatives: each operation knows the
 derivative of its output with respect to each operand and multiplies the
@@ -40,8 +41,8 @@ add into the gradient buffer instead of assigning.
 **Seed (cotangent).** The gradient planted at the target before the backward
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
 weights computes a vector-Jacobian product, the general form of reverse
-mode. In poorgrad [`Network::backward`](src/network.rs) seeds `one_like` at
-the target.
+mode. In poorgrad [`Evaluation::backward`](src/evaluation.rs) seeds
+`one_like` at the target.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is
@@ -138,8 +139,9 @@ snapshot isolation.
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
 are per-run buffers read back with the same proxies that built the graph:
-[`Evaluation`](src/evaluation.rs) (a payload per node, generation-pinned)
-and [`Gradients`](src/gradients.rs) (a gradient per node, for one target;
+[`Evaluation`](src/evaluation.rs) (a payload per node, generation-pinned,
+carrying its own tape snapshot so `backward` differentiates it without
+touching the network) and [`Gradients`](src/gradients.rs) (a gradient per node, for one target;
 convertible into a `Field` for combination and optimizer state). Every
 position-indexed buffer — evaluations, gradients, fields — answers the
 same read-back accessor, `of(value)`.

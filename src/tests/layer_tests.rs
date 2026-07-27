@@ -58,7 +58,7 @@ fn layer_trains_toward_targets() {
     for _ in 0..100 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
-        let gradients = network.backward(&evaluation, loss);
+        let gradients = evaluation.backward(loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
             parameter - 0.2 * gradient
         });

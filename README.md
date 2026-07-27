@@ -17,9 +17,10 @@ code executes, mutated in place, and single-threaded by assumption.
 `poorgrad` bets the other way — and the bet has landed:
 
 - **Record once, run anywhere.** Expressions record a static tape;
-  `forward` and `backward` replay an O(1) snapshot of it, so runs never
-  lock the graph and never disturb each other. One shared network serves
-  any number of threads, each differentiating its own target.
+  `forward` replays an O(1) snapshot of it, and `backward` replays the
+  evaluation's own copy, so runs never lock the graph and never disturb
+  each other. One shared network serves any number of threads, each
+  differentiating its own target.
 - **Values are `Copy`.** A `Value` is a borrow of its network plus a
   position: operators never consume their operands, handles cross threads
   freely, and a value outliving its graph is a compile error, not a bug
@@ -56,7 +57,7 @@ let mut network = network;
 for _ in 0..100 {
     let loss = network.resolve(loss_symbol);
     let evaluation = network.forward();
-    let gradients = network.backward(&evaluation, loss);
+    let gradients = evaluation.backward(loss);
     network = network.updated(gradients.as_field(), |w, g| w - 0.01 * g);
 }
 

@@ -33,7 +33,7 @@ fn main() {
     // The backward pass produces the gradient of the expression with
     // respect to every value. `a` feeds two subexpressions whose
     // contributions cancel exactly, hence its zero gradient.
-    let gradients = network.backward(&evaluation, expression);
+    let gradients = evaluation.backward(expression);
     println!(
         "gradients: d/da = {}, d/db = {}, d/dc = {}",
         gradients.of(a),

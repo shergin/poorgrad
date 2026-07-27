@@ -1,10 +1,7 @@
-use std::ptr;
-
 use static_assertions::assert_impl_all;
 
 use super::{
-    Differentiable, Evaluation, Field, Function, Gradients, Operation, Symbol, Tape, Tensorial,
-    Value,
+    Differentiable, Evaluation, Field, Function, Operation, Symbol, Tape, Tensorial, Value,
 };
 
 // Compile-time thread-safety contract. `Differentiable` already requires
@@ -125,7 +122,8 @@ impl<Data: Tensorial> Network<Data> {
     /// It replays an O(1) snapshot of the tape, so the network is never
     /// locked during the run and concurrent recordings do not disturb it.
     /// Allocation order is dependency order by construction, which is what
-    /// makes the single forward scan sufficient.
+    /// makes the single forward scan sufficient. The snapshot travels with
+    /// the returned evaluation, whose `backward` replays it in reverse.
     pub fn forward(&self) -> Evaluation<'_, Data> {
         let nodes = self.tape.snapshot();
         let mut values = Vec::with_capacity(nodes.len());
@@ -133,52 +131,7 @@ impl<Data: Tensorial> Network<Data> {
             let value = function.forward(&values);
             values.push(value);
         }
-        Evaluation::new(&self.tape, values)
-    }
-
-    /// Propagates gradients backward from `output`, returning the gradient
-    /// of `output` with respect to every value.
-    ///
-    /// It seeds the output gradient with `one_like` and accumulates into a
-    /// fresh buffer initialized with `zero_like`, scanning the tape in
-    /// reverse allocation order and leaving both the network and the
-    /// evaluation untouched. That separation of per-run state from the
-    /// shared structure is what lets many threads differentiate the same
-    /// network at once.
-    ///
-    /// # Panics
-    /// Panics if `evaluation` or `output` belongs to a different network,
-    /// or if the network has grown since `evaluation` ran.
-    pub fn backward(
-        &self,
-        evaluation: &Evaluation<'_, Data>,
-        output: Value<'_, Data>,
-    ) -> Gradients<Data> {
-        assert!(
-            ptr::eq(evaluation.tape(), &self.tape),
-            "evaluation belongs to a different network"
-        );
-        assert!(
-            ptr::eq(output.tape(), &self.tape),
-            "output belongs to a different network"
-        );
-        let nodes = self.tape.snapshot();
-        let values = evaluation.values();
-        assert_eq!(
-            values.len(),
-            nodes.len(),
-            "evaluation is stale: the network has grown since it ran"
-        );
-
-        let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
-        let output_index = output.id().index();
-        gradients[output_index] = values[output_index].one_like();
-        for index in (0..nodes.len()).rev() {
-            let function = nodes.get(index).expect("snapshot cannot shrink");
-            let gradient = gradients[index].clone();
-            function.backward(values, &values[index], &gradient, &mut gradients);
-        }
-        Gradients::new(Field::new(self.tape.lineage().clone(), gradients))
+        Evaluation::new(&self.tape, nodes, values)
     }
 }
 
