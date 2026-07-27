@@ -4,8 +4,9 @@
 //! evaluation and should scale with threads (runs never lock the
 //! network). `fork-training` gives every thread its own fork doing the
 //! same fixed amount of training; ideal scaling is flat time as threads
-//! grow, and any rise measures contention on the arena allocation lock
-//! shared by all forks of a lineage.
+//! grow. Training stopped touching the arena lock when the parameter
+//! store landed, so any remaining rise measures allocator contention
+//! from per-run buffers.
 
 use std::time::Duration;
 

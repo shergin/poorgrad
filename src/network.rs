@@ -34,8 +34,10 @@ impl<Data: Differentiable> Network<Data> {
         Self { tape: Tape::new() }
     }
 
-    /// Allocates a leaf (a network input or a learnable parameter) and
-    /// returns a proxy to it.
+    /// Allocates a constant leaf and returns a proxy to it.
+    ///
+    /// Constants are fixed at recording time; see `parameter` for
+    /// trainable leaves and `input` for leaves fed per run.
     pub fn leaf(&self, data: Data) -> Value<'_, Data> {
         let id = self.tape.record(Function::leaf(data));
         Value::bind(&self.tape, id)
@@ -126,8 +128,9 @@ impl<Data: Differentiable> Network<Data> {
     /// momentum velocity. The new generation shares every node except the
     /// parameters, positions stay stable (so every `Symbol` keeps
     /// resolving), and the old generation stays fully usable with its own
-    /// proxies and runs. The update scans the tape once and allocates only
-    /// the replaced parameters.
+    /// proxies and runs. The update rebuilds only the parameter store —
+    /// O(parameters) in work and allocations — and the replaced payloads
+    /// are reclaimed when the old generation drops.
     ///
     /// # Panics
     /// Panics if `direction` belongs to a different network lineage or a

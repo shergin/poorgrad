@@ -13,10 +13,10 @@ assert_impl_all!(Tensor<f64>: Send, Sync);
 ///
 /// It is the first non-scalar payload: a `Network<Tensor<f64>>` runs the
 /// whole engine unchanged, every node carrying a tensor and every
-/// operation applying elementwise. The shape and the elements live behind
-/// `Arc`s, so cloning is O(1) — the engine clones payloads liberally
-/// during gradient accumulation, and a payload must be cheap to copy by
-/// design. Binary operations require identical shapes; implicit
+/// operation applying elementwise. The elements live behind an `Arc`, so
+/// cloning costs one reference bump plus a small inline shape copy — the
+/// engine clones payloads liberally during gradient accumulation, and a
+/// payload must be cheap to copy by design. Binary operations require identical shapes; implicit
 /// broadcasting is deliberately absent. In the tensor-native tier
 /// (`Tensorial`), `matmul` and `transposed` stop at rank 2 while the
 /// axis-wise reduction and broadcast are rank-general; there is no

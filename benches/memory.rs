@@ -1,8 +1,9 @@
 //! Reports the allocation behavior of training, in exact bytes rather
 //! than timings: how much a step allocates in total, and how much of it
-//! survives the step (arena growth that accumulates over a lineage's
-//! lifetime). The retained number is the headline metric for the planned
-//! parameter-state store, which should drive it to zero.
+//! survives the step. The parameter store drove retention to zero —
+//! replaced payloads drop with their generation instead of accumulating
+//! in the arena — and this report is the regression fence keeping it
+//! there.
 //!
 //! Not a criterion benchmark: a counting global allocator gives
 //! deterministic numbers where RSS sampling is noisy. The `unsafe` here

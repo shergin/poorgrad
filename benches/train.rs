@@ -1,9 +1,9 @@
 //! Benchmarks of the training-step state transition.
 //!
 //! `updated` is benchmarked across graph sizes at a fixed parameter
-//! count: it currently scans every node, so the time grows with the
-//! graph, not the parameters. This is the before/after metric for the
-//! planned parameter-state store.
+//! count: since the parameter store landed it rebuilds only the store,
+//! so the time must stay flat as the graph grows. This bench is the
+//! regression fence for that O(parameters) claim.
 
 use std::time::Duration;
 
