@@ -181,7 +181,9 @@ impl<Data: Differentiable> Tape<Data> {
     /// symbols keep resolving across the transition.
     ///
     /// # Panics
-    /// Panics if `gradients` does not cover the whole tape.
+    /// Panics if `gradients` does not cover the whole tape, or if
+    /// `update` returns a payload whose shape differs from the
+    /// parameter's recorded shape.
     pub(crate) fn updated(
         &self,
         gradients: &[Data],
@@ -196,15 +198,21 @@ impl<Data: Differentiable> Tape<Data> {
             gradients.len(),
             "field is stale: the network has grown since it was produced"
         );
-        for index in 0..functions.len() {
+        for (index, gradient) in gradients.iter().enumerate() {
             let payload = match functions
                 .get(index)
                 .expect("index is in bounds")
                 .parameter_data()
             {
-                Some(current) => update(current, &gradients[index]),
+                Some(current) => update(current, gradient),
                 None => continue,
             };
+            let declared = shapes.get(index).expect("shapes cover the tape");
+            assert_eq!(
+                &payload.shape(),
+                declared,
+                "update must preserve the parameter's shape"
+            );
             functions.set(index, Function::parameter(payload));
         }
         // Shapes are lineage-invariant: the update replaces payloads, never

@@ -108,7 +108,8 @@ impl<Data: Differentiable> Network<Data> {
     ///
     /// # Panics
     /// Panics if `direction` belongs to a different network lineage or is
-    /// stale.
+    /// stale, or if `update` returns a payload whose shape differs from
+    /// the parameter's recorded shape.
     pub fn updated(&self, direction: &Field<Data>, update: impl Fn(&Data, &Data) -> Data) -> Self {
         assert!(
             direction.lineage() == self.tape.lineage(),

@@ -76,8 +76,9 @@ Shapes are inferred for every node when its expression is recorded — the
 shape-level mirror of `forward`, an abstract interpretation of the tape —
 so shape mismatches panic at the offending expression, before anything
 runs. In the record-once model this recovers most of the benefit of
-type-level shapes at no type-system cost. Shapes are lineage-invariant
-and stored as a separate cold column beside the hot function column
+type-level shapes at no type-system cost. Shapes are lineage-invariant —
+`updated` validates every replacement payload against the recorded
+shape — and stored as a separate cold column beside the hot function column
 (data-oriented layout: runs replay functions, never shapes). In poorgrad:
 [`Shape`](src/shape.rs), reachable via `Value::shape` and
 `Differentiable::shape`.

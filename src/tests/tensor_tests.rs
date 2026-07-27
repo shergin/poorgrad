@@ -176,6 +176,20 @@ fn broadcast_and_sum_are_adjoint() {
 }
 
 #[test]
+#[should_panic(expected = "preserve the parameter's shape")]
+fn updated_rejects_shape_changing_updates() {
+    let network = Network::new();
+    let w = network.parameter(Tensor::new([1], [1.0_f64]));
+    let loss = w.sum();
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(loss);
+    network.updated(gradients.as_field(), |_parameter, _gradient| {
+        Tensor::new([2], [7.0, 8.0])
+    });
+}
+
+#[test]
 fn linear_regression_trains_in_matrix_form() {
     // Fit `X . w = y` for `w = [[2], [-1]]`: the layer-sized problem that
     // took O(inputs * outputs) scalar nodes now takes a handful of tensor
