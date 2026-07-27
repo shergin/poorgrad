@@ -20,7 +20,7 @@ derivative of *one* output with respect to *all* inputs in a single backward
 sweep costing about one forward evaluation. Its mirror image, forward mode,
 computes one input against all outputs. Reverse mode wins for machine
 learning (one loss, many parameters). In poorgrad:
-[`Evaluation::backward`](src/evaluation.rs). The sweep executes derivative
+[`Evaluation::backward`](src/engine/evaluation.rs). The sweep executes derivative
 rules only for the target's ancestors; every other value's gradient is
 exactly zero, so expressions the target does not depend on — including
 singular ones — cannot disturb the result.
@@ -28,12 +28,12 @@ singular ones — cannot disturb the result.
 **Chain rule.** The composition law of derivatives: each operation knows the
 derivative of its output with respect to each operand and multiplies the
 incoming gradient through. Implemented locally by every `Function` variant
-in [`Operation::backward`](src/function/operation.rs).
+in [`Operation::backward`](src/engine/function/operation.rs).
 
 **Gradient.** The vector of partial derivatives of one chosen scalar (the
 *target*) with respect to every other value. A gradient is always "of a
 target"; there is no target-free gradient of a network. In poorgrad:
-[`Gradients`](src/gradients.rs), produced by one backward sweep and tied to
+[`Gradients`](src/engine/gradients.rs), produced by one backward sweep and tied to
 one evaluation and one target.
 
 **Gradient accumulation.** When a value feeds several consumers, its
@@ -44,14 +44,14 @@ add into the gradient buffer instead of assigning.
 **Seed (cotangent).** The gradient planted at the target before the backward
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
 weights computes a vector-Jacobian product, the general form of reverse
-mode. In poorgrad [`Evaluation::backward`](src/evaluation.rs) seeds
+mode. In poorgrad [`Evaluation::backward`](src/engine/evaluation.rs) seeds
 `one_like` at the target, which must be rank 0: a non-scalar value is
 reduced explicitly with `sum` before differentiation, never summed
 implicitly.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is
-[`Network::updated`](src/network.rs) with an update closure; see
+[`Network::updated`](src/engine/network.rs) with an update closure; see
 [`examples/gradient_descent.rs`](examples/gradient_descent.rs).
 
 ## Graph model
@@ -65,15 +65,15 @@ position, and allocation order is a topological order.
 operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
-poorgrad: [`Tape`](src/tape.rs), crate-internal, shared by a network and all
-of its proxies, and the engine's single synchronization point. Beside its
-immutable columns the tape carries the generation's parameter store: the
-one piece of state that changes across generations.
+poorgrad: [`Tape`](src/engine/tape/tape.rs), crate-internal, shared by a
+network and all of its proxies, and the engine's single synchronization
+point. Beside its immutable columns the tape carries the generation's
+parameter store: the one piece of state that changes across generations.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In poorgrad a node is a
-[`Function<Data>`](src/function/function.rs) stored on the tape beside its
-inferred `Shape`; neither changes once recorded.
+[`Function<Data>`](src/engine/function/function.rs) stored on the tape
+beside its inferred `Shape`; neither changes once recorded.
 
 **Shape.** The extent of a payload along every axis; a scalar is rank 0.
 Shapes are inferred for every node when its expression is recorded — the
@@ -84,16 +84,17 @@ type-level shapes at no type-system cost. Shapes are lineage-invariant —
 `updated` validates every replacement payload against the recorded
 shape — and stored as a separate cold column beside the hot function column
 (data-oriented layout: runs replay functions, never shapes). In poorgrad:
-[`Shape`](src/shape.rs), reachable via `Value::shape` and
+[`Shape`](src/payload/shape.rs), reachable via `Value::shape` and
 `Differentiable::shape`.
 
 **Operation.** A differentiable primitive: how to compute a payload from
 operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
-[`Operation`](src/function/operation.rs) trait, implemented by each
+[`Operation`](src/engine/function/operation.rs) trait, implemented by each
 computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Tanh`,
-`Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
-[`src/function/`](src/function/)) and dispatched with a plain `match`.
+`Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `SumAlong`, `Broadcast`,
+`BroadcastAlong` under [`src/engine/function/`](src/engine/function/)) and
+dispatched with a plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
 the enum's dispatch handles them directly instead of through the trait.
 Arithmetic variants need only `Differentiable`; the transcendental and
@@ -104,15 +105,15 @@ tensor-native ones raise the bound of running (not building) a graph to
 time. Gradients stop there and get read out; its `backward` is a no-op.
 Parameters and inputs are the other leaf kinds: trainable and fed
 per-run respectively. In poorgrad: `Function::Leaf`, allocated with
-[`Network::leaf`](src/network.rs); payload literals in expressions
+[`Network::leaf`](src/engine/network.rs); payload literals in expressions
 (`x * 2.0`) record leaves implicitly, one per appearance.
 
 **Parameter.** A trainable leaf: identical to `Leaf` during runs, but
 designated as updatable so a training step knows which leaves to replace.
 In poorgrad: `Function::Parameter`, allocated with
-[`Network::parameter`](src/network.rs) and replaced by `Network::updated`.
-The node holds only its slot; the payload lives in the generation's
-parameter store.
+[`Network::parameter`](src/engine/network.rs) and replaced by
+`Network::updated`. The node holds only its slot; the payload lives in the
+generation's parameter store.
 
 **Input.** A declared per-run leaf: `Network::input` records it with a
 default payload, and `forward_with` binds a fed payload to it for one
@@ -121,7 +122,7 @@ inputs fall back to their defaults, so plain `forward` stays total.
 Feeds are run state, not graph state — feeding never touches the tape,
 which is what lets concurrent runs forward one shared network on
 different batches. In poorgrad: `Function::Input`, fed via
-[`Network::forward_with`](src/network.rs).
+[`Network::forward_with`](src/engine/network.rs).
 
 **Topological (allocation) order.** Any ordering in which every operand
 precedes its consumers. Poorgrad's recording enforces it by construction —
@@ -134,24 +135,24 @@ sorting.
 **Network.** The single owner of the state of one computation graph: it owns
 the tape, hands out proxies, and is the boundary of type homogeneity (one
 `Data` type per network). Mutation happens only through state transitions
-that produce new generations. In poorgrad: [`Network`](src/network.rs).
+that produce new generations. In poorgrad: [`Network`](src/engine/network.rs).
 
 **Value (proxy).** A `Copy` handle pairing a borrow of the network's tape
 with a node position. Proxies cannot outlive their network, are never
 consumed by operators (`let x = v1 + v2;` records a node and keeps `v1`,
 `v2` usable), and cross threads freely. In poorgrad:
-[`Value`](src/value.rs).
+[`Value`](src/engine/value.rs).
 
 **Symbol.** A detached, `Copy` name of a value: the identity that
 persists across time, while `Value` is that identity's state in one
 generation. Each generation acts as an environment;
-[`Network::resolve`](src/network.rs) looks a symbol up in it and returns
-that generation's proxy; a failed resolution panics as a programmer
-error, while `try_resolve` probes and returns `None`. The symbol carries
-its lineage and its branch, so resolving into an unrelated network — or
-into a fork that diverged before the symbol was minted — panics rather
-than misbinding; within a branch, resolution is positional. In poorgrad:
-[`Symbol`](src/symbol.rs), obtained with `Value::symbol`.
+[`Network::resolve`](src/engine/network.rs) looks a symbol up in it and
+returns that generation's proxy; a failed resolution panics as a programmer
+error, while `try_resolve` probes and returns `None`. The symbol carries its
+lineage and its branch, so resolving into an unrelated network — or into a
+fork that diverged before the symbol was minted — panics rather than
+misbinding; within a branch, resolution is positional. In poorgrad:
+[`Symbol`](src/engine/symbol.rs), obtained with `Value::symbol`.
 
 **Generation.** A network state produced by a state transition: a fork
 (`Network::clone`) or a gradient step (`Network::updated`). Generations
@@ -164,18 +165,19 @@ slot-indexed and separate from the immutable tape columns: structure is
 recorded once, state turns over per generation. Forks share the store in
 O(1); `updated` rebuilds it in O(parameters), so replaced payloads are
 reclaimed when their generation drops instead of accumulating in the
-arena. In poorgrad: the crate-internal `ParameterStore` in
-[`src/tape.rs`](src/tape.rs).
+arena. In poorgrad: the crate-internal
+[`ParameterStore`](src/engine/tape/parameter_store.rs).
 
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
 are per-run buffers read back with the same proxies that built the graph:
-[`Evaluation`](src/evaluation.rs) (a payload per node, generation-pinned,
-carrying its own tape snapshot so `backward` differentiates it without
-touching the network) and [`Gradients`](src/gradients.rs) (a gradient per node, for one target;
+[`Evaluation`](src/engine/evaluation.rs) (a payload per node,
+generation-pinned, carrying its own tape snapshot so `backward`
+differentiates it without touching the network) and
+[`Gradients`](src/engine/gradients.rs) (a gradient per node, for one target;
 convertible into a `Field` for combination and optimizer state). Every
-position-indexed buffer — evaluations, gradients, fields — answers the
-same read-back accessor, `of(value)`.
+position-indexed buffer — evaluations, gradients, fields — answers the same
+read-back accessor, `of(value)`.
 
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across
@@ -183,17 +185,18 @@ runs (averaging data-parallel gradients) and carried across generations
 (momentum velocity, Adam moments). Supports elementwise algebra — `+`,
 `scaled`, `zip`, `map` — with kinship (same lineage, same length,
 agreeing branch chains) checked on every combination; `Network::updated`
-takes any field as its update direction. In physics terms, a `Gradients` is a discrete gradient field
-over the graph. In poorgrad: [`Field`](src/field.rs).
+takes any field as its update direction. In physics terms, a `Gradients` is
+a discrete gradient field over the graph. In poorgrad:
+[`Field`](src/engine/field.rs).
 
 **Lineage.** The family of networks descending from a common origin
 through forks and updates. Within a lineage, positions are attributed to
 branches, and they are stable within a branch — which is what makes
 symbols resolve and fields combine across generations. Tracked by a
 `Copy` identity minted from a process-global counter at network creation
-and carried through every transition; kinship is equality. In poorgrad:
-the crate-internal `Lineage` in [`src/tape.rs`](src/tape.rs), embedded in
-every `Symbol` and `Field`.
+and carried through every transition; kinship is equality. In poorgrad: the
+crate-internal [`Lineage`](src/engine/tape/identity.rs), embedded in every
+`Symbol` and `Field`.
 
 **Branch.** A contiguous run of recordings within a lineage. A fork or an
 update hands both sides a shared one-shot claim on the current branch:
@@ -204,22 +207,22 @@ owned their position when they were minted, and resolution checks branch
 membership before the positional lookup, so a divergent sibling's symbol
 panics instead of misbinding. Linear histories never mint branches:
 chains stay as short as the program's real divergence. In poorgrad: the
-crate-internal `Branch` and its segment chain in
-[`src/tape.rs`](src/tape.rs).
+crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
-(`f32`/`f64`) or an elementwise [`Tensor`](src/tensor.rs). Its contract is
-the [`Differentiable`](src/differentiable.rs) trait — arithmetic
-operators, `zero_like`/`one_like`, and `Send + Sync`;
-[`Elementary`](src/elementary.rs) adds the transcendentals activations
-need.
+(`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
+contract is the [`Differentiable`](src/payload/differentiable.rs) trait —
+arithmetic operators, `zero_like`/`one_like`, and `Send + Sync`;
+[`Elementary`](src/payload/elementary.rs) adds the transcendentals
+activations need.
 
 **Tensor.** A dense, fixed-shape payload: proof that the payload
 contract holds beyond scalars, since a `Network<Tensor<f64>>` runs the
 engine unchanged. Shape and elements live behind `Arc`s so cloning is
 O(1); elementwise operations require identical shapes, and the
-tensor-native tier adds `matmul`, `transposed`, `sum`, and the explicit
-`broadcast_like`. In poorgrad: [`Tensor`](src/tensor.rs).
+tensor-native tier adds `matmul`, `transposed`, the reductions `sum` and
+`sum_along`, and the explicit broadcasts `broadcast_like` and
+`broadcast_along`. In poorgrad: [`Tensor`](src/payload/tensor.rs).
 
 **Tensorial.** The payload tier of tensor-native operations — matrix
 multiplication, transposition, reductions, and explicit broadcasts —
@@ -234,7 +237,7 @@ the other's gradient rule. Broadcasting is explicit by design: a single
 value spread across a named reference's shape, or a payload repeated
 along one named axis of a reference — the axis is always written, and
 no operation aligns shapes implicitly. In poorgrad: the
-[`Tensorial`](src/tensorial.rs) trait, recorded into graphs via
+[`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
 and `broadcast_along`.
 
@@ -250,7 +253,7 @@ an independent node list; later recordings on either side never affect the
 other. The two sides contend for the current branch on their first
 recording, and the loser diverges onto a fresh one, so their later
 symbols never misbind (see Branch). In poorgrad: `Network::clone`, built
-on [`Tape::fork`](src/tape.rs).
+on [`Tape::fork`](src/engine/tape/tape.rs).
 
 ## Neural building blocks
 
@@ -261,7 +264,7 @@ network at construction but held as symbols, so the neuron itself is
 detached: it survives generations, and `express` records its expression
 against whichever generation it is given. It is the scalar-granularity
 teaching block; `Layer` records at tensor granularity and does not
-build on it. In poorgrad: [`Neuron`](src/neuron.rs).
+build on it. In poorgrad: [`Neuron`](src/neural/neuron.rs).
 
 **Layer.** A dense (fully connected) layer at tensor granularity:
 `activation(x . w + b)` over a `[batch, inputs]` value, with one
@@ -270,20 +273,20 @@ through the explicit axis broadcast — a handful of tensor nodes instead
 of one node per scalar weight. Layers chain by feeding one layer's
 output batch to the next. Detached like `Neuron`: parameters live on
 the network, symbols in the layer. In poorgrad:
-[`Layer`](src/layer.rs).
+[`Layer`](src/neural/layer.rs).
 
 **Mlp.** A multilayer perceptron: dense layers chained by a topology of
 value widths (`[3, 4, 4, 1]`), hidden layers squashing with `Tanh` and
 an affine output layer. A facade over `Layer`, detached the same way,
 with initialization owned by the caller through a shape-to-payload
-initializer. In poorgrad: [`Mlp`](src/mlp.rs).
+initializer. In poorgrad: [`Mlp`](src/neural/mlp.rs).
 
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
 is what gives stacked neurons expressive power beyond affine maps. It is a
 graph operation like any other, so it participates in differentiation
 (`Function::Tanh`, recorded by `Value::tanh`; the derivative
 `1 - tanh(x)^2` reuses the node's own output). In poorgrad: the
-[`Activation`](src/neuron.rs) enum selecting `Identity` or `Tanh`.
+[`Activation`](src/neural/activation.rs) enum selecting `Identity` or `Tanh`.
 
 ## Further reading
 
