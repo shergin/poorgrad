@@ -138,8 +138,9 @@ generation. Each generation acts as an environment;
 [`Network::resolve`](src/network.rs) looks a symbol up in it and returns
 that generation's proxy; a failed resolution panics as a programmer
 error, while `try_resolve` probes and returns `None`. The symbol carries
-its lineage, so resolving into an unrelated network panics rather than
-misbinding; within a lineage, resolution is positional. In poorgrad:
+its lineage and its branch, so resolving into an unrelated network — or
+into a fork that diverged before the symbol was minted — panics rather
+than misbinding; within a branch, resolution is positional. In poorgrad:
 [`Symbol`](src/symbol.rs), obtained with `Value::symbol`.
 
 **Generation.** A network state produced by a state transition: a fork
@@ -170,18 +171,31 @@ same read-back accessor, `of(value)`.
 *lineage* rather than to a single generation, so it can be combined across
 runs (averaging data-parallel gradients) and carried across generations
 (momentum velocity, Adam moments). Supports elementwise algebra — `+`,
-`scaled`, `zip`, `map` — with kinship (same lineage, same length) checked
-on every combination; `Network::updated` takes any field as its update
-direction. In physics terms, a `Gradients` is a discrete gradient field
+`scaled`, `zip`, `map` — with kinship (same lineage, same length,
+agreeing branch chains) checked on every combination; `Network::updated`
+takes any field as its update direction. In physics terms, a `Gradients` is a discrete gradient field
 over the graph. In poorgrad: [`Field`](src/field.rs).
 
 **Lineage.** The family of networks descending from a common origin
-through forks and updates. Positions are stable within a lineage, which is
-what makes symbols resolve and fields combine across generations. Tracked
-by a `Copy` identity minted from a process-global counter at network
-creation and carried through every transition; kinship is equality. In
-poorgrad: the crate-internal `Lineage` in [`src/tape.rs`](src/tape.rs),
-embedded in every `Symbol` and `Field`.
+through forks and updates. Within a lineage, positions are attributed to
+branches, and they are stable within a branch — which is what makes
+symbols resolve and fields combine across generations. Tracked by a
+`Copy` identity minted from a process-global counter at network creation
+and carried through every transition; kinship is equality. In poorgrad:
+the crate-internal `Lineage` in [`src/tape.rs`](src/tape.rs), embedded in
+every `Symbol` and `Field`.
+
+**Branch.** A contiguous run of recordings within a lineage. A fork or an
+update hands both sides a shared one-shot claim on the current branch:
+the first side to record continues it, and every other sibling starts a
+fresh branch at its own length, so divergent forks stop sharing identity
+exactly where their recordings part ways. Symbols carry the branch that
+owned their position when they were minted, and resolution checks branch
+membership before the positional lookup, so a divergent sibling's symbol
+panics instead of misbinding. Linear histories never mint branches:
+chains stay as short as the program's real divergence. In poorgrad: the
+crate-internal `Branch` and its segment chain in
+[`src/tape.rs`](src/tape.rs).
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/tensor.rs). Its contract is
@@ -219,7 +233,10 @@ parameter store, so the arena holds structure only.
 
 **Fork.** An O(1) copy of a network sharing the underlying arena but owning
 an independent node list; later recordings on either side never affect the
-other. In poorgrad: `Network::clone`, built on [`Tape::fork`](src/tape.rs).
+other. The two sides contend for the current branch on their first
+recording, and the loser diverges onto a fresh one, so their later
+symbols never misbind (see Branch). In poorgrad: `Network::clone`, built
+on [`Tape::fork`](src/tape.rs).
 
 ## Neural building blocks
 

@@ -43,6 +43,24 @@ fn combination_rejects_foreign_lineages() {
 }
 
 #[test]
+#[should_panic(expected = "divergent forks")]
+fn combination_rejects_divergent_forks() {
+    let network = Network::new();
+    let _anchor = network.leaf(1.0_f64);
+    let fork = network.clone();
+
+    // Equal lengths, divergent branches: the fields describe different
+    // nodes at the same positions and must not combine.
+    let mine = network.leaf(2.0);
+    let theirs = fork.leaf(3.0);
+
+    let field_mine = network.forward().backward(mine).into_field();
+    let field_theirs = fork.forward().backward(theirs).into_field();
+
+    let _ = &field_mine + &field_theirs;
+}
+
+#[test]
 fn fields_survive_generations_within_a_lineage() {
     let network = Network::new();
     let w = network.parameter(1.0_f64);

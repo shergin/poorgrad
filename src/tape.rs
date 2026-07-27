@@ -1,4 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::ops::Range;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cow_vec::CowVec;
@@ -17,6 +18,15 @@ assert_impl_all!(Tape<f64>: Send, Sync);
 // load-bearing on their own.
 assert_impl_all!(Lineage: Send, Sync, Copy);
 
+/// Mints a fresh process-globally unique identity.
+///
+/// `Relaxed` suffices: only uniqueness matters, and the identity
+/// reaches other threads through the structure it identifies.
+fn next_identity() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// An opaque token identifying a family of related tapes.
 ///
 /// Every tape mints its identity from a process-global counter at
@@ -25,20 +35,90 @@ assert_impl_all!(Lineage: Send, Sync, Copy);
 /// plain equality. Being a `Copy` integer rather than a reference-counted
 /// token, it rides inside every `Symbol` without costing `Copy`, and
 /// creating fields and evaluations never touches an atomic counter.
-/// Positions are stable within a lineage, which is what lets symbols
-/// resolve and fields combine across generations.
+/// Within a lineage, positions are attributed to branches: divergent
+/// forks stop sharing identity exactly where their recordings part ways.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Lineage(u64);
 
 impl Lineage {
     /// Mints a fresh lineage identity.
-    ///
-    /// `Relaxed` suffices: only uniqueness matters, and the identity
-    /// reaches other threads through the tape it identifies.
     fn new() -> Self {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+        Self(next_identity())
     }
+}
+
+/// A globally unique identity for one contiguous run of recordings.
+///
+/// A branch names an index range of a tape: symbols carry the branch
+/// that owned their position when they were minted, so a divergent
+/// fork — which fills the same positions with different nodes under a
+/// different branch — rejects them instead of misbinding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Branch(u64);
+
+impl Branch {
+    /// Mints a fresh branch identity.
+    fn new() -> Self {
+        Self(next_identity())
+    }
+}
+
+/// One contiguous index range of a tape attributed to a branch.
+///
+/// The range starts at `start` and ends where the next segment starts,
+/// or at the tape's current length for the tip segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Segment {
+    branch: Branch,
+    start: usize,
+}
+
+/// Returns whether two chains attribute the index range `[0, length)`
+/// to the same branches.
+///
+/// Segments starting at or beyond `length` are ignored: they describe
+/// nodes outside the compared range, so a longer tape stays kin with a
+/// field taken before it grew.
+pub(crate) fn chains_agree(
+    left: &Arc<Vec<Segment>>,
+    right: &Arc<Vec<Segment>>,
+    length: usize,
+) -> bool {
+    if Arc::ptr_eq(left, right) {
+        return true;
+    }
+    let trimmed = |chain: &[Segment]| {
+        chain
+            .iter()
+            .take_while(|segment| segment.start < length)
+            .count()
+    };
+    left[..trimmed(left)] == right[..trimmed(right)]
+}
+
+/// An atomically taken snapshot of one tape: the recorded nodes, the
+/// generation's parameter payloads, and the branch chain.
+///
+/// All three parts share their backing storage with the tape, so taking
+/// a snapshot is O(1); replaying it never requires the tape lock.
+#[derive(Debug)]
+pub(crate) struct Snapshot<Data> {
+    pub(crate) functions: CowVec<Function<Data>>,
+    pub(crate) parameters: Arc<ParameterStore<Data>>,
+    pub(crate) chain: Arc<Vec<Segment>>,
+}
+
+/// The tape's relationship to its chain's tip branch.
+#[derive(Debug)]
+enum Tip {
+    /// This tape alone may extend the tip branch.
+    Owned,
+    /// The tip is shared with sibling tapes after a fork or an update:
+    /// the first sibling to record claims the token and continues the
+    /// branch, every other sibling mints its own branch on its first
+    /// recording. This is what keeps linear histories — duplicate, then
+    /// only one side records — from growing the chain at all.
+    Contended(Arc<AtomicBool>),
 }
 
 /// A lightweight handle to a parameter's slot in the `ParameterStore`.
@@ -100,6 +180,52 @@ struct TapeInner<Data> {
     functions: CowVec<Function<Data>>,
     shapes: CowVec<Shape>,
     parameters: Arc<ParameterStore<Data>>,
+    chain: Arc<Vec<Segment>>,
+    tip: Tip,
+}
+
+impl<Data> TapeInner<Data> {
+    /// Secures the right to record at the current tip before a push.
+    ///
+    /// An owned tip records freely. A contended tip races its siblings
+    /// on the shared token: the winner continues the tip branch, a
+    /// loser mints a fresh branch starting at its own length. Either
+    /// way this tape owns its tip afterwards. `AcqRel` documents the
+    /// token as a synchronization point between sibling tapes; the data
+    /// it guards is only the branch continuation decision.
+    fn claim_tip(&mut self) {
+        let Tip::Contended(token) = &self.tip else {
+            return;
+        };
+        let won = token
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !won {
+            Arc::make_mut(&mut self.chain).push(Segment {
+                branch: Branch::new(),
+                start: self.functions.len(),
+            });
+        }
+        self.tip = Tip::Owned;
+    }
+
+    /// Prepares the tip for duplication and returns the copy's tip.
+    ///
+    /// Both sides must re-win the right to extend the tip branch, so an
+    /// owned tip becomes contended on a fresh token shared with the
+    /// copy. An already contended tip hands the copy the same token:
+    /// every tape sharing an unextended tip contends on one token, so
+    /// exactly one of them ever continues the branch.
+    fn share_tip(&mut self) -> Tip {
+        match &self.tip {
+            Tip::Contended(token) => Tip::Contended(Arc::clone(token)),
+            Tip::Owned => {
+                let token = Arc::new(AtomicBool::new(false));
+                self.tip = Tip::Contended(Arc::clone(&token));
+                Tip::Contended(token)
+            }
+        }
+    }
 }
 
 /// The shared, append-only record of every node of one computation graph.
@@ -128,6 +254,11 @@ impl<Data: Differentiable> Tape<Data> {
                 functions: CowVec::new(),
                 shapes: CowVec::new(),
                 parameters: Arc::new(ParameterStore::new()),
+                chain: Arc::new(vec![Segment {
+                    branch: Branch::new(),
+                    start: 0,
+                }]),
+                tip: Tip::Owned,
             }),
             lineage: Lineage::new(),
         }
@@ -164,6 +295,7 @@ impl<Data: Differentiable> Tape<Data> {
                     .clone()
             })
         };
+        inner.claim_tip();
         inner.functions.push(function);
         inner.shapes.push(shape);
         debug_assert_eq!(inner.functions.len(), inner.shapes.len());
@@ -180,6 +312,7 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn record_parameter(&self, data: Data) -> ValueId {
         let shape = data.shape();
         let mut inner = self.lock();
+        inner.claim_tip();
         let inner = &mut *inner;
         let store = Arc::make_mut(&mut inner.parameters);
         let slot = SlotId(store.payloads.len());
@@ -190,6 +323,47 @@ impl<Data: Differentiable> Tape<Data> {
         store.payloads.push(data);
         store.nodes.push(id);
         id
+    }
+
+    /// Returns the branch that owns position `id` on this tape.
+    ///
+    /// # Panics
+    /// Panics if `id` is not recorded on this tape.
+    pub(crate) fn branch_of(&self, id: ValueId) -> Branch {
+        let inner = self.lock();
+        assert!(
+            id.index() < inner.functions.len(),
+            "`ValueId` is out of bounds for its tape"
+        );
+        inner
+            .chain
+            .iter()
+            .rev()
+            .find(|segment| segment.start <= id.index())
+            .expect("the root segment starts at zero")
+            .branch
+    }
+
+    /// Returns the index range `branch` owns on this tape, or `None` if
+    /// the branch does not appear in this tape's chain.
+    pub(crate) fn segment_range(&self, branch: Branch) -> Option<Range<usize>> {
+        let inner = self.lock();
+        let chain = inner.chain.as_slice();
+        chain
+            .iter()
+            .position(|segment| segment.branch == branch)
+            .map(|position| {
+                let end = chain
+                    .get(position + 1)
+                    .map_or(inner.functions.len(), |next| next.start);
+                chain[position].start..end
+            })
+    }
+
+    /// Returns whether this tape attributes `[0, length)` to the same
+    /// branches as `chain`.
+    pub(crate) fn agrees_with_chain(&self, chain: &Arc<Vec<Segment>>, length: usize) -> bool {
+        chains_agree(&self.lock().chain, chain, length)
     }
 
     /// Returns a clone of the payload behind `id`: a leaf's embedded
@@ -243,30 +417,39 @@ impl<Data: Differentiable> Tape<Data> {
         reader(function)
     }
 
-    /// Returns an O(1) snapshot of the recorded nodes and the current
-    /// parameter payloads, taken atomically under one lock section.
+    /// Returns an O(1) snapshot of the recorded nodes, the current
+    /// parameter payloads, and the branch chain, taken atomically under
+    /// one lock section.
     ///
     /// The snapshot shares the underlying arena and store but is
     /// isolated from later recordings and updates, so it can be replayed
     /// without holding the tape lock.
-    pub(crate) fn snapshot(&self) -> (CowVec<Function<Data>>, Arc<ParameterStore<Data>>) {
+    pub(crate) fn snapshot(&self) -> Snapshot<Data> {
         let inner = self.lock();
-        (inner.functions.clone(), Arc::clone(&inner.parameters))
+        Snapshot {
+            functions: inner.functions.clone(),
+            parameters: Arc::clone(&inner.parameters),
+            chain: Arc::clone(&inner.chain),
+        }
     }
 
     /// Creates an independent copy of the tape in O(1).
     ///
-    /// The copy shares the underlying arena and the parameter store but
-    /// keeps its own node list, so later recordings on either tape never
-    /// affect the other; the store un-shares itself on the first
-    /// post-fork parameter allocation or update.
+    /// The copy shares the underlying arena, the parameter store, and
+    /// the branch chain, so later recordings on either tape never affect
+    /// the other: the first side to record continues the tip branch and
+    /// the other mints its own, which is what keeps their symbols from
+    /// misbinding after they diverge.
     pub(crate) fn fork(&self) -> Self {
-        let inner = self.lock();
+        let mut inner = self.lock();
+        let tip = inner.share_tip();
         Self {
             inner: Mutex::new(TapeInner {
                 functions: inner.functions.clone(),
                 shapes: inner.shapes.clone(),
                 parameters: Arc::clone(&inner.parameters),
+                chain: Arc::clone(&inner.chain),
+                tip,
             }),
             lineage: self.lineage,
         }
@@ -291,12 +474,15 @@ impl<Data: Differentiable> Tape<Data> {
         gradients: &[Data],
         update: impl Fn(&Data, &Data) -> Data,
     ) -> Self {
-        let (functions, shapes, parameters) = {
-            let inner = self.lock();
+        let (functions, shapes, parameters, chain, tip) = {
+            let mut inner = self.lock();
+            let tip = inner.share_tip();
             (
                 inner.functions.clone(),
                 inner.shapes.clone(),
                 Arc::clone(&inner.parameters),
+                Arc::clone(&inner.chain),
+                tip,
             )
         };
         assert_eq!(
@@ -323,6 +509,8 @@ impl<Data: Differentiable> Tape<Data> {
                     payloads,
                     nodes: parameters.nodes.clone(),
                 }),
+                chain,
+                tip,
             }),
             lineage: self.lineage,
         }

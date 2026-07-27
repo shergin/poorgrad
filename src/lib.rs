@@ -32,5 +32,5 @@ pub use tensorial::Tensorial;
 pub use value::Value;
 
 pub(crate) use function::Function;
-pub(crate) use tape::{Lineage, SlotId, Tape};
+pub(crate) use tape::{Branch, Lineage, Segment, SlotId, Tape, chains_agree};
 pub(crate) use value::ValueId;

@@ -1,8 +1,9 @@
 use std::ops::Add;
+use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Lineage, Value};
+use super::{Differentiable, Lineage, Segment, Value, chains_agree};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -12,33 +13,47 @@ assert_impl_all!(Field<f64>: Send, Sync);
 ///
 /// It is the general form of per-node data, of which a gradient buffer is
 /// one role. A field is tied to a network *lineage* rather than to a
-/// single generation: positions are stable across forks and updates, so a
-/// field can be carried across training steps (a momentum velocity, Adam
-/// moments) and combined across runs (averaging data-parallel gradients).
-/// The elementwise algebra — `+`, `scaled`, `zip`, `map` — checks kinship
-/// (same lineage, same length) on every combination. In physics terms, a
-/// `Gradients` is a discrete gradient field over the graph; other fields
-/// assign velocities, moments, or learning rates to the same nodes.
+/// single generation: positions are stable across updates and
+/// non-divergent forks, so a field can be carried across training steps
+/// (a momentum velocity, Adam moments) and combined across runs
+/// (averaging data-parallel gradients). The elementwise algebra — `+`,
+/// `scaled`, `zip`, `map` — checks kinship on every combination: same
+/// lineage, same length, and branch chains agreeing over the covered
+/// range, so a divergent fork's field of equal length is rejected
+/// rather than misapplied. In physics terms, a `Gradients` is a
+/// discrete gradient field over the graph; other fields assign
+/// velocities, moments, or learning rates to the same nodes.
 #[derive(Debug, Clone)]
 pub struct Field<Data> {
     lineage: Lineage,
+    chain: Arc<Vec<Segment>>,
     values: Vec<Data>,
 }
 
 impl<Data: Differentiable> Field<Data> {
-    pub(crate) fn new(lineage: Lineage, values: Vec<Data>) -> Self {
-        Self { lineage, values }
+    pub(crate) fn new(lineage: Lineage, chain: Arc<Vec<Segment>>, values: Vec<Data>) -> Self {
+        Self {
+            lineage,
+            chain,
+            values,
+        }
     }
 
     /// Returns the value assigned to `value`'s node.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different lineage or was allocated
-    /// after this field was produced.
+    /// Panics if `value` belongs to a different lineage or a divergent
+    /// fork, or was allocated after this field was produced.
     pub fn of(&self, value: Value<'_, Data>) -> &Data {
         assert!(
             self.lineage == value.tape().lineage(),
             "value belongs to a different network lineage"
+        );
+        assert!(
+            value
+                .tape()
+                .agrees_with_chain(&self.chain, self.values.len()),
+            "value belongs to a divergent fork of the network"
         );
         self.values
             .get(value.id().index())
@@ -54,6 +69,7 @@ impl<Data: Differentiable> Field<Data> {
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
             lineage: self.lineage,
+            chain: Arc::clone(&self.chain),
             values: self.values.iter().map(transform).collect(),
         }
     }
@@ -61,12 +77,13 @@ impl<Data: Differentiable> Field<Data> {
     /// Combines two fields entry by entry with `combine`.
     ///
     /// # Panics
-    /// Panics if the fields belong to different lineages or cover
-    /// different numbers of nodes.
+    /// Panics if the fields belong to different lineages or divergent
+    /// forks, or cover different numbers of nodes.
     pub fn zip(&self, other: &Self, combine: impl Fn(&Data, &Data) -> Data) -> Self {
         self.assert_kinship(other);
         Self {
             lineage: self.lineage,
+            chain: Arc::clone(&self.chain),
             values: self
                 .values
                 .iter()
@@ -84,6 +101,10 @@ impl<Data: Differentiable> Field<Data> {
         self.lineage
     }
 
+    pub(crate) fn chain(&self) -> &Arc<Vec<Segment>> {
+        &self.chain
+    }
+
     /// Panics if `other` cannot combine with `self`.
     fn assert_kinship(&self, other: &Self) {
         assert!(
@@ -94,6 +115,10 @@ impl<Data: Differentiable> Field<Data> {
             self.values.len(),
             other.values.len(),
             "fields cover different generations of the network"
+        );
+        assert!(
+            chains_agree(&self.chain, &other.chain, self.values.len()),
+            "fields belong to divergent forks of the network"
         );
     }
 }

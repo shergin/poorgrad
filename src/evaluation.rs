@@ -1,9 +1,10 @@
 use std::ptr;
+use std::sync::Arc;
 
 use cow_vec::CowVec;
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Field, Function, Gradients, Tape, Tensorial, Value};
+use super::{Differentiable, Field, Function, Gradients, Segment, Tape, Tensorial, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -22,6 +23,7 @@ assert_impl_all!(Evaluation<'static, f64>: Send, Sync);
 pub struct Evaluation<'network, Data> {
     tape: &'network Tape<Data>,
     nodes: CowVec<Function<Data>>,
+    chain: Arc<Vec<Segment>>,
     values: Field<Data>,
 }
 
@@ -29,13 +31,15 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     pub(crate) fn new(
         tape: &'network Tape<Data>,
         nodes: CowVec<Function<Data>>,
+        chain: Arc<Vec<Segment>>,
         values: Vec<Data>,
     ) -> Self {
         debug_assert_eq!(nodes.len(), values.len());
         Self {
             tape,
             nodes,
-            values: Field::new(tape.lineage(), values),
+            values: Field::new(tape.lineage(), Arc::clone(&chain), values),
+            chain,
         }
     }
 
@@ -120,7 +124,11 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             let gradient = gradients[index].clone();
             function.backward(values, &values[index], &gradient, &mut gradients);
         }
-        Gradients::new(Field::new(self.tape.lineage(), gradients))
+        Gradients::new(Field::new(
+            self.tape.lineage(),
+            Arc::clone(&self.chain),
+            gradients,
+        ))
     }
 }
 

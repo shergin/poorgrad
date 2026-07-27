@@ -63,6 +63,7 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     pub fn symbol(&self) -> Symbol {
         Symbol {
             lineage: self.tape.lineage(),
+            branch: self.tape.branch_of(self.id),
             id: self.id,
         }
     }

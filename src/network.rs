@@ -54,30 +54,41 @@ impl<Data: Differentiable> Network<Data> {
     /// Proxies borrow the generation that created them, so a proxy taken
     /// before a fork or an update belongs to the old generation; `resolve`
     /// produces the equivalent proxy for this one. The symbol carries its
-    /// lineage, so kinship is verified before the positional lookup. A
-    /// failed resolution is a programmer error, like every other
-    /// positional misuse; `try_resolve` is the probing form.
+    /// lineage and branch, so kinship is verified before the positional
+    /// lookup: an unrelated network and a fork that diverged before the
+    /// symbol was minted are both rejected. A failed resolution is a
+    /// programmer error, like every other positional misuse;
+    /// `try_resolve` is the probing form.
     ///
     /// # Panics
-    /// Panics if `symbol` belongs to a different network lineage or is
-    /// not allocated in this generation.
+    /// Panics if `symbol` belongs to a different network lineage or to a
+    /// divergent fork, or is not allocated in this generation.
     pub fn resolve(&self, symbol: Symbol) -> Value<'_, Data> {
         assert!(
             symbol.lineage == self.tape.lineage(),
             "symbol belongs to a different network lineage"
         );
+        let range = self
+            .tape
+            .segment_range(symbol.branch)
+            .expect("symbol belongs to a divergent fork of this network");
         assert!(
-            symbol.id.index() < self.len(),
+            range.contains(&symbol.id.index()),
             "symbol is not allocated in this network"
         );
         Value::bind(&self.tape, symbol.id)
     }
 
     /// Resolves `symbol` in this generation, or returns `None` if the
-    /// symbol belongs to a different lineage or no value with that name
-    /// is allocated here: the probing form of `resolve`.
+    /// symbol belongs to a different lineage or a divergent fork, or no
+    /// value with that name is allocated here: the probing form of
+    /// `resolve`.
     pub fn try_resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
-        if symbol.lineage != self.tape.lineage() || symbol.id.index() >= self.len() {
+        if symbol.lineage != self.tape.lineage() {
+            return None;
+        }
+        let range = self.tape.segment_range(symbol.branch)?;
+        if !range.contains(&symbol.id.index()) {
             return None;
         }
         Some(Value::bind(&self.tape, symbol.id))
@@ -106,13 +117,18 @@ impl<Data: Differentiable> Network<Data> {
     /// the replaced parameters.
     ///
     /// # Panics
-    /// Panics if `direction` belongs to a different network lineage or is
-    /// stale, or if `update` returns a payload whose shape differs from
-    /// the parameter's recorded shape.
+    /// Panics if `direction` belongs to a different network lineage or a
+    /// divergent fork, is stale, or if `update` returns a payload whose
+    /// shape differs from the parameter's recorded shape.
     pub fn updated(&self, direction: &Field<Data>, update: impl Fn(&Data, &Data) -> Data) -> Self {
         assert!(
             direction.lineage() == self.tape.lineage(),
             "field belongs to a different network lineage"
+        );
+        assert!(
+            self.tape
+                .agrees_with_chain(direction.chain(), direction.as_slice().len()),
+            "field belongs to a divergent fork of this network"
         );
         Self {
             tape: self.tape.updated(direction.as_slice(), update),
@@ -134,13 +150,13 @@ impl<Data: Tensorial> Network<Data> {
     /// makes the single forward scan sufficient. The snapshot travels with
     /// the returned evaluation, whose `backward` replays it in reverse.
     pub fn forward(&self) -> Evaluation<'_, Data> {
-        let (nodes, parameters) = self.tape.snapshot();
-        let mut values = Vec::with_capacity(nodes.len());
-        for function in nodes.iter() {
-            let value = function.forward(&values, parameters.payloads());
+        let snapshot = self.tape.snapshot();
+        let mut values = Vec::with_capacity(snapshot.functions.len());
+        for function in snapshot.functions.iter() {
+            let value = function.forward(&values, snapshot.parameters.payloads());
             values.push(value);
         }
-        Evaluation::new(&self.tape, nodes, values)
+        Evaluation::new(&self.tape, snapshot.functions, snapshot.chain, values)
     }
 }
 
