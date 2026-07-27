@@ -1,4 +1,4 @@
-use crate::{Differentiable, Shape, Tensorial, ValueId};
+use crate::{Differentiable, Shape, SlotId, Tensorial, ValueId};
 
 use static_assertions::assert_impl_all;
 
@@ -15,13 +15,13 @@ assert_impl_all!(Function<f64>: Send, Sync);
 /// operation's parameters and operand links.
 ///
 /// It is a statically sized closed set: each variant owns exactly its
-/// operand links (`ValueId`s) and parameters (such as a leaf's payload) as
-/// fixed fields, and implements `Operation`; the enum dispatches to the
+/// operand links (`ValueId`s) and parameters (a leaf's payload, a
+/// parameter's slot) as fixed fields; the enum dispatches to the
 /// variants with a plain `match`, avoiding boxing and vtables.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Function<Data> {
     Leaf(Leaf<Data>),
-    Parameter(Parameter<Data>),
+    Parameter(Parameter),
     Add(Add),
     Sub(Sub),
     Mul(Mul),
@@ -42,9 +42,9 @@ impl<Data> Function<Data> {
         Function::Leaf(Leaf(data))
     }
 
-    /// Creates a parameter function holding `data`.
-    pub(crate) fn parameter(data: Data) -> Self {
-        Function::Parameter(Parameter(data))
+    /// Creates a parameter function referencing `slot`.
+    pub(crate) fn parameter(slot: SlotId) -> Self {
+        Function::Parameter(Parameter(slot))
     }
 
     /// Creates the sum of `left` and `right`.
@@ -127,16 +127,6 @@ impl<Data> Function<Data> {
         }
     }
 
-    /// Returns the payload of a payload-carrying variant (a leaf or a
-    /// parameter), or `None` for computed variants.
-    pub(crate) fn data(&self) -> Option<&Data> {
-        match self {
-            Function::Leaf(leaf) => Some(&leaf.0),
-            Function::Parameter(parameter) => Some(&parameter.0),
-            _ => None,
-        }
-    }
-
     /// Infers the shape of this function's result from its operands'
     /// shapes, panicking on incompatibility.
     ///
@@ -148,7 +138,9 @@ impl<Data> Function<Data> {
     {
         match self {
             Function::Leaf(leaf) => leaf.inferred_shape(),
-            Function::Parameter(parameter) => parameter.inferred_shape(),
+            Function::Parameter(_) => {
+                unreachable!("parameter shapes are recorded by `record_parameter`")
+            }
             Function::Add(add) => add.inferred_shape(shape_of),
             Function::Sub(sub) => sub.inferred_shape(shape_of),
             Function::Mul(mul) => mul.inferred_shape(shape_of),
@@ -163,14 +155,6 @@ impl<Data> Function<Data> {
             Function::Broadcast(broadcast) => broadcast.inferred_shape(shape_of),
         }
     }
-
-    /// Returns the parameter payload, or `None` for any other variant.
-    pub(crate) fn parameter_data(&self) -> Option<&Data> {
-        match self {
-            Function::Parameter(parameter) => Some(&parameter.0),
-            _ => None,
-        }
-    }
 }
 
 /// It hand-rolls the delegation an enum-dispatch macro would generate: a
@@ -183,11 +167,12 @@ impl<Data> Function<Data> {
 /// updating graphs stays arithmetic-only.
 impl<Data: Tensorial> Function<Data> {
     /// Computes this node's payload from the values of earlier nodes, or
-    /// reproduces a leaf's supplied payload.
-    pub(crate) fn forward(&self, values: &[Data]) -> Data {
+    /// supplies it: a leaf's embedded payload, or a parameter's entry in
+    /// the run's `parameters` slots.
+    pub(crate) fn forward(&self, values: &[Data], parameters: &[Data]) -> Data {
         match self {
             Function::Leaf(leaf) => leaf.0.clone(),
-            Function::Parameter(parameter) => parameter.0.clone(),
+            Function::Parameter(parameter) => parameters[parameter.0.index()].clone(),
             Function::Add(add) => add.forward(values),
             Function::Sub(sub) => sub.forward(values),
             Function::Mul(mul) => mul.forward(values),

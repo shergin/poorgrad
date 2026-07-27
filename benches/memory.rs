@@ -53,17 +53,21 @@ fn retained() -> usize {
 }
 
 /// Runs `steps` training steps of `step` and reports per-step averages.
+///
+/// Retention is signed: a training loop that reclaims its state can end
+/// below its starting point (for example by replacing a growth-sized
+/// store with exact-capacity ones).
 fn report(label: &str, steps: usize, mut step: impl FnMut()) {
     let allocated_before = ALLOCATED.load(Ordering::Relaxed);
-    let retained_before = retained();
+    let retained_before = retained() as i64;
     for _ in 0..steps {
         step();
     }
     let allocated = ALLOCATED.load(Ordering::Relaxed) - allocated_before;
-    let kept = retained() - retained_before;
+    let kept = retained() as i64 - retained_before;
     println!("{label} ({steps} steps):");
     println!("  allocated per step: {:>8} bytes", allocated / steps);
-    println!("  retained per step:  {:>8} bytes", kept / steps);
+    println!("  retained per step:  {:>8} bytes", kept / steps as i64);
 }
 
 fn main() {

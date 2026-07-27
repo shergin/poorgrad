@@ -42,9 +42,10 @@ impl<Data: Differentiable> Network<Data> {
     /// Allocates a learnable parameter and returns a proxy to it.
     ///
     /// Parameters behave like leaves during runs; they are the leaves that
-    /// `updated` replaces when a gradient step is applied.
+    /// `updated` replaces when a gradient step is applied. The node lives
+    /// on the tape, the payload in the generation's parameter store.
     pub fn parameter(&self, data: Data) -> Value<'_, Data> {
-        let id = self.tape.record(Function::parameter(data));
+        let id = self.tape.record_parameter(data);
         Value::bind(&self.tape, id)
     }
 
@@ -126,16 +127,17 @@ impl<Data: Tensorial> Network<Data> {
     /// Evaluates every node in allocation order, materializing the payload
     /// of each value into a fresh `Evaluation`.
     ///
-    /// It replays an O(1) snapshot of the tape, so the network is never
-    /// locked during the run and concurrent recordings do not disturb it.
+    /// It replays an O(1) snapshot of the tape and the parameter store,
+    /// taken atomically, so the network is never locked during the run
+    /// and concurrent recordings and updates do not disturb it.
     /// Allocation order is dependency order by construction, which is what
     /// makes the single forward scan sufficient. The snapshot travels with
     /// the returned evaluation, whose `backward` replays it in reverse.
     pub fn forward(&self) -> Evaluation<'_, Data> {
-        let nodes = self.tape.snapshot();
+        let (nodes, parameters) = self.tape.snapshot();
         let mut values = Vec::with_capacity(nodes.len());
         for function in nodes.iter() {
-            let value = function.forward(&values);
+            let value = function.forward(&values, parameters.payloads());
             values.push(value);
         }
         Evaluation::new(&self.tape, nodes, values)

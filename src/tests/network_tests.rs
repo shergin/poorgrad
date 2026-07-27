@@ -374,6 +374,24 @@ fn clone_forks_the_network() {
 }
 
 #[test]
+fn forked_parameter_stores_diverge_independently() {
+    let network = Network::new();
+    let shared = network.parameter(1.0_f64);
+    let fork = network.clone();
+
+    // Both branches assign the same slot to their post-fork parameter,
+    // but each branch owns its store from the first divergent
+    // allocation on, so the payloads never cross.
+    let original_extra = network.parameter(2.0);
+    let forked_extra = fork.parameter(3.0);
+
+    assert_eq!(original_extra.data(), Some(2.0));
+    assert_eq!(forked_extra.data(), Some(3.0));
+    assert_eq!(network.resolve(shared.symbol()).data(), Some(1.0));
+    assert_eq!(fork.resolve(shared.symbol()).data(), Some(1.0));
+}
+
+#[test]
 fn updated_replaces_parameters_and_keeps_everything_else() {
     let network = Network::new();
     let w = network.parameter(1.0_f64);

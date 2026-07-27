@@ -66,7 +66,9 @@ operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
 poorgrad: [`Tape`](src/tape.rs), crate-internal, shared by a network and all
-of its proxies, and the engine's single synchronization point.
+of its proxies, and the engine's single synchronization point. Beside its
+immutable columns the tape carries the generation's parameter store: the
+one piece of state that changes across generations.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In poorgrad a node is a
@@ -108,6 +110,8 @@ no-op. In poorgrad: `Function::Leaf`, allocated with
 designated as updatable so a training step knows which leaves to replace.
 In poorgrad: `Function::Parameter`, allocated with
 [`Network::parameter`](src/network.rs) and replaced by `Network::updated`.
+The node holds only its slot; the payload lives in the generation's
+parameter store.
 
 **Topological (allocation) order.** Any ordering in which every operand
 precedes its consumers. Poorgrad's recording enforces it by construction —
@@ -140,9 +144,17 @@ misbinding; within a lineage, resolution is positional. In poorgrad:
 
 **Generation.** A network state produced by a state transition: a fork
 (`Network::clone`) or a gradient step (`Network::updated`). Generations
-share all unchanged nodes through the arena, keep positions stable
-(symbols keep resolving), and leave older generations fully usable —
-snapshot isolation.
+share the recorded structure through the arena and differ only in their
+parameter store; positions stay stable (symbols keep resolving), and
+older generations remain fully usable — snapshot isolation.
+
+**Parameter store.** The per-generation home of parameter payloads,
+slot-indexed and separate from the immutable tape columns: structure is
+recorded once, state turns over per generation. Forks share the store in
+O(1); `updated` rebuilds it in O(parameters), so replaced payloads are
+reclaimed when their generation drops instead of accumulating in the
+arena. In poorgrad: the crate-internal `ParameterStore` in
+[`src/tape.rs`](src/tape.rs).
 
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
@@ -202,7 +214,8 @@ and `broadcast_like`.
 once, shared by all generations of a network; allocations never move or
 drop while the arena lives, which is what makes forks cheap and references
 stable. Provided by the [`cow_vec`](https://crates.io/crates/cow_vec) crate
-inside `Tape`.
+inside `Tape`. Training never touches it: parameter payloads live in the
+parameter store, so the arena holds structure only.
 
 **Fork.** An O(1) copy of a network sharing the underlying arena but owning
 an independent node list; later recordings on either side never affect the

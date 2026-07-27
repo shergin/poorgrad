@@ -78,10 +78,14 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.tape.shape(self.id)
     }
 
-    /// Returns a clone of the leaf payload, or `None` for computed values.
+    /// Returns a clone of the leaf or parameter payload, or `None` for
+    /// computed values.
+    ///
+    /// For a parameter it reads the current generation's store, so the
+    /// same symbol resolved in different generations reads different
+    /// payloads.
     pub fn data(&self) -> Option<Data> {
-        self.tape
-            .with_node(self.id, |function| function.data().cloned())
+        self.tape.payload_of(self.id)
     }
 
     /// Records a computed node produced by `function` on the same network

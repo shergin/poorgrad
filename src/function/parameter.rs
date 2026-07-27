@@ -1,23 +1,17 @@
-use crate::{Differentiable, Shape, ValueId};
+use crate::{SlotId, ValueId};
 
-/// A learnable parameter: a leaf that `Network::updated` replaces with a
-/// freshly updated payload on each training step.
+/// A learnable parameter: a leaf whose payload `Network::updated`
+/// replaces on each training step.
 ///
-/// It behaves exactly like `Leaf` during runs: supplied rather than
-/// computed, with no gradients routed back. The distinction exists so a
-/// gradient step knows which leaves are trainable and which are plain
-/// data.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Parameter<Data>(pub(crate) Data);
+/// The node holds only its slot; the payload lives in the generation's
+/// `ParameterStore`, which is what lets a gradient step swap state
+/// without touching the recorded structure. It behaves exactly like
+/// `Leaf` during runs: supplied rather than computed, with no gradients
+/// routed back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Parameter(pub(crate) SlotId);
 
-impl<Data> Parameter<Data> {
+impl Parameter {
     /// Calls `visitor` with each operand link; a parameter has none.
     pub(crate) fn visit_operands(&self, _visitor: impl FnMut(ValueId)) {}
-}
-
-impl<Data: Differentiable> Parameter<Data> {
-    /// Infers the shape of the result: the payload's own shape.
-    pub(crate) fn inferred_shape(&self) -> Shape {
-        self.0.shape()
-    }
 }
