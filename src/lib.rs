@@ -1,4 +1,4 @@
-//! `poorgrad` is a tiny scalar autograd engine for the GPU-poor.
+//! `poorgrad` is a tiny autograd engine for the GPU-poor.
 #![forbid(unsafe_code)]
 
 mod differentiable;

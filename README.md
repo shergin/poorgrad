@@ -14,7 +14,8 @@ not a feature bolted on with locks; it is what the types guarantee.
 
 Most autograd engines are define-by-run: the graph is built dynamically as
 code executes, mutated in place, and single-threaded by assumption.
-`poorgrad` bets the other way — and the bet has landed:
+`poorgrad` goes the other way, and everything below follows from that one
+choice:
 
 - **Record once, run anywhere.** Expressions record a static tape;
   `forward` replays an O(1) snapshot of it, and `backward` replays the

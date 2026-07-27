@@ -25,19 +25,19 @@ fn main() {
     // the total loss is their sum.
     let samples = [(1.0, 3.0), (2.0, 5.0), (3.0, 7.0)];
     let mut sample_losses = Vec::new();
-    let mut total = None;
     for (x, y) in samples {
         let x = network.leaf(x);
         let y = network.leaf(y);
         let error = w * x + b - y;
-        let squared = error * error;
-        sample_losses.push(squared);
-        total = Some(match total {
-            Some(sum) => sum + squared,
-            None => squared,
-        });
+        sample_losses.push(error * error);
     }
-    let loss = total.expect("at least one sample");
+    // Values are `Copy`, so the per-sample losses fold into a total loss
+    // with a plain reduce.
+    let loss = sample_losses
+        .iter()
+        .copied()
+        .reduce(|total, squared| total + squared)
+        .expect("at least one sample");
 
     // One evaluation feeds many backward sweeps: each rayon thread
     // differentiates the same shared network for its own target.
