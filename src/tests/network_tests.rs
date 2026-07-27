@@ -460,9 +460,7 @@ fn updated_rejects_stale_gradients() {
     let evaluation = network.forward();
     let gradients = evaluation.backward(w);
     network.leaf(2.0);
-    network.updated(gradients.as_field(), |parameter, _gradient| {
-        parameter.clone()
-    });
+    network.updated(gradients.as_field(), |parameter, _gradient| *parameter);
 }
 
 #[test]
@@ -473,9 +471,7 @@ fn updated_rejects_foreign_gradients() {
     let evaluation = first.forward();
     let gradients = evaluation.backward(w);
     let second = Network::<f64>::new();
-    second.updated(gradients.as_field(), |parameter, _gradient| {
-        parameter.clone()
-    });
+    second.updated(gradients.as_field(), |parameter, _gradient| *parameter);
 }
 
 #[test]

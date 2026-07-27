@@ -2,6 +2,10 @@ mod add;
 mod broadcast;
 mod div;
 mod exp;
+// The module convention names each file after its main concept, and this
+// module's main concept is the `Function` enum itself; the inception is
+// deliberate.
+#[allow(clippy::module_inception)]
 mod function;
 mod leaf;
 mod ln;
