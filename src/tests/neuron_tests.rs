@@ -25,7 +25,7 @@ fn express_records_the_affine_expression() {
     let output = neuron.express(&network, &[first, second]);
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(output), 10.0 + 200.0 + 3.0);
+    assert_eq!(*evaluation.of(output), 10.0 + 200.0 + 3.0);
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn express_applies_the_activation() {
     let output = neuron.express(&network, &[input]);
 
     let evaluation = network.forward();
-    assert!((evaluation.value(output) - 1.25_f64.tanh()).abs() < 1e-12);
+    assert!((evaluation.of(output) - 1.25_f64.tanh()).abs() < 1e-12);
 }
 
 #[test]
@@ -75,5 +75,5 @@ fn neuron_trains_toward_a_target() {
 
     let output = network.resolve(output_symbol).unwrap();
     let evaluation = network.forward();
-    assert!((evaluation.value(output) - 0.5).abs() < 1e-3);
+    assert!((evaluation.of(output) - 0.5).abs() < 1e-3);
 }

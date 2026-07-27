@@ -80,7 +80,7 @@ fn main() {
             }
             let loss = network.resolve(loss_symbol).expect("loss is recorded");
             let evaluation = network.forward();
-            let final_loss = *evaluation.value(loss);
+            let final_loss = *evaluation.of(loss);
             let w = network.resolve(w_symbol).expect("w is recorded");
             let b = network.resolve(b_symbol).expect("b is recorded");
             let w = w.data().expect("parameters carry payloads");

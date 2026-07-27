@@ -28,7 +28,7 @@ fn main() {
     // The forward pass materializes every payload into per-run storage,
     // leaving the network untouched.
     let evaluation = network.forward();
-    println!("forward: expression = {}", evaluation.value(expression));
+    println!("forward: expression = {}", evaluation.of(expression));
 
     // The backward pass produces the gradient of the expression with
     // respect to every value. `a` feeds two subexpressions whose

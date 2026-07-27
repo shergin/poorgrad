@@ -31,10 +31,13 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
 
     /// Returns the computed payload of `value`.
     ///
+    /// It is the shared read-back accessor of every position-indexed
+    /// buffer: evaluations, gradients, and fields all answer `of(value)`.
+    ///
     /// # Panics
     /// Panics if `value` belongs to a different network or was allocated
     /// after this evaluation ran.
-    pub fn value(&self, value: Value<'_, Data>) -> &Data {
+    pub fn of(&self, value: Value<'_, Data>) -> &Data {
         assert!(
             ptr::eq(self.tape, value.tape()),
             "value belongs to a different network"

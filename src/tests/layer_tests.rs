@@ -28,8 +28,8 @@ fn express_returns_one_output_per_neuron() {
 
     let evaluation = network.forward();
     assert_eq!(outputs.len(), 2);
-    assert_eq!(*evaluation.value(outputs[0]), 10.0 + 200.0 + 3.0);
-    assert_eq!(*evaluation.value(outputs[1]), 40.0 + 500.0 + 6.0);
+    assert_eq!(*evaluation.of(outputs[0]), 10.0 + 200.0 + 3.0);
+    assert_eq!(*evaluation.of(outputs[1]), 40.0 + 500.0 + 6.0);
 }
 
 #[test]
@@ -67,6 +67,6 @@ fn layer_trains_toward_targets() {
     let evaluation = network.forward();
     let first = network.resolve(output_symbols[0]).unwrap();
     let second = network.resolve(output_symbols[1]).unwrap();
-    assert!((evaluation.value(first) - 1.0).abs() < 1e-3);
-    assert!((evaluation.value(second) + 1.0).abs() < 1e-3);
+    assert!((evaluation.of(first) - 1.0).abs() < 1e-3);
+    assert!((evaluation.of(second) + 1.0).abs() < 1e-3);
 }

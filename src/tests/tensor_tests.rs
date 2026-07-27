@@ -65,7 +65,7 @@ fn tensor_payloads_flow_through_the_graph() {
     let y = x.tanh();
 
     let evaluation = network.forward();
-    let result = evaluation.value(y);
+    let result = evaluation.of(y);
     assert!((result.elements()[0]).abs() < 1e-12);
     assert!((result.elements()[1] - 1.0_f64.tanh()).abs() < 1e-12);
 }
@@ -148,7 +148,7 @@ fn matmul_routes_gradients_through_transposed_operands() {
     let loss = a.matmul(b).sum();
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(loss), Tensor::new([], [56.0]));
+    assert_eq!(*evaluation.of(loss), Tensor::new([], [56.0]));
 
     // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
     // `dB = A^T . 1` column-summed.
@@ -166,7 +166,7 @@ fn broadcast_and_sum_are_adjoint() {
     let loss = scalar.broadcast_like(reference).sum();
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(loss), Tensor::new([], [6.0]));
+    assert_eq!(*evaluation.of(loss), Tensor::new([], [6.0]));
 
     // The broadcast spreads to three positions, so the scalar's gradient
     // is the sum of three ones; the shape reference receives none.
@@ -215,7 +215,7 @@ fn tensor_literals_mix_into_expressions() {
     let y = Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0);
 
     let evaluation = network.forward();
-    assert_eq!(evaluation.value(y).elements(), &[11.0, 21.0]);
+    assert_eq!(evaluation.of(y).elements(), &[11.0, 21.0]);
 }
 
 #[test]

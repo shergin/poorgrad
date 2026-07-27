@@ -138,7 +138,9 @@ mutate the network, so any number can execute concurrently; their results
 are per-run buffers read back with the same proxies that built the graph:
 [`Evaluation`](src/evaluation.rs) (a payload per node, generation-pinned)
 and [`Gradients`](src/gradients.rs) (a gradient per node, for one target;
-convertible into a `Field` for combination and optimizer state).
+convertible into a `Field` for combination and optimizer state). Every
+position-indexed buffer — evaluations, gradients, fields — answers the
+same read-back accessor, `of(value)`.
 
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across

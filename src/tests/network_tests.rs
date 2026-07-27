@@ -29,7 +29,7 @@ fn parameter_carries_payload_like_a_leaf() {
     let y = w * x;
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(y), 3.0);
+    assert_eq!(*evaluation.of(y), 3.0);
 }
 
 #[test]
@@ -95,8 +95,8 @@ fn forward_materializes_every_value() {
     let expression = -((a + b) * c);
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(a), 2.0);
-    assert_eq!(*evaluation.value(expression), -20.0);
+    assert_eq!(*evaluation.of(a), 2.0);
+    assert_eq!(*evaluation.of(expression), -20.0);
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn backward_accumulates_gradients_through_fan_out() {
     let f = a * b + a;
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(f), 8.0);
+    assert_eq!(*evaluation.of(f), 8.0);
 
     let gradients = network.backward(&evaluation, f);
     assert_eq!(*gradients.of(f), 1.0);
@@ -125,7 +125,7 @@ fn backward_routes_negation() {
     let f = -(a * a);
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(f), -4.0);
+    assert_eq!(*evaluation.of(f), -4.0);
 
     let gradients = network.backward(&evaluation, f);
     assert_eq!(*gradients.of(a), -4.0);
@@ -139,7 +139,7 @@ fn subtraction_routes_signed_gradients() {
     let difference = a - b;
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(difference), 2.0);
+    assert_eq!(*evaluation.of(difference), 2.0);
 
     let gradients = network.backward(&evaluation, difference);
     assert_eq!(*gradients.of(a), 1.0);
@@ -154,7 +154,7 @@ fn division_reuses_its_output_in_backward() {
     let quotient = a / b;
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(quotient), 3.0);
+    assert_eq!(*evaluation.of(quotient), 3.0);
 
     let gradients = network.backward(&evaluation, quotient);
     assert_eq!(*gradients.of(a), 0.5);
@@ -168,7 +168,7 @@ fn tanh_routes_gradient_through_its_output() {
     let y = x.tanh();
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(y), 0.5_f64.tanh());
+    assert_eq!(*evaluation.of(y), 0.5_f64.tanh());
 
     let gradients = network.backward(&evaluation, y);
     let expected = 1.0 - 0.5_f64.tanh().powi(2);
@@ -182,7 +182,7 @@ fn exp_reuses_its_output_in_backward() {
     let y = x.exp();
 
     let evaluation = network.forward();
-    let value = *evaluation.value(y);
+    let value = *evaluation.of(y);
     assert!((value - std::f64::consts::E).abs() < 1e-12);
 
     // The derivative of the exponential is the output itself.
@@ -197,7 +197,7 @@ fn ln_routes_gradient_through_its_operand() {
     let y = x.ln();
 
     let evaluation = network.forward();
-    assert!((evaluation.value(y) - 2.0_f64.ln()).abs() < 1e-12);
+    assert!((evaluation.of(y) - 2.0_f64.ln()).abs() < 1e-12);
 
     let gradients = network.backward(&evaluation, y);
     assert!((gradients.of(x) - 0.5).abs() < 1e-12);
@@ -212,7 +212,7 @@ fn sigmoid_composes_from_primitives() {
     let sigmoid = one / (one + (-x).exp());
 
     let evaluation = network.forward();
-    assert!((evaluation.value(sigmoid) - 0.5).abs() < 1e-12);
+    assert!((evaluation.of(sigmoid) - 0.5).abs() < 1e-12);
 
     // The classic identity: d sigmoid / dx = sigmoid * (1 - sigmoid).
     let gradients = network.backward(&evaluation, sigmoid);
@@ -242,8 +242,8 @@ fn payload_literals_mix_into_expressions() {
     assert_eq!(network.len(), 7);
 
     let evaluation = network.forward();
-    assert_eq!(*evaluation.value(y), 7.0);
-    assert_eq!(*evaluation.value(z), 2.0);
+    assert_eq!(*evaluation.of(y), 7.0);
+    assert_eq!(*evaluation.of(z), 2.0);
 
     let gradients = network.backward(&evaluation, y);
     assert_eq!(*gradients.of(x), 2.0);
