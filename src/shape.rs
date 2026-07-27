@@ -48,6 +48,22 @@ impl Shape {
     pub fn axes(&self) -> &[usize] {
         &self.0
     }
+
+    /// Returns the shape with `axis` removed.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    pub fn without_axis(&self, axis: usize) -> Shape {
+        assert!(axis < self.rank(), "axis {axis} is out of rank for {self}");
+        Shape(
+            self.0
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != axis)
+                .map(|(_, &extent)| extent)
+                .collect(),
+        )
+    }
 }
 
 impl fmt::Display for Shape {

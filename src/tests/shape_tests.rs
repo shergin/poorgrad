@@ -27,3 +27,17 @@ fn display_lists_the_axes() {
 fn volume_rejects_overflow() {
     Shape::new([usize::MAX, 2]).volume();
 }
+
+#[test]
+fn without_axis_drops_the_named_axis() {
+    let shape = Shape::new([2, 3, 4]);
+    assert_eq!(shape.without_axis(0), Shape::new([3, 4]));
+    assert_eq!(shape.without_axis(1), Shape::new([2, 4]));
+    assert_eq!(Shape::new([5]).without_axis(0), Shape::scalar());
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn without_axis_rejects_excessive_axes() {
+    Shape::new([2, 3]).without_axis(2);
+}

@@ -15,10 +15,13 @@ use super::Elementary;
 /// (`matmul` requires rank 2), so `Value::matmul` on a scalar network
 /// panics at the offending expression.
 ///
-/// Broadcasting is explicit by design: `broadcast_like` is the only way a
-/// payload changes shape, it accepts only a single-value payload, and
-/// every other operation demands exact shape agreement. There are no
-/// implicit alignment rules.
+/// Broadcasting is explicit by design, in two named forms: a
+/// single-value payload spread across a reference's whole shape
+/// (`broadcast_like`), or a payload repeated along one named axis of a
+/// reference (`broadcast_along`). Every other operation demands exact
+/// shape agreement; there are no implicit alignment rules. Each
+/// broadcast form is adjoint to the matching reduction: `sum` to
+/// `broadcast_like`, `sum_along` to `broadcast_along`.
 pub trait Tensorial: Elementary {
     /// Returns the matrix product of `self` and `rhs`.
     fn matmul(&self, rhs: &Self) -> Self;
@@ -29,9 +32,18 @@ pub trait Tensorial: Elementary {
     /// Returns the sum of every value in `self`, shaped as a single value.
     fn sum(&self) -> Self;
 
+    /// Returns `self` with `axis` reduced by summation: the result's
+    /// shape is `self`'s with that axis removed.
+    fn sum_along(&self, axis: usize) -> Self;
+
     /// Returns this payload's single value spread across `reference`'s
     /// shape.
     fn broadcast_like(&self, reference: &Self) -> Self;
+
+    /// Returns `self` repeated along `axis` to match `reference`'s
+    /// shape; `self`'s shape must equal `reference`'s with that axis
+    /// removed.
+    fn broadcast_along(&self, axis: usize, reference: &Self) -> Self;
 }
 
 impl Tensorial for f32 {
@@ -47,7 +59,15 @@ impl Tensorial for f32 {
         *self
     }
 
+    fn sum_along(&self, _axis: usize) -> Self {
+        *self
+    }
+
     fn broadcast_like(&self, _reference: &Self) -> Self {
+        *self
+    }
+
+    fn broadcast_along(&self, _axis: usize, _reference: &Self) -> Self {
         *self
     }
 }
@@ -65,7 +85,15 @@ impl Tensorial for f64 {
         *self
     }
 
+    fn sum_along(&self, _axis: usize) -> Self {
+        *self
+    }
+
     fn broadcast_like(&self, _reference: &Self) -> Self {
+        *self
+    }
+
+    fn broadcast_along(&self, _axis: usize, _reference: &Self) -> Self {
         *self
     }
 }

@@ -3,8 +3,8 @@ use crate::{Differentiable, Shape, SlotId, Tensorial, ValueId};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum,
-    Tanh, Transpose,
+    Add, Broadcast, BroadcastAlong, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Neg, Operation,
+    Parameter, Sub, Sum, SumAlong, Tanh, Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -34,7 +34,9 @@ pub(crate) enum Function<Data> {
     MatMul(MatMul),
     Transpose(Transpose),
     Sum(Sum),
+    SumAlong(SumAlong),
     Broadcast(Broadcast),
+    BroadcastAlong(BroadcastAlong),
 }
 
 impl<Data> Function<Data> {
@@ -108,9 +110,24 @@ impl<Data> Function<Data> {
         Function::Sum(Sum { operand })
     }
 
+    /// Creates the sum of `operand` along `axis`.
+    pub(crate) fn sum_along(operand: ValueId, axis: usize) -> Self {
+        Function::SumAlong(SumAlong { operand, axis })
+    }
+
     /// Creates the explicit broadcast of `operand` across `like`'s shape.
     pub(crate) fn broadcast(operand: ValueId, like: ValueId) -> Self {
         Function::Broadcast(Broadcast { operand, like })
+    }
+
+    /// Creates the explicit repetition of `operand` along `axis` of
+    /// `like`'s shape.
+    pub(crate) fn broadcast_along(operand: ValueId, like: ValueId, axis: usize) -> Self {
+        Function::BroadcastAlong(BroadcastAlong {
+            operand,
+            like,
+            axis,
+        })
     }
 
     /// Calls `visitor` with each operand link.
@@ -130,7 +147,9 @@ impl<Data> Function<Data> {
             Function::MatMul(matmul) => matmul.visit_operands(visitor),
             Function::Transpose(transpose) => transpose.visit_operands(visitor),
             Function::Sum(sum) => sum.visit_operands(visitor),
+            Function::SumAlong(sum_along) => sum_along.visit_operands(visitor),
             Function::Broadcast(broadcast) => broadcast.visit_operands(visitor),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.visit_operands(visitor),
         }
     }
 
@@ -162,7 +181,9 @@ impl<Data> Function<Data> {
             Function::MatMul(matmul) => matmul.inferred_shape(shape_of),
             Function::Transpose(transpose) => transpose.inferred_shape(shape_of),
             Function::Sum(sum) => sum.inferred_shape(shape_of),
+            Function::SumAlong(sum_along) => sum_along.inferred_shape(shape_of),
             Function::Broadcast(broadcast) => broadcast.inferred_shape(shape_of),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.inferred_shape(shape_of),
         }
     }
 }
@@ -196,7 +217,9 @@ impl<Data: Tensorial> Function<Data> {
             Function::MatMul(matmul) => matmul.forward(values),
             Function::Transpose(transpose) => transpose.forward(values),
             Function::Sum(sum) => sum.forward(values),
+            Function::SumAlong(sum_along) => sum_along.forward(values),
             Function::Broadcast(broadcast) => broadcast.forward(values),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.forward(values),
         }
     }
 
@@ -225,8 +248,14 @@ impl<Data: Tensorial> Function<Data> {
                 transpose.backward(values, output, gradient, gradients)
             }
             Function::Sum(sum) => sum.backward(values, output, gradient, gradients),
+            Function::SumAlong(sum_along) => {
+                sum_along.backward(values, output, gradient, gradients)
+            }
             Function::Broadcast(broadcast) => {
                 broadcast.backward(values, output, gradient, gradients)
+            }
+            Function::BroadcastAlong(broadcast_along) => {
+                broadcast_along.backward(values, output, gradient, gradients)
             }
         }
     }

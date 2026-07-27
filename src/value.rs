@@ -154,11 +154,26 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.apply(Function::sum(self.id))
     }
 
+    /// Records the sum of this value along `axis` on the same network
+    /// and returns a proxy to it.
+    pub fn sum_along(self, axis: usize) -> Self {
+        self.apply(Function::sum_along(self.id, axis))
+    }
+
     /// Records the explicit broadcast of this single-value payload across
     /// `reference`'s shape on the same network and returns a proxy to it.
     pub fn broadcast_like(self, reference: Self) -> Self {
         self.assert_same_network(&reference);
         self.apply(Function::broadcast(self.id, reference.id))
+    }
+
+    /// Records the explicit repetition of this value along `axis` of
+    /// `reference`'s shape on the same network and returns a proxy to
+    /// it; this value's shape must equal `reference`'s with that axis
+    /// removed.
+    pub fn broadcast_along(self, axis: usize, reference: Self) -> Self {
+        self.assert_same_network(&reference);
+        self.apply(Function::broadcast_along(self.id, reference.id, axis))
     }
 }
 

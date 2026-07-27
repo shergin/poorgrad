@@ -81,6 +81,66 @@ fn nudged(tensor: &Tensor<f64>, position: usize, delta: f64) -> Tensor<f64> {
     Tensor::new(tensor.shape().axes().iter().copied(), elements)
 }
 
+/// Checks the dense-layer expression per element: `matmul`, the
+/// axis-wise bias broadcast, `tanh`, elementwise arithmetic, and the
+/// full reduction — the exact shape of `Layer::express`.
+#[test]
+fn dense_layer_gradients_match_finite_differences() {
+    let base: Vec<Tensor<f64>> = vec![
+        Tensor::new([2, 3], [0.5, -1.0, 0.25, 1.5, 0.75, -0.5]),
+        Tensor::new([3, 2], [1.0, 0.5, -0.75, 0.25, 0.5, 1.25]),
+        Tensor::new([2], [0.35, -0.15]),
+        Tensor::new([2, 2], [0.6, -0.5, 0.25, 0.75]),
+    ];
+
+    let loss_of = |tensors: &[Tensor<f64>]| -> f64 {
+        let network = Network::new();
+        let x = network.leaf(tensors[0].clone());
+        let w = network.leaf(tensors[1].clone());
+        let bias = network.leaf(tensors[2].clone());
+        let y = network.leaf(tensors[3].clone());
+        let product = x.matmul(w);
+        let activated = (product + bias.broadcast_along(0, product)).tanh();
+        let error = activated - y;
+        let loss = (error * error).sum();
+        network.forward().of(loss).elements()[0]
+    };
+
+    let network = Network::new();
+    let x = network.leaf(base[0].clone());
+    let w = network.leaf(base[1].clone());
+    let bias = network.leaf(base[2].clone());
+    let y = network.leaf(base[3].clone());
+    let product = x.matmul(w);
+    let activated = (product + bias.broadcast_along(0, product)).tanh();
+    let error = activated - y;
+    let loss = (error * error).sum();
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(loss);
+    let analytic = [
+        gradients.of(x).clone(),
+        gradients.of(w).clone(),
+        gradients.of(bias).clone(),
+        gradients.of(y).clone(),
+    ];
+
+    for (which, input) in base.iter().enumerate() {
+        for position in 0..input.elements().len() {
+            let mut up = base.clone();
+            up[which] = nudged(input, position, STEP);
+            let mut down = base.clone();
+            down[which] = nudged(input, position, -STEP);
+            let numeric = (loss_of(&up) - loss_of(&down)) / (2.0 * STEP);
+            let value = analytic[which].elements()[position];
+            assert!(
+                (value - numeric).abs() <= TOLERANCE * (1.0 + numeric.abs()),
+                "dense input {which} element {position} diverges: \
+                 analytic {value}, numeric {numeric}"
+            );
+        }
+    }
+}
+
 /// Checks the tensor-native operations the scalar harness cannot reach:
 /// one expression covering `matmul`, `transposed`, `broadcast_like`,
 /// elementwise arithmetic, and `sum`, differentiated per element.

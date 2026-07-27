@@ -208,6 +208,68 @@ fn poisoned_network_names_its_cause() {
 }
 
 #[test]
+fn sum_along_reduces_the_named_axis() {
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+    let columns = matrix.sum_along(0);
+    assert_eq!(columns.shape(), Shape::new([3]));
+    assert_eq!(columns.elements(), &[5.0, 7.0, 9.0]);
+
+    let rows = matrix.sum_along(1);
+    assert_eq!(rows.shape(), Shape::new([2]));
+    assert_eq!(rows.elements(), &[6.0, 15.0]);
+}
+
+#[test]
+fn broadcast_along_repeats_the_named_axis() {
+    let row = Tensor::new([3], [1.0_f64, 2.0, 3.0]);
+    let reference = Tensor::filled([2, 3], 0.0);
+
+    let spread = row.broadcast_along(0, &reference);
+    assert_eq!(spread.shape(), Shape::new([2, 3]));
+    assert_eq!(spread.elements(), &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+
+    let column = Tensor::new([2], [1.0_f64, 2.0]);
+    let spread = column.broadcast_along(1, &reference);
+    assert_eq!(spread.elements(), &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
+}
+
+#[test]
+fn axis_sum_and_broadcast_are_adjoint() {
+    let network = Network::new();
+    let bias = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let reference = network.leaf(Tensor::filled([2, 3], 0.0));
+
+    let loss = bias.broadcast_along(0, reference).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.of(loss), Tensor::new([], [12.0]));
+
+    // Each bias element is repeated across the two rows, so its
+    // gradient is the sum of two ones; the shape reference gets none.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(bias).elements(), &[2.0, 2.0, 2.0]);
+    assert_eq!(gradients.of(reference).elements(), &[0.0; 6]);
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn sum_along_rejects_excessive_axes() {
+    let network = Network::new();
+    let matrix = network.leaf(Tensor::filled([2, 3], 1.0_f64));
+    matrix.sum_along(2);
+}
+
+#[test]
+#[should_panic(expected = "requires the remaining shape")]
+fn broadcast_along_rejects_mismatched_operands() {
+    let network = Network::new();
+    let wrong = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let reference = network.leaf(Tensor::filled([2, 3], 0.0));
+    wrong.broadcast_along(0, reference);
+}
+
+#[test]
 #[should_panic(expected = "recorded shape")]
 fn forward_with_rejects_mismatched_shapes() {
     let network = Network::new();

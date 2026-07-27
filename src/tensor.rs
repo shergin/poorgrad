@@ -252,8 +252,44 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         }
     }
 
+    /// Returns the tensor with `axis` reduced by summation.
+    ///
+    /// The reduction is rank-general: the elements are viewed as
+    /// `[outer, axis, inner]` in row-major order and summed over the
+    /// middle extent.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    fn sum_along(&self, axis: usize) -> Self {
+        let axes = self.shape.axes();
+        assert!(
+            axis < axes.len(),
+            "axis {axis} is out of rank for {}",
+            self.shape
+        );
+        let outer: usize = axes[..axis].iter().product();
+        let extent = axes[axis];
+        let inner: usize = axes[axis + 1..].iter().product();
+
+        let mut elements = Vec::with_capacity(outer * inner);
+        for outer_index in 0..outer {
+            for inner_index in 0..inner {
+                let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
+                let mut total = self.elements[position(0)].clone();
+                for step in 1..extent {
+                    total = total + self.elements[position(step)].clone();
+                }
+                elements.push(total);
+            }
+        }
+        Self {
+            shape: self.shape.without_axis(axis),
+            elements: Arc::new(elements),
+        }
+    }
+
     /// Returns this tensor's single element spread across `reference`'s
-    /// shape: the one explicit form of broadcasting.
+    /// shape: the whole-shape form of explicit broadcasting.
     ///
     /// # Panics
     /// Panics if `self` holds more than one element.
@@ -266,6 +302,43 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         Self {
             shape: reference.shape.clone(),
             elements: Arc::new(vec![self.elements[0].clone(); reference.elements.len()]),
+        }
+    }
+
+    /// Returns the tensor repeated along `axis` to match `reference`'s
+    /// shape: the named-axis form of explicit broadcasting.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of `reference`'s rank or `self`'s shape
+    /// differs from `reference`'s with that axis removed.
+    fn broadcast_along(&self, axis: usize, reference: &Self) -> Self {
+        let axes = reference.shape.axes();
+        assert!(
+            axis < axes.len(),
+            "axis {axis} is out of rank for {}",
+            reference.shape
+        );
+        assert_eq!(
+            self.shape,
+            reference.shape.without_axis(axis),
+            "broadcast along axis {axis} of {} requires the remaining shape",
+            reference.shape
+        );
+        let outer: usize = axes[..axis].iter().product();
+        let extent = axes[axis];
+        let inner: usize = axes[axis + 1..].iter().product();
+
+        let mut elements = Vec::with_capacity(reference.elements.len());
+        for outer_index in 0..outer {
+            for _ in 0..extent {
+                for inner_index in 0..inner {
+                    elements.push(self.elements[outer_index * inner + inner_index].clone());
+                }
+            }
+        }
+        Self {
+            shape: reference.shape.clone(),
+            elements: Arc::new(elements),
         }
     }
 }
