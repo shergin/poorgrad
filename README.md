@@ -142,6 +142,9 @@ machinery, from tape to training:
   matrix and one bias vector, the bias met through the explicit axis
   broadcast; layers chain by feeding one layer's output batch to the
   next.
+- [`Mlp`](src/mlp.rs) — chained dense layers with micrograd-style
+  topology (`[3, 4, 4, 1]`): tanh hidden layers, an affine output, and
+  caller-owned initialization from each parameter's shape.
 
 ## The name
 
@@ -163,6 +166,10 @@ term and its mapping to the Rust types — is collected in
   line, threaded with rayon: one shared network differentiated for
   per-sample targets on separate threads, then trained in parallel on O(1)
   forks, one per learning rate: `cargo run --example gradient_descent`.
+- [`mlp_xor`](examples/mlp_xor.rs) — train a tanh MLP on XOR at tensor
+  granularity: the graph is recorded once, and every training step feeds
+  a different minibatch through `forward_with` while the tape never
+  grows: `cargo run --example mlp_xor`.
 
 ## License
 
