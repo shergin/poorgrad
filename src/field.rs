@@ -37,7 +37,7 @@ impl<Data: Differentiable> Field<Data> {
     /// after this field was produced.
     pub fn of(&self, value: Value<'_, Data>) -> &Data {
         assert!(
-            self.lineage.is_same(value.tape().lineage()),
+            self.lineage == value.tape().lineage(),
             "value belongs to a different network lineage"
         );
         self.values
@@ -53,7 +53,7 @@ impl<Data: Differentiable> Field<Data> {
     /// Returns a field with every entry passed through `transform`.
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
-            lineage: self.lineage.clone(),
+            lineage: self.lineage,
             values: self.values.iter().map(transform).collect(),
         }
     }
@@ -66,7 +66,7 @@ impl<Data: Differentiable> Field<Data> {
     pub fn zip(&self, other: &Self, combine: impl Fn(&Data, &Data) -> Data) -> Self {
         self.assert_kinship(other);
         Self {
-            lineage: self.lineage.clone(),
+            lineage: self.lineage,
             values: self
                 .values
                 .iter()
@@ -80,14 +80,14 @@ impl<Data: Differentiable> Field<Data> {
         &self.values
     }
 
-    pub(crate) fn lineage(&self) -> &Lineage {
-        &self.lineage
+    pub(crate) fn lineage(&self) -> Lineage {
+        self.lineage
     }
 
     /// Panics if `other` cannot combine with `self`.
     fn assert_kinship(&self, other: &Self) {
         assert!(
-            self.lineage.is_same(&other.lineage),
+            self.lineage == other.lineage,
             "fields belong to different network lineages"
         );
         assert_eq!(

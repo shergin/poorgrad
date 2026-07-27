@@ -35,7 +35,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         Self {
             tape,
             nodes,
-            values: Field::new(tape.lineage().clone(), values),
+            values: Field::new(tape.lineage(), values),
         }
     }
 
@@ -93,6 +93,6 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             let gradient = gradients[index].clone();
             function.backward(values, &values[index], &gradient, &mut gradients);
         }
-        Gradients::new(Field::new(self.tape.lineage().clone(), gradients))
+        Gradients::new(Field::new(self.tape.lineage(), gradients))
     }
 }

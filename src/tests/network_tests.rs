@@ -12,20 +12,32 @@ fn new_network_is_empty() {
 }
 
 #[test]
-fn try_resolve_probes_unallocated_symbols() {
+fn try_resolve_probes_foreign_and_unrecorded_symbols() {
     let network = Network::<f64>::new();
-    let other = Network::new();
-    let foreign = other.leaf(1.0);
-    assert!(network.try_resolve(foreign.symbol()).is_none());
+    let foreign = Network::new().leaf(1.0).symbol();
+    assert!(network.try_resolve(foreign).is_none());
+
+    let fork = network.clone();
+    let late = network.leaf(2.0).symbol();
+    assert!(fork.try_resolve(late).is_none());
 }
 
 #[test]
-#[should_panic(expected = "not allocated")]
-fn resolve_rejects_unallocated_symbols() {
+#[should_panic(expected = "different network lineage")]
+fn resolve_rejects_foreign_symbols() {
     let network = Network::<f64>::new();
     let other = Network::new();
     let foreign = other.leaf(1.0);
     network.resolve(foreign.symbol());
+}
+
+#[test]
+#[should_panic(expected = "not allocated")]
+fn resolve_rejects_unrecorded_symbols() {
+    let network = Network::<f64>::new();
+    let fork = network.clone();
+    let late = network.leaf(1.0);
+    fork.resolve(late.symbol());
 }
 
 #[test]

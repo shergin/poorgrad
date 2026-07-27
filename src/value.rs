@@ -61,7 +61,10 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     /// network generations, resolved back into a proxy by
     /// `Network::resolve`.
     pub fn symbol(&self) -> Symbol {
-        Symbol(self.id)
+        Symbol {
+            lineage: self.tape.lineage(),
+            id: self.id,
+        }
     }
 
     /// Returns a clone of the `Function` that produced this value.

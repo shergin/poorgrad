@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use cow_vec::CowVec;
 
@@ -11,27 +12,32 @@ use super::{Differentiable, Function, Shape, ValueId};
 assert_impl_all!(Tape<f64>: Send, Sync);
 
 // Compile-time thread-safety contract; the anchor rationale is documented
-// in `network.rs`. The token is what lets fields cross threads detached
-// from any network, so its thread-safety is load-bearing on its own.
-assert_impl_all!(Lineage: Send, Sync);
+// in `network.rs`. The token is what lets symbols and fields cross
+// threads detached from any network, so its thread-safety and `Copy` are
+// load-bearing on their own.
+assert_impl_all!(Lineage: Send, Sync, Copy);
 
 /// An opaque token identifying a family of related tapes.
 ///
-/// Every fork and update clones the token, so two tapes share a lineage
-/// exactly when they descend from a common origin; kinship is pointer
-/// identity of the token. Positions are stable within a lineage, which is
-/// what lets symbols resolve and fields combine across generations.
-#[derive(Debug, Clone)]
-pub(crate) struct Lineage(Arc<()>);
+/// Every tape mints its identity from a process-global counter at
+/// creation, and forks and updates carry it forward, so two tapes share a
+/// lineage exactly when they descend from a common origin; kinship is
+/// plain equality. Being a `Copy` integer rather than a reference-counted
+/// token, it rides inside every `Symbol` without costing `Copy`, and
+/// creating fields and evaluations never touches an atomic counter.
+/// Positions are stable within a lineage, which is what lets symbols
+/// resolve and fields combine across generations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Lineage(u64);
 
 impl Lineage {
+    /// Mints a fresh lineage identity.
+    ///
+    /// `Relaxed` suffices: only uniqueness matters, and the identity
+    /// reaches other threads through the tape it identifies.
     fn new() -> Self {
-        Self(Arc::new(()))
-    }
-
-    /// Returns `true` if `self` and `other` identify the same lineage.
-    pub(crate) fn is_same(&self, other: &Lineage) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
 
@@ -79,8 +85,8 @@ impl<Data: Differentiable> Tape<Data> {
     }
 
     /// Returns the token of the lineage this tape belongs to.
-    pub(crate) fn lineage(&self) -> &Lineage {
-        &self.lineage
+    pub(crate) fn lineage(&self) -> Lineage {
+        self.lineage
     }
 
     /// Records `function` and returns its handle.
@@ -163,7 +169,7 @@ impl<Data: Differentiable> Tape<Data> {
                 functions: inner.functions.clone(),
                 shapes: inner.shapes.clone(),
             }),
-            lineage: self.lineage.clone(),
+            lineage: self.lineage,
         }
     }
 
@@ -205,7 +211,7 @@ impl<Data: Differentiable> Tape<Data> {
         // shapes, so the shape column is shared as is.
         Self {
             inner: Mutex::new(TapeInner { functions, shapes }),
-            lineage: self.lineage.clone(),
+            lineage: self.lineage,
         }
     }
 

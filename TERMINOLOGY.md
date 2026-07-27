@@ -125,9 +125,9 @@ persists across time, while `Value` is that identity's state in one
 generation. Each generation acts as an environment;
 [`Network::resolve`](src/network.rs) looks a symbol up in it and returns
 that generation's proxy; a failed resolution panics as a programmer
-error, while `try_resolve` probes and returns `None`. Resolution is
-positional under the hood, so resolving into an unrelated network is not
-detected. In poorgrad:
+error, while `try_resolve` probes and returns `None`. The symbol carries
+its lineage, so resolving into an unrelated network panics rather than
+misbinding; within a lineage, resolution is positional. In poorgrad:
 [`Symbol`](src/symbol.rs), obtained with `Value::symbol`.
 
 **Generation.** A network state produced by a state transition: a fork
@@ -158,9 +158,10 @@ over the graph. In poorgrad: [`Field`](src/field.rs).
 **Lineage.** The family of networks descending from a common origin
 through forks and updates. Positions are stable within a lineage, which is
 what makes symbols resolve and fields combine across generations. Tracked
-by an opaque token cloned through every transition; kinship is token
-identity. In poorgrad: the crate-internal `Lineage` in
-[`src/tape.rs`](src/tape.rs).
+by a `Copy` identity minted from a process-global counter at network
+creation and carried through every transition; kinship is equality. In
+poorgrad: the crate-internal `Lineage` in [`src/tape.rs`](src/tape.rs),
+embedded in every `Symbol` and `Field`.
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/tensor.rs). Its contract is
