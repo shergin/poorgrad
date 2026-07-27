@@ -34,8 +34,14 @@ impl Shape {
     }
 
     /// Returns the number of values a payload of this shape holds.
+    ///
+    /// # Panics
+    /// Panics if the product of the axes overflows `usize`.
     pub fn volume(&self) -> usize {
-        self.0.iter().product()
+        self.0
+            .iter()
+            .try_fold(1usize, |volume, &axis| volume.checked_mul(axis))
+            .expect("shape volume overflows `usize`")
     }
 
     /// Returns the axes, outermost first.

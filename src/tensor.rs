@@ -29,7 +29,10 @@ impl<Element: Differentiable> Tensor<Element> {
     /// Creates a tensor of `shape` from `elements` in row-major order.
     ///
     /// # Panics
-    /// Panics if the number of elements differs from the shape's volume.
+    /// Panics if the number of elements differs from the shape's volume,
+    /// or if the shape holds no elements. Empty tensors are forbidden by
+    /// design: the payload contract mints zeros and ones from existing
+    /// elements (`zero_like`), which an empty tensor cannot supply.
     pub fn new(shape: impl IntoIterator<Item = usize>, elements: impl Into<Vec<Element>>) -> Self {
         let shape = Shape::new(shape);
         let elements = elements.into();
@@ -38,6 +41,10 @@ impl<Element: Differentiable> Tensor<Element> {
             elements.len(),
             "tensor shape does not match its number of elements"
         );
+        assert!(
+            !elements.is_empty(),
+            "tensors must hold at least one element"
+        );
         Self {
             shape,
             elements: Arc::new(elements),
@@ -45,9 +52,14 @@ impl<Element: Differentiable> Tensor<Element> {
     }
 
     /// Creates a tensor of `shape` with every element set to `element`.
+    ///
+    /// # Panics
+    /// Panics if the shape holds no elements; empty tensors are
+    /// forbidden by design, as documented on [`Tensor::new`].
     pub fn filled(shape: impl IntoIterator<Item = usize>, element: Element) -> Self {
         let shape = Shape::new(shape);
         let volume = shape.volume();
+        assert!(volume > 0, "tensors must hold at least one element");
         Self {
             shape,
             elements: Arc::new(vec![element; volume]),

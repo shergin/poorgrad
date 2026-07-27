@@ -16,6 +16,18 @@ fn new_rejects_mismatched_volume() {
 }
 
 #[test]
+#[should_panic(expected = "at least one element")]
+fn new_rejects_empty_tensors() {
+    Tensor::new([2, 0], Vec::<f64>::new());
+}
+
+#[test]
+#[should_panic(expected = "at least one element")]
+fn filled_rejects_empty_tensors() {
+    Tensor::filled([0], 1.0_f64);
+}
+
+#[test]
 fn clone_shares_storage() {
     let tensor = Tensor::new([2], [1.0_f64, 2.0]);
     let clone = tensor.clone();

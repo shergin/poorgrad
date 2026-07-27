@@ -21,3 +21,9 @@ fn display_lists_the_axes() {
     assert_eq!(Shape::new([3, 2]).to_string(), "[3, 2]");
     assert_eq!(Shape::scalar().to_string(), "[]");
 }
+
+#[test]
+#[should_panic(expected = "overflows")]
+fn volume_rejects_overflow() {
+    Shape::new([usize::MAX, 2]).volume();
+}
