@@ -228,7 +228,16 @@ impl<Data: Differentiable> Tape<Data> {
         self.lock().functions.len()
     }
 
+    /// Locks the tape's columns.
+    ///
+    /// A poisoned lock stays fatal on purpose: it means a recording
+    /// panicked on this tape earlier, the panic was caught, and the
+    /// program kept going — a state this crate's panics-mean-bugs
+    /// contract does not support. The message names that cause so the
+    /// debugging trail leads to the original panic.
     fn lock(&self) -> MutexGuard<'_, TapeInner<Data>> {
-        self.inner.lock().expect("tape lock is poisoned")
+        self.inner
+            .lock()
+            .expect("tape is poisoned: a recording panicked earlier on this network")
     }
 }

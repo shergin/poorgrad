@@ -191,6 +191,23 @@ fn broadcast_and_sum_are_adjoint() {
 }
 
 #[test]
+#[should_panic(expected = "a recording panicked earlier")]
+fn poisoned_network_names_its_cause() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let b = network.leaf(Tensor::new([3], [1.0, 2.0, 3.0]));
+
+    // A caught shape mismatch poisons the tape; every later use fails
+    // fatally, and the message must point at the recording panic, not
+    // just the lock mechanics.
+    let mismatch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = a + b;
+    }));
+    assert!(mismatch.is_err());
+    network.len();
+}
+
+#[test]
 #[should_panic(expected = "scalar target")]
 fn backward_rejects_non_scalar_targets() {
     let network = Network::new();
