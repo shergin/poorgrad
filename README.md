@@ -27,13 +27,17 @@ choice:
   freely, and a value outliving its graph is a compile error, not a bug
   report. Every type's `Send + Sync` contract is asserted at compile time.
 - **Mutation is a state transition.** A gradient step produces the next
-  network generation in O(parameters): the replaced parameters are freshly
-  allocated, everything else is shared through an append-only arena, and
-  older generations stay fully usable. Snapshot isolation, for networks.
-- **Performance falls out of structure.** One `Mutex` in the entire
-  engine, taken briefly per operation; O(1) forks; not a single line of
-  `unsafe` — and `#![forbid(unsafe_code)]` keeps it a promise, not a
-  claim. CPU-only, on purpose: the engine is the point.
+  network generation, freshly allocating only the replaced parameters:
+  everything else is shared through an append-only arena, and older
+  generations stay fully usable. Snapshot isolation, for networks.
+- **Performance falls out of structure.** One `Mutex` in the engine
+  itself, taken briefly per operation — the arena inside
+  [`cow_vec`](https://crates.io/crates/cow_vec) holds the only other; O(1)
+  forks; no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
+  it a promise rather than a claim (the arena's `unsafe` core is
+  `cow_vec`'s, encapsulated behind its tested interface). CPU-only, on
+  purpose: the engine is the point — and the claims are measured, not
+  asserted: `cargo bench` runs the suite.
 
 ## A taste
 
