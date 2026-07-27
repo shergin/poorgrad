@@ -255,6 +255,52 @@ fn backward_survives_later_recordings() {
 }
 
 #[test]
+fn backward_skips_disconnected_nodes() {
+    let network = Network::new();
+    let unrelated = network.leaf(0.0_f64);
+    // A singular expression the target does not depend on: its forward
+    // value is NaN, but its derivative rule must never run.
+    let quotient = unrelated / unrelated;
+    let input = network.leaf(2.0);
+    let target = input * input;
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(target);
+    assert_eq!(*gradients.of(input), 4.0);
+    assert_eq!(*gradients.of(unrelated), 0.0);
+    assert_eq!(*gradients.of(quotient), 0.0);
+}
+
+#[test]
+fn backward_ignores_singular_paths_through_shared_leaves() {
+    let network = Network::new();
+    let x = network.leaf(0.0_f64);
+    // `x` feeds both the target and a disconnected singular quotient; the
+    // quotient must not poison the genuine gradient of `x`.
+    let _quotient = x / x;
+    let target = x * x;
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(target);
+    assert_eq!(*gradients.of(x), 0.0);
+}
+
+#[test]
+fn backward_skips_nodes_recorded_after_the_target() {
+    let network = Network::new();
+    let input = network.leaf(2.0_f64);
+    let target = input * input;
+    let late = network.leaf(0.0);
+    let quotient = late / late;
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(target);
+    assert_eq!(*gradients.of(input), 4.0);
+    assert_eq!(*gradients.of(late), 0.0);
+    assert_eq!(*gradients.of(quotient), 0.0);
+}
+
+#[test]
 #[should_panic(expected = "allocated after")]
 fn backward_rejects_later_targets() {
     let network = Network::new();

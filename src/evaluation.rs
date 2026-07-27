@@ -65,11 +65,15 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     ///
     /// It seeds the output gradient with `one_like` and accumulates into
     /// a fresh buffer initialized with `zero_like`, scanning this
-    /// evaluation's own tape snapshot in reverse allocation order. The
-    /// network is not even locked, so any number of threads can
-    /// differentiate one shared evaluation for their own targets at once.
-    /// Values recorded after this evaluation ran are absent from the
-    /// result, exactly as they are absent from `of`.
+    /// evaluation's own tape snapshot in reverse allocation order. Only
+    /// the ancestors of `output` execute their derivative rules: every
+    /// other value's gradient is exactly zero, and expressions the target
+    /// does not depend on — including singular ones such as a division by
+    /// zero — cannot disturb the result. The network is not even locked,
+    /// so any number of threads can differentiate one shared evaluation
+    /// for their own targets at once. Values recorded after this
+    /// evaluation ran are absent from the result, exactly as they are
+    /// absent from `of`.
     ///
     /// # Panics
     /// Panics if `output` belongs to a different network or was allocated
@@ -88,8 +92,22 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
 
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         gradients[output_index] = values[output_index].one_like();
-        for index in (0..self.nodes.len()).rev() {
+        // The single reverse scan doubles as reachability marking: every
+        // consumer lives at a higher index than its operands, so when the
+        // scan reaches a node it is already marked exactly when it is an
+        // ancestor of the target. Skipping non-ancestors is a correctness
+        // measure, not an optimization: their derivative rules must not
+        // run, because a singular disconnected expression (`x / x` at
+        // zero) would poison genuine gradients with NaN even through a
+        // zero cotangent.
+        let mut ancestors = vec![false; output_index + 1];
+        ancestors[output_index] = true;
+        for index in (0..=output_index).rev() {
+            if !ancestors[index] {
+                continue;
+            }
             let function = self.nodes.get(index).expect("snapshot cannot shrink");
+            function.visit_operands(|operand| ancestors[operand.index()] = true);
             let gradient = gradients[index].clone();
             function.backward(values, &values[index], &gradient, &mut gradients);
         }

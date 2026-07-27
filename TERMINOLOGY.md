@@ -20,7 +20,10 @@ derivative of *one* output with respect to *all* inputs in a single backward
 sweep costing about one forward evaluation. Its mirror image, forward mode,
 computes one input against all outputs. Reverse mode wins for machine
 learning (one loss, many parameters). In poorgrad:
-[`Evaluation::backward`](src/evaluation.rs).
+[`Evaluation::backward`](src/evaluation.rs). The sweep executes derivative
+rules only for the target's ancestors; every other value's gradient is
+exactly zero, so expressions the target does not depend on — including
+singular ones — cannot disturb the result.
 
 **Chain rule.** The composition law of derivatives: each operation knows the
 derivative of its output with respect to each operand and multiplies the
