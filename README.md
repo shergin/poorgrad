@@ -137,6 +137,10 @@ The vocabulary used across code and docs — the scientific meaning of each
 term and its mapping to the Rust types — is collected in
 [TERMINOLOGY.md](TERMINOLOGY.md).
 
+## Roadmap
+
+Planned work and settled design decisions live in [ROADMAP.md](ROADMAP.md).
+
 ## Examples
 
 - [`chain`](examples/chain.rs) — build a small expression graph by chaining
