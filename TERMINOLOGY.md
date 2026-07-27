@@ -123,8 +123,10 @@ consumed by operators (`let x = v1 + v2;` records a node and keeps `v1`,
 persists across time, while `Value` is that identity's state in one
 generation. Each generation acts as an environment;
 [`Network::resolve`](src/network.rs) looks a symbol up in it and returns
-that generation's proxy. Resolution is positional under the hood, so
-resolving into an unrelated network is not detected. In poorgrad:
+that generation's proxy; a failed resolution panics as a programmer
+error, while `try_resolve` probes and returns `None`. Resolution is
+positional under the hood, so resolving into an unrelated network is not
+detected. In poorgrad:
 [`Symbol`](src/symbol.rs), obtained with `Value::symbol`.
 
 **Generation.** A network state produced by a state transition: a fork

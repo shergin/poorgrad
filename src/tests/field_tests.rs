@@ -54,7 +54,7 @@ fn fields_survive_generations_within_a_lineage() {
     // The next generation is kin to the previous one, so the field still
     // resolves against its values and can drive its update.
     let updated = network.updated(&gradients, |parameter, direction| parameter - direction);
-    let w = updated.resolve(w_symbol).unwrap();
+    let w = updated.resolve(w_symbol);
     assert_eq!(*gradients.of(w), 1.0);
     assert_eq!(w.data(), Some(0.0));
 }

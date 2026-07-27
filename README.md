@@ -54,13 +54,13 @@ let loss_symbol = loss.symbol();
 // everything but the parameters with the one before it.
 let mut network = network;
 for _ in 0..100 {
-    let loss = network.resolve(loss_symbol).unwrap();
+    let loss = network.resolve(loss_symbol);
     let evaluation = network.forward();
     let gradients = network.backward(&evaluation, loss);
     network = network.updated(gradients.as_field(), |w, g| w - 0.01 * g);
 }
 
-let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+let learned = network.resolve(w_symbol).data().unwrap();
 assert!((learned - 5.0).abs() < 1e-6);
 ```
 

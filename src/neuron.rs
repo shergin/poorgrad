@@ -83,13 +83,9 @@ impl<Data: Elementary> Neuron<Data> {
             self.weights.len(),
             "neuron expects a different number of inputs"
         );
-        let mut sum = network
-            .resolve(self.bias)
-            .expect("neuron parameters are allocated on the network");
+        let mut sum = network.resolve(self.bias);
         for (weight, input) in self.weights.iter().zip(inputs) {
-            let weight = network
-                .resolve(*weight)
-                .expect("neuron parameters are allocated on the network");
+            let weight = network.resolve(*weight);
             sum = sum + weight * *input;
         }
         match self.activation {

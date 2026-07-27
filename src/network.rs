@@ -53,15 +53,26 @@ impl<Data: Differentiable> Network<Data> {
         Value::bind(&self.tape, id)
     }
 
-    /// Resolves `symbol` in this generation, returning its `Value`, or
-    /// `None` if no value with that name is allocated here.
+    /// Resolves `symbol` in this generation, returning its `Value`.
     ///
     /// Proxies borrow the generation that created them, so a proxy taken
     /// before a fork or an update belongs to the old generation; `resolve`
     /// produces the equivalent proxy for this one. Resolution is
     /// positional, so `symbol` is expected to come from this network or
-    /// from a network sharing its history.
-    pub fn resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
+    /// from a network sharing its history. A failed resolution is a
+    /// programmer error, like every other positional misuse; `try_resolve`
+    /// is the probing form.
+    ///
+    /// # Panics
+    /// Panics if no value with that name is allocated here.
+    pub fn resolve(&self, symbol: Symbol) -> Value<'_, Data> {
+        self.try_resolve(symbol)
+            .expect("symbol is not allocated in this network")
+    }
+
+    /// Resolves `symbol` in this generation, or returns `None` if no value
+    /// with that name is allocated here: the probing form of `resolve`.
+    pub fn try_resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
         if symbol.0.index() >= self.len() {
             return None;
         }

@@ -65,7 +65,7 @@ fn neuron_trains_toward_a_target() {
 
     let mut network = network;
     for _ in 0..200 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
@@ -73,7 +73,7 @@ fn neuron_trains_toward_a_target() {
         });
     }
 
-    let output = network.resolve(output_symbol).unwrap();
+    let output = network.resolve(output_symbol);
     let evaluation = network.forward();
     assert!((evaluation.of(output) - 0.5).abs() < 1e-3);
 }

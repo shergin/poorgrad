@@ -89,7 +89,7 @@ fn engine_trains_tensor_payloads_unchanged() {
     let learning_rate = Tensor::filled([2], 0.05);
     let mut network = network;
     for _ in 0..200 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
@@ -97,7 +97,7 @@ fn engine_trains_tensor_payloads_unchanged() {
         });
     }
 
-    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    let learned = network.resolve(w_symbol).data().unwrap();
     assert!((learned.elements()[0] - 5.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 3.0).abs() < 1e-6);
 }
@@ -194,7 +194,7 @@ fn linear_regression_trains_in_matrix_form() {
     let learning_rate = Tensor::new([], [0.05]);
     let mut network = network;
     for _ in 0..300 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
@@ -202,7 +202,7 @@ fn linear_regression_trains_in_matrix_form() {
         });
     }
 
-    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    let learned = network.resolve(w_symbol).data().unwrap();
     assert!((learned.elements()[0] - 2.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 1.0).abs() < 1e-6);
 }

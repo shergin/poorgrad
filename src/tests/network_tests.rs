@@ -12,11 +12,20 @@ fn new_network_is_empty() {
 }
 
 #[test]
+fn try_resolve_probes_unallocated_symbols() {
+    let network = Network::<f64>::new();
+    let other = Network::new();
+    let foreign = other.leaf(1.0);
+    assert!(network.try_resolve(foreign.symbol()).is_none());
+}
+
+#[test]
+#[should_panic(expected = "not allocated")]
 fn resolve_rejects_unallocated_symbols() {
     let network = Network::<f64>::new();
     let other = Network::new();
     let foreign = other.leaf(1.0);
-    assert!(network.resolve(foreign.symbol()).is_none());
+    network.resolve(foreign.symbol());
 }
 
 #[test]
@@ -277,7 +286,7 @@ fn clone_forks_the_network() {
 
     assert_eq!(network.len(), 2);
     assert_eq!(fork.len(), 1);
-    let rebound = fork.resolve(v1.symbol()).unwrap();
+    let rebound = fork.resolve(v1.symbol());
     assert_eq!(rebound.data(), Some(1.0));
 }
 
@@ -297,8 +306,8 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
     assert_eq!(updated.len(), network.len());
     // The gradient of `y` with respect to `w` is `x`, so the parameter
     // moves from 1 to -1; the plain leaf stays untouched.
-    assert_eq!(updated.resolve(w.symbol()).unwrap().data(), Some(-1.0));
-    assert_eq!(updated.resolve(x.symbol()).unwrap().data(), Some(2.0));
+    assert_eq!(updated.resolve(w.symbol()).data(), Some(-1.0));
+    assert_eq!(updated.resolve(x.symbol()).data(), Some(2.0));
     // The old generation is untouched as well.
     assert_eq!(w.data(), Some(1.0));
 }
@@ -317,7 +326,7 @@ fn gradient_descent_converges() {
 
     let mut network = network;
     for _ in 0..30 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
@@ -325,7 +334,7 @@ fn gradient_descent_converges() {
         });
     }
 
-    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    let learned = network.resolve(w_symbol).data().unwrap();
     assert!((learned - 3.0).abs() < 1e-6);
 }
 
@@ -345,7 +354,7 @@ fn momentum_descent_converges() {
     let mut network = network;
     let mut velocity: Option<Field<f64>> = None;
     for _ in 0..40 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         let step = match velocity {
@@ -356,7 +365,7 @@ fn momentum_descent_converges() {
         velocity = Some(step);
     }
 
-    let learned = network.resolve(w_symbol).unwrap().data().unwrap();
+    let learned = network.resolve(w_symbol).data().unwrap();
     assert!((learned - 3.0).abs() < 1e-3);
 }
 

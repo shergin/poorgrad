@@ -56,7 +56,7 @@ fn layer_trains_toward_targets() {
 
     let mut network = network;
     for _ in 0..100 {
-        let loss = network.resolve(loss_symbol).unwrap();
+        let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = network.backward(&evaluation, loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
@@ -65,8 +65,8 @@ fn layer_trains_toward_targets() {
     }
 
     let evaluation = network.forward();
-    let first = network.resolve(output_symbols[0]).unwrap();
-    let second = network.resolve(output_symbols[1]).unwrap();
+    let first = network.resolve(output_symbols[0]);
+    let second = network.resolve(output_symbols[1]);
     assert!((evaluation.of(first) - 1.0).abs() < 1e-3);
     assert!((evaluation.of(second) + 1.0).abs() < 1e-3);
 }

@@ -71,18 +71,18 @@ fn main() {
         .map(|&learning_rate| {
             let mut network = network.clone();
             for _ in 0..500 {
-                let loss = network.resolve(loss_symbol).expect("loss is recorded");
+                let loss = network.resolve(loss_symbol);
                 let evaluation = network.forward();
                 let gradients = network.backward(&evaluation, loss);
                 network = network.updated(gradients.as_field(), |parameter, gradient| {
                     parameter - learning_rate * gradient
                 });
             }
-            let loss = network.resolve(loss_symbol).expect("loss is recorded");
+            let loss = network.resolve(loss_symbol);
             let evaluation = network.forward();
             let final_loss = *evaluation.of(loss);
-            let w = network.resolve(w_symbol).expect("w is recorded");
-            let b = network.resolve(b_symbol).expect("b is recorded");
+            let w = network.resolve(w_symbol);
+            let b = network.resolve(b_symbol);
             let w = w.data().expect("parameters carry payloads");
             let b = b.data().expect("parameters carry payloads");
             (learning_rate, final_loss, w, b)
