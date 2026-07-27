@@ -1,4 +1,38 @@
 //! `poorgrad` is a tiny autograd engine for the GPU-poor.
+//!
+//! Expressions record a static computation graph onto a shared
+//! `Network`; `forward` materializes every value, `backward`
+//! differentiates one scalar target, and `updated` produces the next
+//! network generation from a gradient step:
+//!
+//! ```
+//! use poorgrad::Network;
+//!
+//! let network = Network::new();
+//! let w = network.parameter(0.0_f64);
+//! let x = network.leaf(3.0);
+//! let y = network.leaf(15.0);
+//!
+//! // Operators record the graph; values are `Copy` and never consumed.
+//! let error = w * x - y;
+//! let loss = error * error;
+//!
+//! let w_symbol = w.symbol();
+//! let loss_symbol = loss.symbol();
+//!
+//! // A training step is a state transition: each generation shares
+//! // everything but the parameters with the one before it.
+//! let mut network = network;
+//! for _ in 0..100 {
+//!     let loss = network.resolve(loss_symbol);
+//!     let evaluation = network.forward();
+//!     let gradients = evaluation.backward(loss);
+//!     network = network.updated(gradients.as_field(), |w, g| w - 0.01 * g);
+//! }
+//!
+//! let learned = network.resolve(w_symbol).data().unwrap();
+//! assert!((learned - 5.0).abs() < 1e-6);
+//! ```
 #![forbid(unsafe_code)]
 
 mod differentiable;
