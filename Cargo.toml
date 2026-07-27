@@ -16,6 +16,12 @@ categories = ["science", "mathematics"]
 [lib]
 bench = false
 
+# One codegen unit keeps benchmark comparisons meaningful across
+# commits: default partitioning shifts with unrelated edits and can
+# swing tight loops by tens of percent, masquerading as regressions.
+[profile.bench]
+codegen-units = 1
+
 [dependencies]
 cow_vec = "1.4"
 smallvec = "1.15.2"
