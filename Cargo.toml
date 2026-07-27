@@ -10,10 +10,37 @@ license = "MIT OR Apache-2.0"
 keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
 categories = ["science", "mathematics"]
 
+# The default libtest bench harness would intercept criterion's CLI
+# flags (such as `--save-baseline`), so benchmarks run only through the
+# explicit `[[bench]]` targets below.
+[lib]
+bench = false
+
 [dependencies]
 cow_vec = "1.4"
 smallvec = "1.15.2"
 static_assertions = "1.1"
 
 [dev-dependencies]
+criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 rayon = "1.12.0"
+
+[[bench]]
+name = "record"
+harness = false
+
+[[bench]]
+name = "run"
+harness = false
+
+[[bench]]
+name = "train"
+harness = false
+
+[[bench]]
+name = "scale"
+harness = false
+
+[[bench]]
+name = "memory"
+harness = false
