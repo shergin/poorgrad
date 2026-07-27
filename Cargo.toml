@@ -2,8 +2,10 @@
 name = "poorgrad"
 version = "0.1.0"
 edition = "2024"
-description = "A poor man's autograd: a tiny scalar autograd engine for the GPU-poor, written in idiomatic Rust."
+description = "A poor man's autograd: a tiny autograd engine for the GPU-poor, written in idiomatic Rust."
 readme = "README.md"
+repository = "https://github.com/shergin/poorgrad"
+documentation = "https://docs.rs/poorgrad"
 license = "MIT OR Apache-2.0"
 keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
 categories = ["science", "mathematics"]
