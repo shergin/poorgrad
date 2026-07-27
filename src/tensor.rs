@@ -17,8 +17,10 @@ assert_impl_all!(Tensor<f64>: Send, Sync);
 /// `Arc`s, so cloning is O(1) — the engine clones payloads liberally
 /// during gradient accumulation, and a payload must be cheap to copy by
 /// design. Binary operations require identical shapes; implicit
-/// broadcasting is deliberately absent. Tensor-native operations (matrix
-/// multiplication, reductions) arrive with a later trait tier.
+/// broadcasting is deliberately absent. The tensor-native tier
+/// (`Tensorial`) currently stops at rank 2: there is no reshape, no
+/// axis-wise reduction, and no batched matmul yet, while `Shape` itself
+/// carries any rank.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<Element> {
     shape: Shape,
@@ -234,8 +236,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
 
     /// Returns the sum of every element as a rank-0 tensor.
     ///
-    /// # Panics
-    /// Panics if the tensor holds no elements.
+    /// It folds left to right with no pairwise or compensated summation:
+    /// rounding error grows linearly with the element count, which is
+    /// acceptable at this crate's sizes.
     fn sum(&self) -> Self {
         let mut elements = self.elements.iter();
         let first = elements

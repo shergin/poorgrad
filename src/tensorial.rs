@@ -9,7 +9,11 @@ use super::Elementary;
 /// degenerately — a scalar is a rank-0 tensor, so `matmul` collapses to
 /// multiplication and `transposed`, `sum`, and `broadcast_like` to the
 /// identity — which is what keeps scalar graphs running under the same
-/// bound.
+/// bound. The degenerate impls exist for exactly that: satisfying the
+/// bound of running a graph, not recording tensor-native expressions on
+/// scalar networks — record-time shape inference demands proper ranks
+/// (`matmul` requires rank 2), so `Value::matmul` on a scalar network
+/// panics at the offending expression.
 ///
 /// Broadcasting is explicit by design: `broadcast_like` is the only way a
 /// payload changes shape, it accepts only a single-value payload, and

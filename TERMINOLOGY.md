@@ -185,7 +185,10 @@ tensor-native tier adds `matmul`, `transposed`, `sum`, and the explicit
 
 **Tensorial.** The payload tier of tensor-native operations — matrix
 multiplication, transposition, reduction, and explicit broadcast — with
-scalars implementing it degenerately (a scalar is a rank-0 tensor).
+scalars implementing it degenerately (a scalar is a rank-0 tensor; the
+degenerate impls satisfy the bound of running a graph, while recording
+tensor-native expressions demands proper ranks). The tier currently
+stops at rank 2: no reshape, axis-wise reduction, or batched matmul.
 Summation and broadcasting are adjoint: each is the other's gradient
 rule. Broadcasting is explicit by design: `broadcast_like` spreads a
 single value across a named reference's shape, and no operation aligns
