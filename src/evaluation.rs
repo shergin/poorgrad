@@ -123,3 +123,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         Gradients::new(Field::new(self.tape.lineage(), gradients))
     }
 }
+
+#[cfg(test)]
+#[path = "tests/evaluation_tests.rs"]
+mod tests;
