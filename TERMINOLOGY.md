@@ -272,6 +272,12 @@ output batch to the next. Detached like `Neuron`: parameters live on
 the network, symbols in the layer. In poorgrad:
 [`Layer`](src/layer.rs).
 
+**Mlp.** A multilayer perceptron: dense layers chained by a topology of
+value widths (`[3, 4, 4, 1]`), hidden layers squashing with `Tanh` and
+an affine output layer. A facade over `Layer`, detached the same way,
+with initialization owned by the caller through a shape-to-payload
+initializer. In poorgrad: [`Mlp`](src/mlp.rs).
+
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
 is what gives stacked neurons expressive power beyond affine maps. It is a
 graph operation like any other, so it participates in differentiation
