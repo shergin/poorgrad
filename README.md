@@ -1,14 +1,14 @@
 # poorgrad
 
-**A fully concurrent, thread-safe scalar autograd engine, written the way
-Rust wants it written.**
+**A fully concurrent, thread-safe autograd engine, written the way Rust
+wants it written.**
 
-`poorgrad` starts where every scalar autograd engine starts — with
-[Karpathy's `micrograd`](https://github.com/karpathy/micrograd) — and then
+`poorgrad` begins from
+[Karpathy's `micrograd`](https://github.com/karpathy/micrograd) and then
 takes the road the others don't: no `Rc<RefCell<...>>`, no single-threaded
-assumption, no graph rebuilt on every pass. Sharing a computation graph
-across threads is not a feature bolted on with locks; it is what the types
-guarantee.
+assumption, no graph rebuilt on every pass, and a payload generic over
+scalars and tensors alike. Sharing a computation graph across threads is
+not a feature bolted on with locks; it is what the types guarantee.
 
 ## The bet
 
@@ -71,8 +71,8 @@ network, then three learning rates trained in parallel on O(1) forks.
 
 ## What's inside
 
-The engine builds, evaluates, differentiates, and trains graphs of
-scalars — or of elementwise tensors: the payload is generic. The complete
+The engine builds, evaluates, differentiates, and trains computation
+graphs over a generic payload — scalars or tensors alike. The complete
 machinery, from tape to training:
 
 - [`Value`](src/value.rs) — a `Copy` proxy to a value allocated in a
@@ -137,10 +137,6 @@ modest thing about the design.
 The vocabulary used across code and docs — the scientific meaning of each
 term and its mapping to the Rust types — is collected in
 [TERMINOLOGY.md](TERMINOLOGY.md).
-
-## Roadmap
-
-Planned work and settled design decisions live in [ROADMAP.md](ROADMAP.md).
 
 ## Examples
 
