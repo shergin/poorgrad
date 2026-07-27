@@ -89,9 +89,11 @@ shape — and stored as a separate cold column beside the hot function column
 operand values (`forward`) and how to route the incoming gradient back to
 the operands (`backward`). In poorgrad: the
 [`Operation`](src/function/operation.rs) trait, implemented by each
-`Function` variant (`Leaf`, `Parameter`, `Add`, `Sub`, `Mul`, `Div`,
-`Neg`, `Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
+computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Tanh`,
+`Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
+`Leaf` and `Parameter` are supplied rather than computed, so the enum's
+dispatch handles them directly instead of through the trait.
 Arithmetic variants need only `Differentiable`; the transcendental and
 tensor-native ones raise the bound of running (not building) a graph to
 `Elementary` and `Tensorial` respectively.

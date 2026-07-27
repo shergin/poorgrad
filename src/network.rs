@@ -1,8 +1,6 @@
 use static_assertions::assert_impl_all;
 
-use super::{
-    Differentiable, Evaluation, Field, Function, Operation, Symbol, Tape, Tensorial, Value,
-};
+use super::{Differentiable, Evaluation, Field, Function, Symbol, Tape, Tensorial, Value};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a

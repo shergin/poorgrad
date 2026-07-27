@@ -31,6 +31,6 @@ pub use tensor::Tensor;
 pub use tensorial::Tensorial;
 pub use value::Value;
 
-pub(crate) use function::{Function, Operation};
+pub(crate) use function::Function;
 pub(crate) use tape::{Lineage, Tape};
 pub(crate) use value::ValueId;

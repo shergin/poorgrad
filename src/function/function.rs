@@ -175,15 +175,19 @@ impl<Data> Function<Data> {
 
 /// It hand-rolls the delegation an enum-dispatch macro would generate: a
 /// plain `match` per method. Exhaustiveness makes adding a variant a
-/// compile error until every method handles it. The bound is `Tensorial`
-/// rather than `Differentiable` because the transcendental and
-/// tensor-native variants need it; building and updating graphs stays
-/// arithmetic-only.
-impl<Data: Tensorial> Operation<Data> for Function<Data> {
-    fn forward(&self, values: &[Data]) -> Data {
+/// compile error until every method handles it. Leaves and parameters
+/// are supplied here rather than computed: they do not implement
+/// `Operation`, whose contract is computing a payload from operands.
+/// The bound is `Tensorial` rather than `Differentiable` because the
+/// transcendental and tensor-native variants need it; building and
+/// updating graphs stays arithmetic-only.
+impl<Data: Tensorial> Function<Data> {
+    /// Computes this node's payload from the values of earlier nodes, or
+    /// reproduces a leaf's supplied payload.
+    pub(crate) fn forward(&self, values: &[Data]) -> Data {
         match self {
-            Function::Leaf(leaf) => leaf.forward(values),
-            Function::Parameter(parameter) => parameter.forward(values),
+            Function::Leaf(leaf) => leaf.0.clone(),
+            Function::Parameter(parameter) => parameter.0.clone(),
             Function::Add(add) => add.forward(values),
             Function::Sub(sub) => sub.forward(values),
             Function::Mul(mul) => mul.forward(values),
@@ -199,12 +203,18 @@ impl<Data: Tensorial> Operation<Data> for Function<Data> {
         }
     }
 
-    fn backward(&self, values: &[Data], output: &Data, gradient: &Data, gradients: &mut [Data]) {
+    /// Accumulates operand gradients, given this node's computed
+    /// `output` payload and its own `gradient`; a no-op for leaves and
+    /// parameters, where gradients stop and get read out.
+    pub(crate) fn backward(
+        &self,
+        values: &[Data],
+        output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
         match self {
-            Function::Leaf(leaf) => leaf.backward(values, output, gradient, gradients),
-            Function::Parameter(parameter) => {
-                parameter.backward(values, output, gradient, gradients)
-            }
+            Function::Leaf(_) | Function::Parameter(_) => {}
             Function::Add(add) => add.backward(values, output, gradient, gradients),
             Function::Sub(sub) => sub.backward(values, output, gradient, gradients),
             Function::Mul(mul) => mul.backward(values, output, gradient, gradients),

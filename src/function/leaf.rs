@@ -1,12 +1,11 @@
 use crate::{Differentiable, Shape, ValueId};
 
-use super::Operation;
-
-/// A leaf node: a network input or a learnable parameter.
+/// A leaf node: a network input or constant supplied at recording time.
 ///
-/// It holds its payload as the operation's parameter. `forward` reproduces
-/// the payload and `backward` is a no-op, since leaves are where gradients
-/// stop and get read out.
+/// It holds its payload directly. It is supplied rather than computed —
+/// `Function`'s dispatch reproduces the payload during forward and
+/// routes no gradients back, since leaves are where gradients stop and
+/// get read out.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Leaf<Data>(pub(crate) Data);
 
@@ -19,20 +18,5 @@ impl<Data: Differentiable> Leaf<Data> {
     /// Infers the shape of the result: the payload's own shape.
     pub(crate) fn inferred_shape(&self) -> Shape {
         self.0.shape()
-    }
-}
-
-impl<Data: Differentiable> Operation<Data> for Leaf<Data> {
-    fn forward(&self, _values: &[Data]) -> Data {
-        self.0.clone()
-    }
-
-    fn backward(
-        &self,
-        _values: &[Data],
-        _output: &Data,
-        _gradient: &Data,
-        _gradients: &mut [Data],
-    ) {
     }
 }

@@ -3,7 +3,7 @@ use std::ptr;
 use cow_vec::CowVec;
 use static_assertions::assert_impl_all;
 
-use super::{Differentiable, Field, Function, Gradients, Operation, Tape, Tensorial, Value};
+use super::{Differentiable, Field, Function, Gradients, Tape, Tensorial, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
