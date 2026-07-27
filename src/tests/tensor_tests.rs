@@ -74,14 +74,17 @@ fn tensor_payloads_flow_through_the_graph() {
 fn engine_trains_tensor_payloads_unchanged() {
     // Two independent scalar problems, carried as one tensor of shape [2]:
     // fit `w * x = y` for `w = [5, -3]`. The engine is the same one that
-    // trains scalar graphs; only the payload changed.
+    // trains scalar graphs; only the payload changed. The elementwise
+    // squared errors are reduced with `sum` into the scalar target that
+    // `backward` requires; the per-element gradients are unchanged since
+    // the problems are independent.
     let network = Network::new();
     let w = network.parameter(Tensor::filled([2], 0.0_f64));
     let x = network.leaf(Tensor::new([2], [3.0, 2.0]));
     let y = network.leaf(Tensor::new([2], [15.0, -6.0]));
 
     let error = w * x - y;
-    let loss = error * error;
+    let loss = (error * error).sum();
 
     let w_symbol = w.symbol();
     let loss_symbol = loss.symbol();
@@ -173,6 +176,17 @@ fn broadcast_and_sum_are_adjoint() {
     let gradients = evaluation.backward(loss);
     assert_eq!(gradients.of(scalar).elements(), &[3.0]);
     assert_eq!(gradients.of(reference).elements(), &[0.0, 0.0, 0.0]);
+}
+
+#[test]
+#[should_panic(expected = "scalar target")]
+fn backward_rejects_non_scalar_targets() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let doubled = x + x;
+
+    let evaluation = network.forward();
+    evaluation.backward(doubled);
 }
 
 #[test]

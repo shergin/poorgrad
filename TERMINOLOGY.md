@@ -45,7 +45,9 @@ add into the gradient buffer instead of assigning.
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
 weights computes a vector-Jacobian product, the general form of reverse
 mode. In poorgrad [`Evaluation::backward`](src/evaluation.rs) seeds
-`one_like` at the target.
+`one_like` at the target, which must be rank 0: a non-scalar value is
+reduced explicitly with `sum` before differentiation, never summed
+implicitly.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is

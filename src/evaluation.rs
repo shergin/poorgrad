@@ -63,6 +63,10 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     /// Propagates gradients backward from `output`, returning the
     /// gradient of `output` with respect to every value of this run.
     ///
+    /// The target must be a scalar (rank 0): a gradient is always of one
+    /// chosen scalar, so a non-scalar value is reduced explicitly with
+    /// `sum` before differentiation, never summed implicitly.
+    ///
     /// It seeds the output gradient with `one_like` and accumulates into
     /// a fresh buffer initialized with `zero_like`, scanning this
     /// evaluation's own tape snapshot in reverse allocation order. Only
@@ -76,8 +80,8 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     /// absent from `of`.
     ///
     /// # Panics
-    /// Panics if `output` belongs to a different network or was allocated
-    /// after this evaluation ran.
+    /// Panics if `output` is not a scalar, belongs to a different
+    /// network, or was allocated after this evaluation ran.
     pub fn backward(&self, output: Value<'_, Data>) -> Gradients<Data> {
         assert!(
             ptr::eq(self.tape, output.tape()),
@@ -88,6 +92,11 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         assert!(
             output_index < values.len(),
             "value was allocated after this evaluation ran"
+        );
+        assert_eq!(
+            values[output_index].shape().rank(),
+            0,
+            "backward requires a scalar target; reduce it with `sum` first"
         );
 
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
