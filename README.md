@@ -27,12 +27,14 @@ choice:
   freely, and a value outliving its graph is a compile error, not a bug
   report. Every type's `Send + Sync` contract is asserted at compile time.
 - **Mutation is a state transition.** A gradient step produces the next
-  network generation, freshly allocating only the replaced parameters:
-  everything else is shared through an append-only arena, and older
-  generations stay fully usable. Snapshot isolation, for networks.
+  network generation in O(parameters): the parameter store is rebuilt,
+  the recorded structure is shared untouched through an append-only
+  arena, replaced payloads are reclaimed with their generation, and
+  older generations stay fully usable. Snapshot isolation, for networks.
 - **Performance falls out of structure.** One `Mutex` in the engine
   itself, taken briefly per operation — the arena inside
-  [`cow_vec`](https://crates.io/crates/cow_vec) holds the only other; O(1)
+  [`cow_vec`](https://crates.io/crates/cow_vec) holds the only other,
+  and training never touches it; O(1)
   forks; no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
   it a promise rather than a claim (the arena's `unsafe` core is
   `cow_vec`'s, encapsulated behind its tested interface). CPU-only, on
@@ -90,7 +92,7 @@ machinery, from tape to training:
   [`cow_vec`](https://crates.io/crates/cow_vec) crate: allocation is
   append-only, cloning forks the network in O(1), and the whole structure is
   `Send + Sync`. A gradient step is a state transition: `updated` produces
-  the next generation, replacing only the parameter leaves while sharing
+  the next generation, rebuilding only the parameter store while sharing
   everything else.
 - [`Symbol`](src/symbol.rs) — a detached, `Copy` name of a value: the
   identity that persists across network generations, while a proxy is that
