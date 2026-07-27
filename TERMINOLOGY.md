@@ -222,17 +222,21 @@ tensor-native tier adds `matmul`, `transposed`, `sum`, and the explicit
 `broadcast_like`. In poorgrad: [`Tensor`](src/tensor.rs).
 
 **Tensorial.** The payload tier of tensor-native operations — matrix
-multiplication, transposition, reduction, and explicit broadcast — with
-scalars implementing it degenerately (a scalar is a rank-0 tensor; the
-degenerate impls satisfy the bound of running a graph, while recording
-tensor-native expressions demands proper ranks). The tier currently
-stops at rank 2: no reshape, axis-wise reduction, or batched matmul.
-Summation and broadcasting are adjoint: each is the other's gradient
-rule. Broadcasting is explicit by design: `broadcast_like` spreads a
-single value across a named reference's shape, and no operation aligns
-shapes implicitly. In poorgrad: the [`Tensorial`](src/tensorial.rs)
-trait, recorded into graphs via `Value::matmul`, `transposed`, `sum`,
-and `broadcast_like`.
+multiplication, transposition, reductions, and explicit broadcasts —
+with scalars implementing it degenerately (a scalar is a rank-0 tensor;
+the degenerate impls satisfy the bound of running a graph, while
+recording tensor-native expressions demands proper ranks). `matmul` and
+`transposed` stop at rank 2; the axis-wise pair is rank-general; there
+is no reshape or batched matmul yet. Summation and broadcasting are
+adjoint in two matched pairs: `sum` with `broadcast_like` (the whole
+shape) and `sum_along` with `broadcast_along` (one named axis), each
+the other's gradient rule. Broadcasting is explicit by design: a single
+value spread across a named reference's shape, or a payload repeated
+along one named axis of a reference — the axis is always written, and
+no operation aligns shapes implicitly. In poorgrad: the
+[`Tensorial`](src/tensorial.rs) trait, recorded into graphs via
+`Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
+and `broadcast_along`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or
@@ -255,13 +259,17 @@ bias, passed through an activation —
 `activation(weights . inputs + bias)`. Its parameters are allocated on a
 network at construction but held as symbols, so the neuron itself is
 detached: it survives generations, and `express` records its expression
-against whichever generation it is given. In poorgrad:
-[`Neuron`](src/neuron.rs).
+against whichever generation it is given. It is the scalar-granularity
+teaching block; `Layer` records at tensor granularity and does not
+build on it. In poorgrad: [`Neuron`](src/neuron.rs).
 
-**Layer.** A row of neurons sharing the same inputs: a dense (fully
-connected) layer computing one output per neuron. Layers chain by feeding
-one layer's outputs to the next as inputs. Detached like its neurons —
-parameters live on the network, symbols in the layer. In poorgrad:
+**Layer.** A dense (fully connected) layer at tensor granularity:
+`activation(x . w + b)` over a `[batch, inputs]` value, with one
+`[inputs, outputs]` weight parameter and one `[outputs]` bias met
+through the explicit axis broadcast — a handful of tensor nodes instead
+of one node per scalar weight. Layers chain by feeding one layer's
+output batch to the next. Detached like `Neuron`: parameters live on
+the network, symbols in the layer. In poorgrad:
 [`Layer`](src/layer.rs).
 
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which

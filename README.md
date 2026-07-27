@@ -116,10 +116,12 @@ machinery, from tape to training:
   fixed-shape, with O(1) clones behind `Arc`s. A `Network<Tensor<f64>>`
   runs the whole engine — training loop, fields, momentum — unchanged,
   and the [`Tensorial`](src/tensorial.rs) tier adds `matmul`,
-  `transposed`, `sum`, and the explicit `broadcast_like` (scalars
-  implement it degenerately, so one bound covers both worlds).
-  Broadcasting is explicit by design: a single value spread across a
-  named reference's shape, never an implicit alignment rule. Shapes are
+  `transposed`, the reductions `sum` and `sum_along`, and the explicit
+  broadcasts `broadcast_like` and `broadcast_along` (scalars implement
+  the tier degenerately, so one bound covers both worlds). Broadcasting
+  is explicit by design: a single value spread across a named
+  reference's shape, or a payload repeated along one named axis — never
+  an implicit alignment rule. Shapes are
   inferred and checked when expressions are recorded — a shape mismatch
   panics at the offending line, before anything runs: the record-once
   answer to type-level shape checking.
@@ -130,13 +132,16 @@ machinery, from tape to training:
   the differentiable operations, each variant owning its operand links and
   parameters and implementing the `Operation` trait (forward math and
   gradient routing per operation, dispatched with a plain `match`).
-- [`Neuron`](src/neuron.rs) — the smallest learnable building block:
-  weights and a bias (allocated as parameters, held as symbols so the
-  neuron survives generations) plus an `Activation`; `express` records
+- [`Neuron`](src/neuron.rs) — the smallest learnable building block and
+  the scalar-granularity teaching type: weights and a bias (allocated as
+  parameters, held as symbols so the neuron survives generations) plus
+  an `Activation`; `express` records
   `activation(weights . inputs + bias)` against a given generation.
-- [`Layer`](src/layer.rs) — a dense row of neurons sharing the same
-  inputs, one output value per neuron; layers chain by feeding one
-  layer's outputs to the next.
+- [`Layer`](src/layer.rs) — a dense layer at tensor granularity:
+  `activation(x . w + b)` over a `[batch, inputs]` value, one weight
+  matrix and one bias vector, the bias met through the explicit axis
+  broadcast; layers chain by feeding one layer's output batch to the
+  next.
 
 ## The name
 

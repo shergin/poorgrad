@@ -1,72 +1,108 @@
-use crate::Network;
+use crate::{Network, Shape, Tensor, Tensorial};
 
 use super::{Activation, Layer};
 
 #[test]
-fn new_allocates_parameters_for_every_neuron() {
-    let network = Network::<f64>::new();
-    let layer = Layer::new(&network, 3, 2, Activation::Identity, || 0.0);
-    // Two neurons, each with three weights and a bias.
-    assert_eq!(network.len(), 8);
-    assert_eq!(layer.parameters().count(), 8);
+fn new_allocates_weights_and_bias() {
+    let network = Network::new();
+    let layer = Layer::new(
+        &network,
+        Tensor::filled([3, 2], 0.0_f64),
+        Tensor::filled([2], 0.0),
+        Activation::Identity,
+    );
+    // One weight tensor and one bias tensor, regardless of size.
+    assert_eq!(network.len(), 2);
+    assert_eq!(layer.parameters().count(), 2);
 }
 
 #[test]
-fn express_returns_one_output_per_neuron() {
+#[should_panic(expected = "must be rank 2")]
+fn new_rejects_non_matrix_weights() {
     let network = Network::new();
-    let mut counter = 0.0_f64;
-    let layer = Layer::new(&network, 2, 2, Activation::Identity, || {
-        counter += 1.0;
-        counter
-    });
+    Layer::new(
+        &network,
+        Tensor::filled([3], 0.0_f64),
+        Tensor::filled([2], 0.0),
+        Activation::Identity,
+    );
+}
 
-    // The first neuron's weights are 1 and 2 with bias 3; the second's
-    // are 4 and 5 with bias 6.
-    let first = network.leaf(10.0);
-    let second = network.leaf(100.0);
-    let outputs = layer.express(&network, &[first, second]);
+#[test]
+#[should_panic(expected = "disagree on outputs")]
+fn new_rejects_mismatched_bias() {
+    let network = Network::new();
+    Layer::new(
+        &network,
+        Tensor::filled([3, 2], 0.0_f64),
+        Tensor::filled([3], 0.0),
+        Activation::Identity,
+    );
+}
+
+#[test]
+fn express_records_tensor_granularity() {
+    let network = Network::new();
+    let layer = Layer::new(
+        &network,
+        Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]),
+        Tensor::new([2], [10.0, 20.0]),
+        Activation::Identity,
+    );
+    let input = network.leaf(Tensor::new([3, 2], [1.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
+    let nodes_before = network.len();
+
+    let output = layer.express(&network, input);
+
+    // The whole layer is three recorded nodes: the product, the bias
+    // broadcast, and the shifted sum.
+    assert_eq!(network.len(), nodes_before + 3);
+    assert_eq!(output.shape(), Shape::new([3, 2]));
 
     let evaluation = network.forward();
-    assert_eq!(outputs.len(), 2);
-    assert_eq!(*evaluation.of(outputs[0]), 10.0 + 200.0 + 3.0);
-    assert_eq!(*evaluation.of(outputs[1]), 40.0 + 500.0 + 6.0);
+    assert_eq!(
+        evaluation.of(output).elements(),
+        &[11.0, 22.0, 13.0, 24.0, 14.0, 26.0]
+    );
 }
 
 #[test]
 fn layer_trains_toward_targets() {
+    // Fit `y = x . w + b` for `w = [[2], [-1]]` and `b = [0.5]`, feeding
+    // the whole batch through one tensor-granularity layer.
     let network = Network::new();
-    let layer = Layer::new(&network, 1, 2, Activation::Identity, || 0.0_f64);
-    let input = network.leaf(1.0);
-    let targets = [network.leaf(1.0), network.leaf(-1.0)];
+    let layer = Layer::new(
+        &network,
+        Tensor::filled([2, 1], 0.0_f64),
+        Tensor::filled([1], 0.0),
+        Activation::Identity,
+    );
+    let x = network.leaf(Tensor::new(
+        [4, 2],
+        [1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 1.0],
+    ));
+    let y = network.leaf(Tensor::new([4, 1], [2.5, -0.5, 1.5, 3.5]));
 
-    let outputs = layer.express(&network, &[input]);
-    let mut loss = None;
-    for (output, target) in outputs.iter().zip(targets) {
-        let error = *output - target;
-        let squared = error * error;
-        loss = Some(match loss {
-            Some(total) => total + squared,
-            None => squared,
-        });
-    }
-    let loss = loss.expect("layer has outputs");
-
+    let predicted = layer.express(&network, x);
+    let error = predicted - y;
+    let loss = (error * error).sum();
     let loss_symbol = loss.symbol();
-    let output_symbols = [outputs[0].symbol(), outputs[1].symbol()];
 
+    let learning_rate = Tensor::new([], [0.05]);
     let mut network = network;
-    for _ in 0..100 {
+    for _ in 0..300 {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
         network = network.updated(gradients.as_field(), |parameter, gradient| {
-            parameter - 0.2 * gradient
+            parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
 
-    let evaluation = network.forward();
-    let first = network.resolve(output_symbols[0]);
-    let second = network.resolve(output_symbols[1]);
-    assert!((evaluation.of(first) - 1.0).abs() < 1e-3);
-    assert!((evaluation.of(second) + 1.0).abs() < 1e-3);
+    let parameters: Vec<_> = layer.parameters().collect();
+    let weights = network.resolve(parameters[0]).data().unwrap();
+    let bias = network.resolve(parameters[1]).data().unwrap();
+    assert!((weights.elements()[0] - 2.0).abs() < 1e-3);
+    assert!((weights.elements()[1] + 1.0).abs() < 1e-3);
+    assert!((bias.elements()[0] - 0.5).abs() < 1e-3);
 }

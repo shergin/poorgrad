@@ -17,10 +17,11 @@ assert_impl_all!(Tensor<f64>: Send, Sync);
 /// `Arc`s, so cloning is O(1) — the engine clones payloads liberally
 /// during gradient accumulation, and a payload must be cheap to copy by
 /// design. Binary operations require identical shapes; implicit
-/// broadcasting is deliberately absent. The tensor-native tier
-/// (`Tensorial`) currently stops at rank 2: there is no reshape, no
-/// axis-wise reduction, and no batched matmul yet, while `Shape` itself
-/// carries any rank.
+/// broadcasting is deliberately absent. In the tensor-native tier
+/// (`Tensorial`), `matmul` and `transposed` stop at rank 2 while the
+/// axis-wise reduction and broadcast are rank-general; there is no
+/// reshape or batched matmul yet, while `Shape` itself carries any
+/// rank.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<Element> {
     shape: Shape,
