@@ -7,6 +7,7 @@ mod exp;
 // deliberate.
 #[allow(clippy::module_inception)]
 mod function;
+mod input;
 mod leaf;
 mod ln;
 mod matmul;
@@ -24,6 +25,7 @@ pub(crate) use broadcast::Broadcast;
 pub(crate) use div::Div;
 pub(crate) use exp::Exp;
 pub(crate) use function::Function;
+pub(crate) use input::Input;
 pub(crate) use leaf::Leaf;
 pub(crate) use ln::Ln;
 pub(crate) use matmul::MatMul;

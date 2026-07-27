@@ -94,15 +94,16 @@ the operands (`backward`). In poorgrad: the
 computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Tanh`,
 `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `Broadcast` under
 [`src/function/`](src/function/)) and dispatched with a plain `match`.
-`Leaf` and `Parameter` are supplied rather than computed, so the enum's
-dispatch handles them directly instead of through the trait.
+`Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
+the enum's dispatch handles them directly instead of through the trait.
 Arithmetic variants need only `Differentiable`; the transcendental and
 tensor-native ones raise the bound of running (not building) a graph to
 `Elementary` and `Tensorial` respectively.
 
-**Leaf.** A node with no operands: an input or constant supplied at
-recording time. Gradients stop there and get read out; its `backward` is a
-no-op. In poorgrad: `Function::Leaf`, allocated with
+**Leaf.** A node with no operands: a constant supplied at recording
+time. Gradients stop there and get read out; its `backward` is a no-op.
+Parameters and inputs are the other leaf kinds: trainable and fed
+per-run respectively. In poorgrad: `Function::Leaf`, allocated with
 [`Network::leaf`](src/network.rs); payload literals in expressions
 (`x * 2.0`) record leaves implicitly, one per appearance.
 
@@ -112,6 +113,15 @@ In poorgrad: `Function::Parameter`, allocated with
 [`Network::parameter`](src/network.rs) and replaced by `Network::updated`.
 The node holds only its slot; the payload lives in the generation's
 parameter store.
+
+**Input.** A declared per-run leaf: `Network::input` records it with a
+default payload, and `forward_with` binds a fed payload to it for one
+run, validated against the recorded shape at the feed site. Unfed
+inputs fall back to their defaults, so plain `forward` stays total.
+Feeds are run state, not graph state — feeding never touches the tape,
+which is what lets concurrent runs forward one shared network on
+different batches. In poorgrad: `Function::Input`, fed via
+[`Network::forward_with`](src/network.rs).
 
 **Topological (allocation) order.** Any ordering in which every operand
 precedes its consumers. Poorgrad's recording enforces it by construction —

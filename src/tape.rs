@@ -105,6 +105,7 @@ pub(crate) fn chains_agree(
 pub(crate) struct Snapshot<Data> {
     pub(crate) functions: CowVec<Function<Data>>,
     pub(crate) parameters: Arc<ParameterStore<Data>>,
+    pub(crate) inputs: Arc<Vec<Data>>,
     pub(crate) chain: Arc<Vec<Segment>>,
 }
 
@@ -180,6 +181,10 @@ struct TapeInner<Data> {
     functions: CowVec<Function<Data>>,
     shapes: CowVec<Shape>,
     parameters: Arc<ParameterStore<Data>>,
+    // The default payloads of declared inputs, indexed by slot. Kept
+    // separate from the parameter store because the lifecycles differ:
+    // parameters turn over per generation, inputs per run.
+    inputs: Arc<Vec<Data>>,
     chain: Arc<Vec<Segment>>,
     tip: Tip,
 }
@@ -254,6 +259,7 @@ impl<Data: Differentiable> Tape<Data> {
                 functions: CowVec::new(),
                 shapes: CowVec::new(),
                 parameters: Arc::new(ParameterStore::new()),
+                inputs: Arc::new(Vec::new()),
                 chain: Arc::new(vec![Segment {
                     branch: Branch::new(),
                     start: 0,
@@ -325,6 +331,42 @@ impl<Data: Differentiable> Tape<Data> {
         id
     }
 
+    /// Records an input node and stores its default payload, returning
+    /// the node's handle.
+    ///
+    /// One lock section keeps the slot and the node consistent under
+    /// concurrent recording, exactly like `record_parameter`.
+    pub(crate) fn record_input(&self, initial: Data) -> ValueId {
+        let shape = initial.shape();
+        let mut inner = self.lock();
+        inner.claim_tip();
+        let inner = &mut *inner;
+        let defaults = Arc::make_mut(&mut inner.inputs);
+        let slot = SlotId(defaults.len());
+        inner.functions.push(Function::input(slot));
+        inner.shapes.push(shape);
+        debug_assert_eq!(inner.functions.len(), inner.shapes.len());
+        defaults.push(initial);
+        ValueId(inner.functions.len() - 1)
+    }
+
+    /// Returns the input slot behind `id`, or `None` if the node is not
+    /// an input.
+    ///
+    /// # Panics
+    /// Panics if `id` is not recorded on this tape.
+    pub(crate) fn input_slot(&self, id: ValueId) -> Option<SlotId> {
+        let inner = self.lock();
+        match inner
+            .functions
+            .get(id.index())
+            .expect("`ValueId` is out of bounds for its tape")
+        {
+            Function::Input(input) => Some(input.0),
+            _ => None,
+        }
+    }
+
     /// Returns the branch that owns position `id` on this tape.
     ///
     /// # Panics
@@ -383,6 +425,7 @@ impl<Data: Differentiable> Tape<Data> {
             Function::Parameter(parameter) => {
                 Some(inner.parameters.payloads[parameter.0.index()].clone())
             }
+            Function::Input(input) => Some(inner.inputs[input.0.index()].clone()),
             _ => None,
         }
     }
@@ -429,6 +472,7 @@ impl<Data: Differentiable> Tape<Data> {
         Snapshot {
             functions: inner.functions.clone(),
             parameters: Arc::clone(&inner.parameters),
+            inputs: Arc::clone(&inner.inputs),
             chain: Arc::clone(&inner.chain),
         }
     }
@@ -448,6 +492,7 @@ impl<Data: Differentiable> Tape<Data> {
                 functions: inner.functions.clone(),
                 shapes: inner.shapes.clone(),
                 parameters: Arc::clone(&inner.parameters),
+                inputs: Arc::clone(&inner.inputs),
                 chain: Arc::clone(&inner.chain),
                 tip,
             }),
@@ -474,13 +519,14 @@ impl<Data: Differentiable> Tape<Data> {
         gradients: &[Data],
         update: impl Fn(&Data, &Data) -> Data,
     ) -> Self {
-        let (functions, shapes, parameters, chain, tip) = {
+        let (functions, shapes, parameters, inputs, chain, tip) = {
             let mut inner = self.lock();
             let tip = inner.share_tip();
             (
                 inner.functions.clone(),
                 inner.shapes.clone(),
                 Arc::clone(&inner.parameters),
+                Arc::clone(&inner.inputs),
                 Arc::clone(&inner.chain),
                 tip,
             )
@@ -509,6 +555,7 @@ impl<Data: Differentiable> Tape<Data> {
                     payloads,
                     nodes: parameters.nodes.clone(),
                 }),
+                inputs,
                 chain,
                 tip,
             }),

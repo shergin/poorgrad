@@ -489,6 +489,107 @@ fn forked_parameter_stores_diverge_independently() {
 }
 
 #[test]
+fn input_defaults_flow_through_forward() {
+    let network = Network::new();
+    let input = network.input(3.0_f64);
+    let doubled = input * 2.0;
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.of(doubled), 6.0);
+    assert_eq!(input.data(), Some(3.0));
+}
+
+#[test]
+fn forward_with_overrides_inputs_per_run() {
+    let network = Network::new();
+    let input = network.input(1.0_f64);
+    let doubled = input * 2.0;
+    let input_symbol = input.symbol();
+
+    let fed = network.forward_with([(input_symbol, 10.0)]);
+    assert_eq!(*fed.of(doubled), 20.0);
+
+    // Feeds are run-local: the next plain forward is back on the
+    // default, and the recorded default payload never changed.
+    let unfed = network.forward();
+    assert_eq!(*unfed.of(doubled), 2.0);
+    assert_eq!(input.data(), Some(1.0));
+}
+
+#[test]
+#[should_panic(expected = "only inputs can be fed")]
+fn forward_with_rejects_non_inputs() {
+    let network = Network::new();
+    let constant = network.leaf(1.0_f64);
+    network.forward_with([(constant.symbol(), 2.0)]);
+}
+
+#[test]
+#[should_panic(expected = "different network lineage")]
+fn forward_with_rejects_foreign_symbols() {
+    let network = Network::<f64>::new();
+    let foreign = Network::new().input(1.0).symbol();
+    network.forward_with([(foreign, 2.0)]);
+}
+
+#[test]
+fn concurrent_forwards_feed_independent_batches() {
+    let network = Network::new();
+    let input = network.input(0.0_f64);
+    let squared = input * input;
+    let input_symbol = input.symbol();
+
+    thread::scope(|scope| {
+        for fed in [2.0, 3.0, 4.0] {
+            let network = &network;
+            scope.spawn(move || {
+                let evaluation = network.forward_with([(input_symbol, fed)]);
+                assert_eq!(*evaluation.of(squared), fed * fed);
+            });
+        }
+    });
+}
+
+#[test]
+fn training_feeds_batches_without_regrowing_the_tape() {
+    // Fit `y = 2 * x + 1` by feeding one sample per step into a graph
+    // recorded once: the tape never grows, only the parameter store
+    // turns over.
+    let network = Network::new();
+    let w = network.parameter(0.0_f64);
+    let b = network.parameter(0.0);
+    let x = network.input(0.0);
+    let y = network.input(0.0);
+    let error = w * x + b - y;
+    let loss = error * error;
+
+    let w_symbol = w.symbol();
+    let b_symbol = b.symbol();
+    let x_symbol = x.symbol();
+    let y_symbol = y.symbol();
+    let loss_symbol = loss.symbol();
+    let recorded_nodes = network.len();
+
+    let samples = [(1.0, 3.0), (2.0, 5.0), (3.0, 7.0)];
+    let mut network = network;
+    for step in 0..600 {
+        let (sample_x, sample_y) = samples[step % samples.len()];
+        let loss = network.resolve(loss_symbol);
+        let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
+        let gradients = evaluation.backward(loss);
+        network = network.updated(gradients.as_field(), |parameter, gradient| {
+            parameter - 0.05 * gradient
+        });
+    }
+
+    assert_eq!(network.len(), recorded_nodes);
+    let learned_w = network.resolve(w_symbol).data().unwrap();
+    let learned_b = network.resolve(b_symbol).data().unwrap();
+    assert!((learned_w - 2.0).abs() < 1e-3);
+    assert!((learned_b - 1.0).abs() < 1e-3);
+}
+
+#[test]
 fn updated_replaces_parameters_and_keeps_everything_else() {
     let network = Network::new();
     let w = network.parameter(1.0_f64);

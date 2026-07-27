@@ -208,6 +208,14 @@ fn poisoned_network_names_its_cause() {
 }
 
 #[test]
+#[should_panic(expected = "recorded shape")]
+fn forward_with_rejects_mismatched_shapes() {
+    let network = Network::new();
+    let input = network.input(Tensor::new([2], [1.0_f64, 2.0]));
+    network.forward_with([(input.symbol(), Tensor::new([3], [1.0, 2.0, 3.0]))]);
+}
+
+#[test]
 #[should_panic(expected = "scalar target")]
 fn backward_rejects_non_scalar_targets() {
     let network = Network::new();

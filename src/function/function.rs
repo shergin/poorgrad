@@ -3,8 +3,8 @@ use crate::{Differentiable, Shape, SlotId, Tensorial, ValueId};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, Div, Exp, Leaf, Ln, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum, Tanh,
-    Transpose,
+    Add, Broadcast, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Neg, Operation, Parameter, Sub, Sum,
+    Tanh, Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -22,6 +22,7 @@ assert_impl_all!(Function<f64>: Send, Sync);
 pub(crate) enum Function<Data> {
     Leaf(Leaf<Data>),
     Parameter(Parameter),
+    Input(Input),
     Add(Add),
     Sub(Sub),
     Mul(Mul),
@@ -45,6 +46,11 @@ impl<Data> Function<Data> {
     /// Creates a parameter function referencing `slot`.
     pub(crate) fn parameter(slot: SlotId) -> Self {
         Function::Parameter(Parameter(slot))
+    }
+
+    /// Creates an input function referencing `slot`.
+    pub(crate) fn input(slot: SlotId) -> Self {
+        Function::Input(Input(slot))
     }
 
     /// Creates the sum of `left` and `right`.
@@ -112,6 +118,7 @@ impl<Data> Function<Data> {
         match self {
             Function::Leaf(leaf) => leaf.visit_operands(visitor),
             Function::Parameter(parameter) => parameter.visit_operands(visitor),
+            Function::Input(input) => input.visit_operands(visitor),
             Function::Add(add) => add.visit_operands(visitor),
             Function::Sub(sub) => sub.visit_operands(visitor),
             Function::Mul(mul) => mul.visit_operands(visitor),
@@ -141,6 +148,9 @@ impl<Data> Function<Data> {
             Function::Parameter(_) => {
                 unreachable!("parameter shapes are recorded by `record_parameter`")
             }
+            Function::Input(_) => {
+                unreachable!("input shapes are recorded by `record_input`")
+            }
             Function::Add(add) => add.inferred_shape(shape_of),
             Function::Sub(sub) => sub.inferred_shape(shape_of),
             Function::Mul(mul) => mul.inferred_shape(shape_of),
@@ -167,12 +177,14 @@ impl<Data> Function<Data> {
 /// updating graphs stays arithmetic-only.
 impl<Data: Tensorial> Function<Data> {
     /// Computes this node's payload from the values of earlier nodes, or
-    /// supplies it: a leaf's embedded payload, or a parameter's entry in
-    /// the run's `parameters` slots.
-    pub(crate) fn forward(&self, values: &[Data], parameters: &[Data]) -> Data {
+    /// supplies it: a leaf's embedded payload, a parameter's entry in
+    /// the run's `parameters` slots, or an input's entry in the run's
+    /// `inputs` slots.
+    pub(crate) fn forward(&self, values: &[Data], parameters: &[Data], inputs: &[Data]) -> Data {
         match self {
             Function::Leaf(leaf) => leaf.0.clone(),
             Function::Parameter(parameter) => parameters[parameter.0.index()].clone(),
+            Function::Input(input) => inputs[input.0.index()].clone(),
             Function::Add(add) => add.forward(values),
             Function::Sub(sub) => sub.forward(values),
             Function::Mul(mul) => mul.forward(values),
@@ -189,8 +201,8 @@ impl<Data: Tensorial> Function<Data> {
     }
 
     /// Accumulates operand gradients, given this node's computed
-    /// `output` payload and its own `gradient`; a no-op for leaves and
-    /// parameters, where gradients stop and get read out.
+    /// `output` payload and its own `gradient`; a no-op for leaves,
+    /// parameters, and inputs, where gradients stop and get read out.
     pub(crate) fn backward(
         &self,
         values: &[Data],
@@ -199,7 +211,7 @@ impl<Data: Tensorial> Function<Data> {
         gradients: &mut [Data],
     ) {
         match self {
-            Function::Leaf(_) | Function::Parameter(_) => {}
+            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => {}
             Function::Add(add) => add.backward(values, output, gradient, gradients),
             Function::Sub(sub) => sub.backward(values, output, gradient, gradients),
             Function::Mul(mul) => mul.backward(values, output, gradient, gradients),

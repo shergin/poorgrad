@@ -20,7 +20,9 @@ choice:
 - **Record once, run anywhere.** Expressions record a static tape;
   `forward` replays an O(1) snapshot of it, and `backward` replays the
   evaluation's own copy, so runs never lock the graph and never disturb
-  each other. One shared network serves any number of threads, each
+  each other. Declared inputs take per-run payloads through
+  `forward_with` — feeds are run state, not graph state — so one shared
+  network serves any number of threads, each feeding its own data and
   differentiating its own target.
 - **Values are `Copy`.** A `Value` is a borrow of its network plus a
   position: operators never consume their operands, handles cross threads
@@ -93,7 +95,9 @@ machinery, from tape to training:
   append-only, cloning forks the network in O(1), and the whole structure is
   `Send + Sync`. A gradient step is a state transition: `updated` produces
   the next generation, rebuilding only the parameter store while sharing
-  everything else.
+  everything else. `input` declares a per-run input with a default
+  payload; `forward_with` binds fed payloads to inputs for one run,
+  validated against their recorded shapes.
 - [`Symbol`](src/symbol.rs) — a detached, `Copy` name of a value: the
   identity that persists across network generations, while a proxy is that
   identity's view in one generation. `Network::resolve` looks a symbol up

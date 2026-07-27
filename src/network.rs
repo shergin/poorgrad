@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use static_assertions::assert_impl_all;
 
 use super::{Differentiable, Evaluation, Field, Function, Symbol, Tape, Tensorial, Value};
@@ -46,6 +48,17 @@ impl<Data: Differentiable> Network<Data> {
     /// on the tape, the payload in the generation's parameter store.
     pub fn parameter(&self, data: Data) -> Value<'_, Data> {
         let id = self.tape.record_parameter(data);
+        Value::bind(&self.tape, id)
+    }
+
+    /// Allocates a declared per-run input and returns a proxy to it.
+    ///
+    /// `initial` supplies the input's recorded shape and its default
+    /// payload: a plain `forward` uses the default, while
+    /// `forward_with` binds a fed payload for one run. Inputs behave
+    /// like leaves during runs and are never touched by `updated`.
+    pub fn input(&self, initial: Data) -> Value<'_, Data> {
+        let id = self.tape.record_input(initial);
         Value::bind(&self.tape, id)
     }
 
@@ -140,20 +153,63 @@ impl<Data: Differentiable> Network<Data> {
 // the transcendental and tensor-native operations), while building and
 // updating the graph needs only arithmetic.
 impl<Data: Tensorial> Network<Data> {
-    /// Evaluates every node in allocation order, materializing the payload
-    /// of each value into a fresh `Evaluation`.
-    ///
-    /// It replays an O(1) snapshot of the tape and the parameter store,
-    /// taken atomically, so the network is never locked during the run
-    /// and concurrent recordings and updates do not disturb it.
-    /// Allocation order is dependency order by construction, which is what
-    /// makes the single forward scan sufficient. The snapshot travels with
-    /// the returned evaluation, whose `backward` replays it in reverse.
+    /// Evaluates every node in allocation order with every input at its
+    /// default payload; see `forward_with`.
     pub fn forward(&self) -> Evaluation<'_, Data> {
+        self.forward_with(std::iter::empty())
+    }
+
+    /// Evaluates every node in allocation order, materializing the payload
+    /// of each value into a fresh `Evaluation`, with `feeds` bound to
+    /// declared inputs for this run only.
+    ///
+    /// Feeds are run-local state: they overlay the input defaults
+    /// without touching the graph, so any number of threads can forward
+    /// one shared network on different batches concurrently. Unfed
+    /// inputs use their defaults. The replay works off an O(1) snapshot
+    /// of the tape, the parameter store, and the input defaults, taken
+    /// atomically, so the network is never locked during the run and
+    /// concurrent recordings and updates do not disturb it. Allocation
+    /// order is dependency order by construction, which is what makes
+    /// the single forward scan sufficient. The snapshot travels with the
+    /// returned evaluation, whose `backward` replays it in reverse.
+    ///
+    /// # Panics
+    /// Panics if a fed symbol does not resolve in this generation, names
+    /// a node that is not an input, or carries a payload whose shape
+    /// differs from the input's recorded shape.
+    pub fn forward_with(
+        &self,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Evaluation<'_, Data> {
+        let mut bindings = Vec::new();
+        for (symbol, payload) in feeds {
+            let value = self.resolve(symbol);
+            let slot = self
+                .tape
+                .input_slot(value.id())
+                .expect("only inputs can be fed");
+            assert_eq!(
+                payload.shape(),
+                value.shape(),
+                "fed payload must match the input's recorded shape"
+            );
+            bindings.push((slot, payload));
+        }
+
         let snapshot = self.tape.snapshot();
+        let inputs = if bindings.is_empty() {
+            snapshot.inputs
+        } else {
+            let mut overlaid = snapshot.inputs.as_ref().clone();
+            for (slot, payload) in bindings {
+                overlaid[slot.index()] = payload;
+            }
+            Arc::new(overlaid)
+        };
         let mut values = Vec::with_capacity(snapshot.functions.len());
         for function in snapshot.functions.iter() {
-            let value = function.forward(&values, snapshot.parameters.payloads());
+            let value = function.forward(&values, snapshot.parameters.payloads(), &inputs);
             values.push(value);
         }
         Evaluation::new(&self.tape, snapshot.functions, snapshot.chain, values)
