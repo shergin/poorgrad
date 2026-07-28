@@ -1,5 +1,9 @@
 # poorgrad
 
+<p align="center">
+  <img src="poorgrad.png" alt="poorgrad logo" width="480">
+</p>
+
 **A fully concurrent, thread-safe autograd engine, written the way Rust
 wants it written.**
 
