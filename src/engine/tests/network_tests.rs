@@ -16,7 +16,7 @@ fn parameter_carries_payload_like_a_leaf() {
     let network = Network::new();
     let parameter = network.parameter(1.5_f64);
     let input = network.leaf(2.0);
-    assert_eq!(parameter.data(), Some(1.5));
+    assert_eq!(parameter.payload(), Some(1.5));
 
     let output = parameter * input;
     assert_eq!(*network.forward().of(output), 3.0);
@@ -29,8 +29,8 @@ fn leaf_allocates_on_the_network() {
     let second = network.leaf(3.0);
     assert_eq!(network.len(), 2);
     assert_ne!(first.id(), second.id());
-    assert_eq!(first.data(), Some(2.0));
-    assert_eq!(second.data(), Some(3.0));
+    assert_eq!(first.payload(), Some(2.0));
+    assert_eq!(second.payload(), Some(3.0));
 }
 
 #[test]
@@ -44,10 +44,10 @@ fn forked_parameter_stores_diverge_independently() {
     let original_extra = network.parameter(2.0);
     let forked_extra = fork.parameter(3.0);
 
-    assert_eq!(original_extra.data(), Some(2.0));
-    assert_eq!(forked_extra.data(), Some(3.0));
-    assert_eq!(network.resolve(shared.symbol()).data(), Some(1.0));
-    assert_eq!(fork.resolve(shared.symbol()).data(), Some(1.0));
+    assert_eq!(original_extra.payload(), Some(2.0));
+    assert_eq!(forked_extra.payload(), Some(3.0));
+    assert_eq!(network.resolve(shared.symbol()).payload(), Some(1.0));
+    assert_eq!(fork.resolve(shared.symbol()).payload(), Some(1.0));
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn input_defaults_flow_through_forward() {
     let doubled = input * 2.0;
 
     assert_eq!(*network.forward().of(doubled), 6.0);
-    assert_eq!(input.data(), Some(3.0));
+    assert_eq!(input.payload(), Some(3.0));
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn forward_with_overrides_inputs_per_run() {
     // Feeds are run-local: a plain forward returns to the default and
     // the recorded default payload remains unchanged.
     assert_eq!(*network.forward().of(doubled), 2.0);
-    assert_eq!(input.data(), Some(1.0));
+    assert_eq!(input.payload(), Some(1.0));
 }
 
 #[test]
@@ -141,8 +141,8 @@ fn training_feeds_batches_without_regrowing_the_tape() {
     }
 
     assert_eq!(network.len(), recorded_nodes);
-    let learned_weight = network.resolve(weight_symbol).data().unwrap();
-    let learned_bias = network.resolve(bias_symbol).data().unwrap();
+    let learned_weight = network.resolve(weight_symbol).payload().unwrap();
+    let learned_bias = network.resolve(bias_symbol).payload().unwrap();
     assert!((learned_weight - 2.0).abs() < 1e-3);
     assert!((learned_bias - 1.0).abs() < 1e-3);
 }
@@ -161,9 +161,9 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
     });
 
     assert_eq!(updated.len(), network.len());
-    assert_eq!(updated.resolve(parameter.symbol()).data(), Some(-1.0));
-    assert_eq!(updated.resolve(input.symbol()).data(), Some(2.0));
-    assert_eq!(parameter.data(), Some(1.0));
+    assert_eq!(updated.resolve(parameter.symbol()).payload(), Some(-1.0));
+    assert_eq!(updated.resolve(input.symbol()).payload(), Some(2.0));
+    assert_eq!(parameter.payload(), Some(1.0));
 }
 
 #[test]
@@ -186,7 +186,7 @@ fn gradient_descent_converges() {
         });
     }
 
-    let learned = network.resolve(parameter_symbol).data().unwrap();
+    let learned = network.resolve(parameter_symbol).payload().unwrap();
     assert!((learned - 3.0).abs() < 1e-6);
 }
 
@@ -214,7 +214,7 @@ fn momentum_descent_converges() {
         velocity = Some(step);
     }
 
-    let learned = network.resolve(parameter_symbol).data().unwrap();
+    let learned = network.resolve(parameter_symbol).payload().unwrap();
     assert!((learned - 3.0).abs() < 1e-3);
 }
 

@@ -100,8 +100,8 @@ fn layer_trains_toward_targets() {
     }
 
     let parameters: Vec<_> = layer.parameters().collect();
-    let weights = network.resolve(parameters[0]).data().unwrap();
-    let bias = network.resolve(parameters[1]).data().unwrap();
+    let weights = network.resolve(parameters[0]).payload().unwrap();
+    let bias = network.resolve(parameters[1]).payload().unwrap();
     assert!((weights.elements()[0] - 2.0).abs() < 1e-3);
     assert!((weights.elements()[1] + 1.0).abs() < 1e-3);
     assert!((bias.elements()[0] - 0.5).abs() < 1e-3);

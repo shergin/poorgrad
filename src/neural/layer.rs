@@ -10,23 +10,20 @@ use super::Activation;
 // in `network.rs`.
 assert_impl_all!(Layer<f64>: Send, Sync);
 
-/// A dense layer at tensor granularity: `activation(x . w + b)`.
+/// A dense tensor layer computing `activation(input.matmul(weights) + bias)`.
 ///
-/// Its weights are one `[inputs, outputs]` parameter and its bias one
-/// `[outputs]` parameter, so expressing the layer records a handful of
-/// tensor nodes instead of one node per scalar weight; the bias meets
-/// the batch matrix through the explicit axis broadcast. Like `Neuron`
-/// it is detached: parameters are allocated on a `Network` at
-/// construction but held as `Symbol`s, so the layer survives
-/// generations and records its expression against whichever generation
-/// it is given. Layers chain by feeding one layer's output batch to the
-/// next.
+/// The weights are one `[inputs, outputs]` parameter and the bias is one
+/// `[outputs]` parameter. The bias is broadcast explicitly across the batch
+/// axis, so expressing the layer records a small, fixed number of graph nodes
+/// regardless of parameter count. Parameters are stored as [`Symbol`]s and
+/// resolved when [`Layer::express`] records the layer in a compatible
+/// [`Network`] generation.
 #[derive(Debug, Clone)]
 pub struct Layer<Data> {
     weights: Symbol,
     bias: Symbol,
     activation: Activation,
-    payload: PhantomData<Data>,
+    _marker: PhantomData<Data>,
 }
 
 impl<Data: Differentiable> Layer<Data> {
@@ -64,7 +61,7 @@ impl<Data: Differentiable> Layer<Data> {
             weights: network.parameter(weights).symbol(),
             bias: network.parameter(bias).symbol(),
             activation,
-            payload: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -81,8 +78,9 @@ impl<Data: Tensorial> Layer<Data> {
     /// value.
     ///
     /// # Panics
-    /// Panics if the layer's parameters are not allocated on `network`,
-    /// or if `input`'s shape does not multiply with the weights.
+    /// Panics if the layer's parameters or `input` are not allocated on
+    /// `network`, or if `input` and the weights are not compatible rank-2
+    /// matrices.
     pub fn express<'network>(
         &self,
         network: &'network Network<Data>,

@@ -112,7 +112,7 @@ fn engine_trains_tensor_payloads_unchanged() {
         });
     }
 
-    let learned = network.resolve(w_symbol).data().unwrap();
+    let learned = network.resolve(w_symbol).payload().unwrap();
     assert!((learned.elements()[0] - 5.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 3.0).abs() < 1e-6);
 }
@@ -342,7 +342,7 @@ fn linear_regression_trains_in_matrix_form() {
         });
     }
 
-    let learned = network.resolve(w_symbol).data().unwrap();
+    let learned = network.resolve(w_symbol).payload().unwrap();
     assert!((learned.elements()[0] - 2.0).abs() < 1e-6);
     assert!((learned.elements()[1] + 1.0).abs() < 1e-6);
 }

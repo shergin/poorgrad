@@ -28,16 +28,18 @@ impl ValueId {
 
 /// A `Copy` proxy to a value allocated in a `Network`.
 ///
-/// It pairs a borrow of the network's `Tape` with the position of its node:
-/// the network is the single owner of all value state, and a `Value` is a
-/// view into it that cannot outlive it. Being `Copy`, proxies are never
-/// consumed: arithmetic operators build the graph (`let x = v1 + v2;`
-/// records a new computed node on the same network) while the operands stay
-/// usable for further expressions. Payload literals mix directly into
-/// expressions (`x * 2.0` on scalar networks, tensor literals on tensor
-/// networks, in either order); each literal appearance records its own
-/// fresh leaf on the same network. Accessors such as `data` briefly take
-/// the tape lock and clone the payload out.
+/// A value stores its node position together with a borrow of the network, so
+/// it cannot outlive the graph it refers to. Arithmetic and tensor operations
+/// append computed nodes to that graph without consuming their operands.
+/// Payload literals can be mixed directly into expressions, in either operand
+/// order; every literal occurrence records a new leaf.
+///
+/// Operations validate network identity and shape compatibility when they are
+/// recorded, so invalid expressions panic before a forward run begins.
+///
+/// [`Value::shape`] returns the shape inferred when the node was recorded.
+/// [`Value::payload`] clones the stored payload of a leaf, parameter, or input;
+/// computed values are read from an [`Evaluation`](super::Evaluation).
 pub struct Value<'network, Data> {
     tape: &'network Tape<Data>,
     id: ValueId,
@@ -59,9 +61,9 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.tape
     }
 
-    /// Returns the detached name of this value: its identity across
+    /// Returns the detached name of this value: its identity across compatible
     /// network generations, resolved back into a proxy by
-    /// `Network::resolve`.
+    /// [`Network::resolve`](crate::Network::resolve).
     pub fn symbol(&self) -> Symbol {
         Symbol {
             lineage: self.tape.lineage(),
@@ -81,13 +83,14 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.tape.shape(self.id)
     }
 
-    /// Returns a clone of the leaf or parameter payload, or `None` for
-    /// computed values.
+    /// Returns a clone of this node's stored payload, or `None` for a computed
+    /// value.
     ///
-    /// For a parameter it reads the current generation's store, so the
-    /// same symbol resolved in different generations reads different
-    /// payloads.
-    pub fn data(&self) -> Option<Data> {
+    /// Leaves return their recorded payload, parameters return the current
+    /// generation's payload, and inputs return their recorded default rather
+    /// than a run-local feed. Use [`Evaluation::of`](super::Evaluation::of) to
+    /// read the result of a particular forward run.
+    pub fn payload(&self) -> Option<Data> {
         self.tape.payload_of(self.id)
     }
 
@@ -139,6 +142,10 @@ impl<'network, Data: Elementary> Value<'network, Data> {
 impl<'network, Data: Tensorial> Value<'network, Data> {
     /// Records the matrix product of this value and `rhs` on the same
     /// network and returns a proxy to it.
+    ///
+    /// # Panics
+    /// Panics if the operands belong to different networks, either operand is
+    /// not rank 2, or their inner dimensions differ.
     pub fn matmul(self, rhs: Self) -> Self {
         self.assert_same_network(&rhs);
         self.apply(Function::matmul(self.id, rhs.id))
@@ -146,6 +153,9 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
 
     /// Records the transposition of this value on the same network and
     /// returns a proxy to it.
+    ///
+    /// # Panics
+    /// Panics if this value's rank exceeds 2.
     pub fn transposed(self) -> Self {
         self.apply(Function::transpose(self.id))
     }
@@ -158,12 +168,19 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
 
     /// Records the sum of this value along `axis` on the same network
     /// and returns a proxy to it.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
     pub fn sum_along(self, axis: usize) -> Self {
         self.apply(Function::sum_along(self.id, axis))
     }
 
     /// Records the explicit broadcast of this single-value payload across
     /// `reference`'s shape on the same network and returns a proxy to it.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks or this value's
+    /// shape does not contain exactly one element.
     pub fn broadcast_like(self, reference: Self) -> Self {
         self.assert_same_network(&reference);
         self.apply(Function::broadcast(self.id, reference.id))
@@ -173,6 +190,10 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// `reference`'s shape on the same network and returns a proxy to
     /// it; this value's shape must equal `reference`'s with that axis
     /// removed.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks, `axis` is out of
+    /// `reference`'s rank, or the remaining shapes differ.
     pub fn broadcast_along(self, axis: usize, reference: Self) -> Self {
         self.assert_same_network(&reference);
         self.apply(Function::broadcast_along(self.id, reference.id, axis))

@@ -11,12 +11,11 @@ assert_impl_all!(Gradients<f64>: Send, Sync);
 /// The gradients of one backward run over a `Network`.
 ///
 /// It holds the derivative of the run's target with respect to every node:
-/// the gradient role of a `Field`. Read it per value with `of`, or enter
-/// the field algebra with `as_field`/`into_field` to combine gradients
-/// across runs and build update directions such as a momentum velocity.
-/// Like every field it is tied to a network lineage rather than to a
-/// single generation, so it carries no borrow of the network that
-/// produced it.
+/// the gradient role of a [`Field`]. Read it per value with
+/// [`Gradients::of`], or use [`Gradients::as_field`] and
+/// [`Gradients::into_field`] to combine runs and build update directions such
+/// as momentum. Like every field, it carries graph provenance rather than a
+/// borrow of the network generation that produced it.
 #[derive(Debug, Clone)]
 pub struct Gradients<Data> {
     field: Field<Data>,
@@ -30,8 +29,8 @@ impl<Data: Differentiable> Gradients<Data> {
     /// Returns the gradient of the run's target with respect to `value`.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different lineage or was allocated
-    /// after this backward run.
+    /// Panics if `value` belongs to a different lineage or a divergent fork,
+    /// or was allocated after this backward run.
     pub fn of(&self, value: Value<'_, Data>) -> &Data {
         self.field.of(value)
     }

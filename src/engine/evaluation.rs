@@ -14,13 +14,12 @@ assert_impl_all!(Evaluation<'static, f64>: Send, Sync);
 
 /// The materialized payloads of one forward run over a `Network`.
 ///
-/// It is per-run state: a run never mutates the network, so any number of
-/// evaluations can exist and be produced concurrently. Unlike a bare
-/// `Field`, an evaluation is generation-pinned — its numbers are a
-/// function of one generation's parameter payloads — so it borrows that
-/// generation exactly and exposes no cross-generation algebra. It also
-/// carries the tape snapshot it was computed from, which is what lets
-/// `backward` differentiate it without ever touching the network again.
+/// An evaluation is immutable, per-run state. It borrows the exact network
+/// generation whose parameter payloads it used and retains the graph snapshot
+/// captured at the start of the run. Later recordings and parameter updates do
+/// not change its values or the operations differentiated by
+/// [`Evaluation::backward`]. Forward and backward passes do not mutate the
+/// network, so evaluations can coexist and be computed concurrently.
 #[derive(Debug)]
 pub struct Evaluation<'network, Data> {
     tape: &'network Tape<Data>,

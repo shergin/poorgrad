@@ -6,24 +6,19 @@ use super::{Branch, Lineage, ValueId};
 // in `network.rs`.
 assert_impl_all!(Symbol: Send, Sync, Copy);
 
-/// A detached, `Copy` name of a value, resolved against network
-/// generations.
+/// A detached, `Copy` identifier for a value in compatible network generations.
 ///
-/// It is the identity of a value across time: while `Value` is a
-/// generation-bound view, a `Symbol` carries no borrow of any network, so
-/// it can be stored anywhere and outlive any particular generation — a
-/// training loop keeps the symbols of its loss and parameters while the
-/// network variable is reassigned to updated generations. Each generation
-/// acts as an environment: `Network::resolve` looks the symbol up in it
-/// and returns that generation's `Value`. The symbol carries its lineage
-/// and the branch that owned its position when it was minted, so kinship
-/// is checked at resolution: positions are stable across updates and
-/// non-divergent forks, a symbol resolves to the same node in every
-/// related generation, and resolving it in an unrelated network — or in
-/// a fork that diverged before the symbol was minted — panics instead of
-/// silently misbinding. Lineage and branch take part in equality and
-/// hashing, so symbols from unrelated networks never collide as map
-/// keys.
+/// Unlike [`Value`](crate::Value), a symbol carries no network borrow and can
+/// outlive the generation that produced it.
+/// [`Network::resolve`](crate::Network::resolve) turns it back into a
+/// generation-bound value, which is useful when a training loop repeatedly
+/// replaces a network with [`Network::updated`](crate::Network::updated).
+///
+/// A symbol records its graph lineage, branch, and node position. Resolution
+/// succeeds only when that node exists on a compatible branch; unrelated
+/// networks, divergent forks, and generations that do not contain the node are
+/// rejected. This provenance also participates in equality and hashing, so
+/// equally positioned nodes from unrelated graphs do not compare equal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Symbol {
     pub(crate) lineage: Lineage,

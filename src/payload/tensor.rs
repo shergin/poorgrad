@@ -9,19 +9,22 @@ use super::{Differentiable, Elementary, Shape, Tensorial};
 // in `network.rs`.
 assert_impl_all!(Tensor<f64>: Send, Sync);
 
-/// A dense, fixed-shape tensor payload with elementwise arithmetic.
+/// A dense tensor with an immutable, runtime-defined [`Shape`] and row-major
+/// element storage.
 ///
-/// It is the first non-scalar payload: a `Network<Tensor<f64>>` runs the
-/// whole engine unchanged, every node carrying a tensor and every
-/// operation applying elementwise. The elements live behind an `Arc`, so
-/// cloning costs one reference bump plus a small inline shape copy — the
-/// engine clones payloads liberally during gradient accumulation, and a
-/// payload must be cheap to copy by design. Binary operations require identical shapes; implicit
-/// broadcasting is deliberately absent. In the tensor-native tier
-/// (`Tensorial`), `matmul` and `transposed` stop at rank 2 while the
-/// axis-wise reduction and broadcast are rank-general; there is no
-/// reshape or batched matmul yet, while `Shape` itself carries any
-/// rank.
+/// Every tensor contains at least one element. Cloning shares the element
+/// buffer through an [`Arc`] and clones the shape metadata; it does not clone
+/// the elements.
+///
+/// Arithmetic and [`Elementary`] functions operate elementwise. Binary
+/// elementwise operations require identical shapes and never broadcast
+/// implicitly. Broadcasting is available only through
+/// [`Tensorial::broadcast_like`] and [`Tensorial::broadcast_along`].
+///
+/// [`Tensorial::matmul`] requires rank-2 operands, and
+/// [`Tensorial::transposed`] accepts ranks 0 through 2. Reductions and explicit
+/// broadcasts are rank-general. Reshaping and batched matrix multiplication
+/// are not supported.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor<Element> {
     shape: Shape,
@@ -32,10 +35,11 @@ impl<Element: Differentiable> Tensor<Element> {
     /// Creates a tensor of `shape` from `elements` in row-major order.
     ///
     /// # Panics
-    /// Panics if the number of elements differs from the shape's volume,
-    /// or if the shape holds no elements. Empty tensors are forbidden by
-    /// design: the payload contract mints zeros and ones from existing
-    /// elements (`zero_like`), which an empty tensor cannot supply.
+    /// Panics if the shape's volume overflows `usize`, the number of elements
+    /// differs from that volume, or the shape holds no elements. Empty tensors
+    /// are unsupported because reductions initialize their accumulator from
+    /// an existing element; [`Differentiable`] provides shape-preserving
+    /// identities rather than a nullary element constructor.
     pub fn new(shape: impl IntoIterator<Item = usize>, elements: impl Into<Vec<Element>>) -> Self {
         let shape = Shape::new(shape);
         let elements = elements.into();
@@ -57,8 +61,8 @@ impl<Element: Differentiable> Tensor<Element> {
     /// Creates a tensor of `shape` with every element set to `element`.
     ///
     /// # Panics
-    /// Panics if the shape holds no elements; empty tensors are
-    /// forbidden by design, as documented on [`Tensor::new`].
+    /// Panics if the shape's volume overflows `usize` or the shape holds no
+    /// elements, as documented on [`Tensor::new`].
     pub fn filled(shape: impl IntoIterator<Item = usize>, element: Element) -> Self {
         let shape = Shape::new(shape);
         let volume = shape.volume();
@@ -237,9 +241,8 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
 
     /// Returns the sum of every element as a rank-0 tensor.
     ///
-    /// It folds left to right with no pairwise or compensated summation:
-    /// rounding error grows linearly with the element count, which is
-    /// acceptable at this crate's sizes.
+    /// Elements are accumulated from left to right without pairwise or
+    /// compensated summation.
     fn sum(&self) -> Self {
         let mut elements = self.elements.iter();
         let first = elements

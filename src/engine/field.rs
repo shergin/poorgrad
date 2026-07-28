@@ -11,20 +11,18 @@ use super::{Lineage, Segment, Value, chains_agree};
 // in `network.rs`.
 assert_impl_all!(Field<f64>: Send, Sync);
 
-/// A value-aligned buffer: one payload for every node of a network.
+/// A value-aligned buffer over the nodes captured by a graph snapshot.
 ///
-/// It is the general form of per-node data, of which a gradient buffer is
-/// one role. A field is tied to a network *lineage* rather than to a
-/// single generation: positions are stable across updates and
-/// non-divergent forks, so a field can be carried across training steps
-/// (a momentum velocity, Adam moments) and combined across runs
-/// (averaging data-parallel gradients). The elementwise algebra — `+`,
-/// `scaled`, `zip`, `map` — checks kinship on every combination: same
-/// lineage, same length, and branch chains agreeing over the covered
-/// range, so a divergent fork's field of equal length is rejected
-/// rather than misapplied. In physics terms, a `Gradients` is a
-/// discrete gradient field over the graph; other fields assign
-/// velocities, moments, or learning rates to the same nodes.
+/// A [`Gradients`](super::Gradients) buffer is one kind of field. Other fields
+/// can hold optimizer state such as momentum or moments, or combine gradients
+/// from several runs. Fields carry graph lineage and branch information rather
+/// than borrowing one network generation, allowing a compatible field to be
+/// reused across parameter updates.
+///
+/// Field operations require both operands to cover the same number of nodes in
+/// compatible branches of the same graph lineage. A field produced before the
+/// graph grows still covers its original prefix; accessing a newer node or
+/// using that field to update the larger graph is rejected.
 #[derive(Debug, Clone)]
 pub struct Field<Data> {
     lineage: Lineage,
@@ -63,6 +61,13 @@ impl<Data: Differentiable> Field<Data> {
     }
 
     /// Returns a field with every entry multiplied by `factor`.
+    ///
+    /// The factor is passed directly to each payload's multiplication; no
+    /// broadcasting is performed.
+    ///
+    /// # Panics
+    /// For tensor payloads, panics if `factor` does not have the same shape as
+    /// every field entry.
     pub fn scaled(&self, factor: Data) -> Self {
         self.map(|value| value.clone() * factor.clone())
     }

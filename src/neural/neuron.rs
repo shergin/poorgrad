@@ -11,20 +11,18 @@ use super::Activation;
 // in `network.rs`.
 assert_impl_all!(Neuron<f64>: Send, Sync);
 
-/// A single neuron: weights, a bias, and an activation.
+/// A learnable affine unit followed by an [`Activation`].
 ///
-/// It is the smallest learnable building block, computing
-/// `activation(weights . inputs + bias)`. Its parameters are allocated on
-/// a `Network` at construction but held as `Symbol`s, so the neuron itself
-/// is detached like any name: it survives generations and training steps,
-/// and `express` records its expression against whichever generation it is
-/// given.
+/// A neuron computes `activation(bias + sum(weight_i * input_i))`. Its
+/// parameters are allocated on a [`Network`] at construction and retained as
+/// [`Symbol`]s, so [`Neuron::express`] can resolve them and record the same
+/// expression in each compatible network generation.
 #[derive(Debug, Clone)]
 pub struct Neuron<Data> {
     weights: Vec<Symbol>,
     bias: Symbol,
     activation: Activation,
-    payload: PhantomData<Data>,
+    _marker: PhantomData<Data>,
 }
 
 impl<Data: Differentiable> Neuron<Data> {
@@ -47,7 +45,7 @@ impl<Data: Differentiable> Neuron<Data> {
             weights,
             bias,
             activation,
-            payload: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -64,7 +62,8 @@ impl<Data: Elementary> Neuron<Data> {
     ///
     /// # Panics
     /// Panics if the number of inputs differs from the number of weights,
-    /// or if the neuron's parameters are not allocated on `network`.
+    /// if an input or parameter is not allocated on `network`, or if their
+    /// payload shapes are incompatible for elementwise arithmetic.
     pub fn express<'network>(
         &self,
         network: &'network Network<Data>,

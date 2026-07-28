@@ -83,8 +83,8 @@ fn main() {
             let final_loss = *evaluation.of(loss);
             let w = network.resolve(w_symbol);
             let b = network.resolve(b_symbol);
-            let w = w.data().expect("parameters carry payloads");
-            let b = b.data().expect("parameters carry payloads");
+            let w = w.payload().expect("parameters carry payloads");
+            let b = b.payload().expect("parameters carry payloads");
             (learning_rate, final_loss, w, b)
         })
         .collect();

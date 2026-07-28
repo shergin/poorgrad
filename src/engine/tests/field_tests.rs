@@ -74,5 +74,5 @@ fn fields_survive_generations_within_a_lineage() {
     let updated = network.updated(&gradients, |parameter, direction| parameter - direction);
     let w = updated.resolve(w_symbol);
     assert_eq!(*gradients.of(w), 1.0);
-    assert_eq!(w.data(), Some(0.0));
+    assert_eq!(w.payload(), Some(0.0));
 }

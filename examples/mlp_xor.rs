@@ -1,11 +1,10 @@
 //! Trains a small MLP on XOR at tensor granularity, feeding minibatches
 //! through a graph recorded once.
 //!
-//! The capstone of the tensor tier: a `[2, 4, 1]` perceptron records a
-//! handful of tensor nodes, the samples arrive as per-run feeds instead
-//! of graph state, and every training step binds a different minibatch
-//! with `forward_with` while the tape never grows. Recording once and
-//! running anywhere covers the data, not just the targets.
+//! A `[2, 4, 1]` perceptron records a handful of tensor nodes, the samples
+//! arrive as per-run feeds instead of graph state, and every training step
+//! binds a different minibatch with `forward_with` while the tape never grows.
+//! Recording once and running anywhere covers the data, not just the targets.
 //!
 //! Run with: `cargo run --example mlp_xor`
 

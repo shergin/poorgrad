@@ -13,7 +13,7 @@ fn operator_sugar_allocates_on_the_same_network() {
 
     assert_eq!(network.len(), 3);
     assert_eq!(x.function(), Function::add(v1.id(), v2.id()));
-    assert_eq!(x.data(), None);
+    assert_eq!(x.payload(), None);
 }
 
 #[test]

@@ -67,8 +67,8 @@ let y_symbol = y.symbol();
 let loss_symbol = loss.symbol();
 
 // The graph is recorded once; every step feeds one sample of the line
-// `y = 2 * x` and steps to the next generation, which shares everything
-// but the parameters with the one before it.
+// `y = 2 * x` and steps to the next generation, which shares the recorded
+// graph while replacing the parameter payloads.
 let samples = [(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)];
 let mut network = network;
 for step in 0..100 {
@@ -79,7 +79,7 @@ for step in 0..100 {
     network = network.updated(gradients.as_field(), |w, g| w - 0.02 * g);
 }
 
-let learned = network.resolve(w_symbol).data().unwrap();
+let learned = network.resolve(w_symbol).payload().unwrap();
 assert!((learned - 2.0).abs() < 1e-6);
 ```
 
@@ -109,11 +109,10 @@ crate root keeps the public API flat. From tape to training:
   everything else. `input` declares a per-run input with a default
   payload; `forward_with` binds fed payloads to inputs for one run,
   validated against their recorded shapes.
-- [`Symbol`](src/engine/symbol.rs) — a detached, `Copy` name of a value: the
-  identity that persists across network generations, while a proxy is that
-  identity's view in one generation. `Network::resolve` looks a symbol up
-  in a generation. Training loops keep symbols of the loss and the
-  parameters across `updated` steps.
+- [`Symbol`](src/engine/symbol.rs) — a detached, `Copy` identifier for a value.
+  `Network::resolve` turns it into a proxy in a compatible generation, while
+  rejecting unrelated or divergent networks. Training loops keep symbols of
+  the loss and parameters across `updated` steps.
 - [`Evaluation`](src/engine/evaluation.rs) and
   [`Gradients`](src/engine/gradients.rs) — the per-run results of `forward`
   and `backward`, read back with the same `Value` proxies that built the
@@ -123,18 +122,20 @@ crate root keeps the public API flat. From tape to training:
   lineage rather than one generation, with elementwise algebra (`+`,
   `scaled`, `zip`, `map`). Gradients convert into fields to be combined
   across runs and carried across generations as optimizer state (momentum,
-  Adam); `updated` takes any field as its update direction.
-- [`Tensor`](src/payload/tensor.rs) — the first non-scalar payload: dense and
-  fixed-shape, with O(1) clones behind `Arc`s. A `Network<Tensor<f64>>`
-  runs the whole engine — training loop, fields, momentum — unchanged,
-  and the [`Tensorial`](src/payload/tensorial.rs) tier adds `matmul`,
+  Adam); `updated` takes a compatible field covering the current graph as its
+  update direction.
+- [`Tensor`](src/payload/tensor.rs) — the built-in dense tensor payload, with
+  an immutable runtime shape, row-major storage, and element buffers shared
+  through `Arc`. A `Network<Tensor<f64>>` uses the same graph, evaluation,
+  differentiation, and update APIs as a scalar network. The
+  [`Tensorial`](src/payload/tensorial.rs) trait provides `matmul`,
   `transposed`, the reductions `sum` and `sum_along`, and the explicit
   broadcasts `broadcast_like` and `broadcast_along` (scalars implement
-  the tier degenerately, so one bound covers both worlds). Broadcasting
+  scalar semantics for the same trait bound). Broadcasting
   is explicit by design: a single value spread across a named
   reference's shape, or a payload repeated along one named axis — never
-  an implicit alignment rule. Shapes are
-  inferred and checked when expressions are recorded — a shape mismatch
+  an implicit alignment rule. Shapes are inferred and checked when
+  expressions are recorded — a shape mismatch
   panics at the offending line, before anything runs: the record-once
   answer to type-level shape checking.
 - [`Tape`](src/engine/tape/tape.rs) — internal: the append-only record (a
@@ -144,19 +145,16 @@ crate root keeps the public API flat. From tape to training:
   enum of the differentiable operations, each variant owning its operand
   links and parameters and implementing the `Operation` trait (forward math
   and gradient routing per operation, dispatched with a plain `match`).
-- [`Neuron`](src/neural/neuron.rs) — the smallest learnable building block
-  and the scalar-granularity teaching type: weights and a bias (allocated
-  as parameters, held as symbols so the neuron survives generations) plus
-  an `Activation`; `express` records
-  `activation(weights . inputs + bias)` against a given generation.
+- [`Neuron`](src/neural/neuron.rs) — a scalar-granularity affine unit with
+  weights, a bias, and an `Activation`. Its parameters are allocated on the
+  network and retained as symbols across compatible generations.
 - [`Layer`](src/neural/layer.rs) — a dense layer at tensor granularity:
-  `activation(x . w + b)` over a `[batch, inputs]` value, one weight
-  matrix and one bias vector, the bias met through the explicit axis
-  broadcast; layers chain by feeding one layer's output batch to the
-  next.
-- [`Mlp`](src/neural/mlp.rs) — chained dense layers with micrograd-style
-  topology (`[3, 4, 4, 1]`): tanh hidden layers, an affine output, and
-  caller-owned initialization from each parameter's shape.
+  `activation(x.matmul(w) + b)` over a `[batch, inputs]` value, one weight
+  matrix and one bias vector, with the bias explicitly broadcast over the
+  batch axis.
+- [`Mlp`](src/neural/mlp.rs) — dense layers described by a sequence of widths
+  such as `[3, 4, 4, 1]`: tanh hidden layers, an affine output, and
+  caller-controlled initialization from each parameter's requested shape.
 
 ## The name
 

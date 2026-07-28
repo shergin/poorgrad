@@ -23,8 +23,8 @@
 //! let loss_symbol = loss.symbol();
 //!
 //! // The graph is recorded once; every step feeds one sample of the line
-//! // `y = 2 * x` and steps to the next generation, which shares everything
-//! // but the parameters with the one before it.
+//! // `y = 2 * x` and steps to the next generation, which shares the recorded
+//! // graph while replacing the parameter payloads.
 //! let samples = [(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)];
 //! let mut network = network;
 //! for step in 0..100 {
@@ -35,7 +35,7 @@
 //!     network = network.updated(gradients.as_field(), |w, g| w - 0.02 * g);
 //! }
 //!
-//! let learned = network.resolve(w_symbol).data().unwrap();
+//! let learned = network.resolve(w_symbol).payload().unwrap();
 //! assert!((learned - 2.0).abs() < 1e-6);
 //! ```
 #![forbid(unsafe_code)]

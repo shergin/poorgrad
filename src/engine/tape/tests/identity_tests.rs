@@ -42,7 +42,7 @@ fn clone_forks_the_network() {
     assert_eq!(network.len(), 2);
     assert_eq!(fork.len(), 1);
     let rebound = fork.resolve(v1.symbol());
-    assert_eq!(rebound.data(), Some(1.0));
+    assert_eq!(rebound.payload(), Some(1.0));
 }
 
 #[test]
@@ -86,8 +86,8 @@ fn divergent_forks_probe_and_share_correctly() {
     // directions; the pre-fork symbol keeps resolving on both sides.
     assert!(network.try_resolve(theirs.symbol()).is_none());
     assert!(fork.try_resolve(mine.symbol()).is_none());
-    assert_eq!(network.resolve(anchor.symbol()).data(), Some(0.0));
-    assert_eq!(fork.resolve(anchor.symbol()).data(), Some(0.0));
+    assert_eq!(network.resolve(anchor.symbol()).payload(), Some(0.0));
+    assert_eq!(fork.resolve(anchor.symbol()).payload(), Some(0.0));
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn concurrent_divergence_keeps_branches_exclusive() {
     for (owner, symbol) in symbols.iter().enumerate() {
         for (other, fork) in forks.iter().enumerate() {
             if owner == other {
-                assert_eq!(fork.resolve(*symbol).data(), Some(1.0));
+                assert_eq!(fork.resolve(*symbol).payload(), Some(1.0));
             } else {
                 assert!(fork.try_resolve(*symbol).is_none());
             }
@@ -138,6 +138,6 @@ fn concurrent_divergence_keeps_branches_exclusive() {
         assert!(network.try_resolve(*symbol).is_none());
     }
     for fork in &forks {
-        assert_eq!(fork.resolve(anchor.symbol()).data(), Some(0.0));
+        assert_eq!(fork.resolve(anchor.symbol()).payload(), Some(0.0));
     }
 }

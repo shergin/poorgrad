@@ -1,10 +1,11 @@
 use super::Differentiable;
 
-/// The elementary transcendental functions used by activation `Function`s.
+/// Elementary numeric functions supported by graph payloads.
 ///
-/// It extends `Differentiable` with the nonlinear operations activations need,
-/// kept separate from the core trait so the engine's arithmetic does not force
-/// every payload to implement functions it may not support.
+/// This trait extends [`Differentiable`] without making transcendental
+/// functions part of the base arithmetic contract. The scalar implementations
+/// use the corresponding `f32` and `f64` operations; `Tensor<Element>` applies
+/// them elementwise when `Element` also implements `Elementary`.
 pub trait Elementary: Differentiable {
     /// Returns `e` raised to the power of `self`.
     fn exp(&self) -> Self;

@@ -1,27 +1,24 @@
 use super::Elementary;
 
-/// The tensor-native operations: matrix multiplication, reduction, and
-/// explicit shape manipulation.
+/// Matrix, reduction, transpose, and explicit broadcasting operations for
+/// graph payloads.
 ///
-/// It extends `Elementary` the same way `Elementary` extends
-/// `Differentiable`: running a graph requires the full tier, while
-/// building and updating stay arithmetic-only. Scalars implement it
-/// degenerately — a scalar is a rank-0 tensor, so `matmul` collapses to
-/// multiplication and `transposed`, `sum`, and `broadcast_like` to the
-/// identity — which is what keeps scalar graphs running under the same
-/// bound. The degenerate impls exist for exactly that: satisfying the
-/// bound of running a graph, not recording tensor-native expressions on
-/// scalar networks — record-time shape inference demands proper ranks
-/// (`matmul` requires rank 2), so `Value::matmul` on a scalar network
-/// panics at the offending expression.
+/// This trait extends [`Elementary`] because forward and backward evaluation
+/// must be able to execute every operation that can be recorded. For `f32` and
+/// `f64`, [`Tensorial::matmul`] is multiplication and the remaining methods use
+/// scalar identity semantics. `Tensor<Element>` provides the rank-aware
+/// implementations.
 ///
-/// Broadcasting is explicit by design, in two named forms: a
-/// single-value payload spread across a reference's whole shape
-/// (`broadcast_like`), or a payload repeated along one named axis of a
-/// reference (`broadcast_along`). Every other operation demands exact
-/// shape agreement; there are no implicit alignment rules. Each
-/// broadcast form is adjoint to the matching reduction: `sum` to
-/// `broadcast_like`, `sum_along` to `broadcast_along`.
+/// Graph operations still validate their recorded [`Shape`](super::Shape).
+/// Consequently, matrix multiplication and named-axis operations reject
+/// scalar [`Value`](crate::Value) nodes even though direct trait calls on
+/// scalar payloads are defined.
+///
+/// Broadcasting is never implicit. [`Tensorial::broadcast_like`] expands a
+/// single-value payload to a reference shape, while
+/// [`Tensorial::broadcast_along`] repeats a payload along one specified axis.
+/// These operations are adjoint to [`Tensorial::sum`] and
+/// [`Tensorial::sum_along`], respectively.
 pub trait Tensorial: Elementary {
     /// Returns the matrix product of `self` and `rhs`.
     fn matmul(&self, rhs: &Self) -> Self;

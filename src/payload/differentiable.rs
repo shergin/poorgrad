@@ -3,16 +3,20 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use super::Shape;
 
-/// The numeric payload a `Value` node carries through the computation graph.
+/// The base payload contract for values in a computation graph.
 ///
-/// It captures exactly the operations the autograd engine requires of an
-/// underlying value, so `Value` can be generic over `f32`, `f64`, and later
-/// tensor types without the engine depending on any of them directly.
+/// Graph construction and gradient accumulation use the arithmetic operations
+/// in this trait. The built-in implementations cover `f32`, `f64`, and
+/// `Tensor<Element>` whenever its element type also implements
+/// `Differentiable`.
 ///
-/// It requires `Send + Sync` on purpose: the premise of the engine is a graph
-/// that can be shared and evaluated across threads, so every payload must be
-/// shareable too. It requires only `Clone`, never `Copy`, so that non-`Copy`
-/// payloads such as tensors can implement it later without a breaking change.
+/// Payloads must be `Send + Sync` because networks can be shared and evaluated
+/// across threads. They need only be `Clone`, not `Copy`; cloning a tensor, for
+/// example, shares its element buffer.
+///
+/// Implementations must keep shapes coherent. `zero_like`, `one_like`, and
+/// negation preserve the operand's shape, and binary arithmetic on compatible
+/// operands produces that same shape.
 pub trait Differentiable:
     Clone
     + Debug
@@ -32,6 +36,8 @@ pub trait Differentiable:
     fn zero_like(&self) -> Self;
 
     /// Returns a one shaped like `self`, used to seed the output gradient.
+    ///
+    /// The returned payload must have the same shape as `self`.
     fn one_like(&self) -> Self;
 
     /// Returns the shape of this payload: its extent along every axis.

@@ -12,19 +12,18 @@ use super::{Evaluation, Field, Function, Symbol, Tape, Value};
 // is enough to catch that.
 assert_impl_all!(Network<f64>: Send, Sync);
 
-/// A memory management bag owning the state of every value of one
-/// computation graph.
+/// An append-only computation graph and its generation-specific payload state.
 ///
-/// It is the single place where value state lives: it owns the `Tape` the
-/// nodes are recorded on, and every `Value` it hands out is a `Copy` proxy
-/// borrowing that tape, unable to outlive the network. An expression such
-/// as `let x = v1 + v2;` grows this same network without cloning it and
-/// without disturbing anything allocated before; independent state only
-/// comes from cloning the network itself, which forks it in O(1) into a
-/// fork sharing the underlying arena but keeping an independent tape. All
-/// synchronization lives inside the tape's single `Mutex`, taken briefly
-/// per operation. The network is `Send + Sync` whenever `Data` is, so
-/// scoped threads can build and evaluate the same graph concurrently.
+/// A network owns its recorded nodes, parameter payloads, and default input
+/// payloads. Recording methods and [`Value`] operators append nodes through
+/// shared interior synchronization. The returned values are `Copy` handles
+/// that borrow the network and therefore cannot outlive it.
+///
+/// A network can be shared for concurrent recording and evaluation. Cloning
+/// creates an O(1) fork, while [`Network::updated`] creates a new generation
+/// with a freshly computed parameter store. Both operations share the
+/// existing graph storage; subsequent recordings on separate networks remain
+/// isolated from one another.
 #[derive(Debug)]
 pub struct Network<Data> {
     tape: Tape<Data>,
@@ -47,9 +46,10 @@ impl<Data: Differentiable> Network<Data> {
 
     /// Allocates a learnable parameter and returns a proxy to it.
     ///
-    /// Parameters behave like leaves during runs; they are the leaves that
-    /// `updated` replaces when a gradient step is applied. The node lives
-    /// on the tape, the payload in the generation's parameter store.
+    /// Parameters behave like leaves during runs. [`Network::updated`] computes
+    /// their payloads for the next generation without replacing their recorded
+    /// nodes; the nodes live on the graph and the payloads live in the
+    /// generation's parameter store.
     pub fn parameter(&self, data: Data) -> Value<'_, Data> {
         let id = self.tape.record_parameter(data);
         Value::bind(&self.tape, id)
@@ -126,13 +126,13 @@ impl<Data: Differentiable> Network<Data> {
     ///
     /// It is the training-step state transition, and `direction` is any
     /// field over this network's lineage: a raw gradient buffer via
-    /// `Gradients::as_field`, or a derived update direction such as a
-    /// momentum velocity. The new generation shares every node except the
-    /// parameters, positions stay stable (so every `Symbol` keeps
-    /// resolving), and the old generation stays fully usable with its own
-    /// proxies and runs. The update rebuilds only the parameter store —
-    /// O(parameters) in work and allocations — and the replaced payloads
-    /// are reclaimed when the old generation drops.
+    /// [`Gradients::as_field`](super::Gradients::as_field), or a derived update
+    /// direction such as a momentum velocity. The new generation shares the
+    /// complete recorded graph and rebuilds only the parameter store, so node
+    /// positions remain stable and compatible [`Symbol`]s keep resolving. The
+    /// old generation remains fully usable with its own proxies and runs. The
+    /// update performs O(parameters) work and allocations; replaced payloads
+    /// are reclaimed when the old generation is dropped.
     ///
     /// # Panics
     /// Panics if `direction` belongs to a different network lineage or a

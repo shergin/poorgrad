@@ -7,13 +7,13 @@ use static_assertions::assert_impl_all;
 // in `network.rs`.
 assert_impl_all!(Shape: Send, Sync);
 
-/// The shape of a payload: its extent along every axis.
+/// The runtime extent of a payload along each axis, outermost first.
 ///
-/// Ranks are structurally tiny — a scalar is rank 0, a matrix rank 2, a
-/// batched convolution rank 4 — so the axes are stored inline up to rank
-/// 4 and spill to the heap only beyond that. Shapes are lineage-level
-/// metadata: inferred once per node when an expression is recorded and
-/// never mutated afterwards.
+/// A scalar has shape `[]`, a vector `[length]`, and a matrix
+/// `[rows, columns]`. Shapes can have any rank and may contain zero-length
+/// axes, although individual payload types can impose stricter invariants.
+/// Shape values are immutable; axes are stored inline through rank 4 and spill
+/// to the heap at higher ranks.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct Shape(SmallVec<[usize; 4]>);
 

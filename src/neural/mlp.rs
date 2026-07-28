@@ -10,13 +10,11 @@ assert_impl_all!(Mlp<f64>: Send, Sync);
 
 /// A multilayer perceptron: dense layers chained by topology.
 ///
-/// The topology lists the value widths, micrograd-style: `[3, 4, 4, 1]`
-/// is three layers taking a `[batch, 3]` value to a `[batch, 1]` value.
-/// Hidden layers squash with `Tanh`; the output layer stays affine
-/// (`Identity`), as befits regression-style losses. Like its layers the
-/// perceptron is detached: parameters live on the network, symbols in
-/// the facade, and `express` records against whichever generation it is
-/// given.
+/// A topology such as `[3, 4, 4, 1]` defines three layers that map a
+/// `[batch, 3]` input to a `[batch, 1]` output. Hidden layers use
+/// [`Activation::Tanh`], and the output layer uses [`Activation::Identity`].
+/// The contained layers retain parameter [`Symbol`]s, allowing
+/// [`Mlp::express`] to record the network in each compatible generation.
 #[derive(Debug, Clone)]
 pub struct Mlp<Data> {
     layers: Vec<Layer<Data>>,
@@ -28,13 +26,14 @@ impl<Data: Differentiable> Mlp<Data> {
     /// `sizes` lists the value widths from the input width to the
     /// output width. `initializer` produces the initial payload for
     /// each parameter from its shape — `[inputs, outputs]` weights and
-    /// `[outputs]` biases, layer by layer — so callers own
-    /// initialization (fan-in scaling, randomness, symmetry breaking).
+    /// `[outputs]` biases, layer by layer. The initializer is responsible for
+    /// returning payloads with the requested shapes, and callers control
+    /// details such as fan-in scaling, randomness, and symmetry breaking.
     ///
     /// # Panics
-    /// Panics if `sizes` has fewer than two entries, or if
-    /// `initializer` returns a payload whose shape differs from the one
-    /// it was asked for.
+    /// Panics if `sizes` has fewer than two entries. It also propagates
+    /// [`Layer::new`] validation failures if initialized weights and biases do
+    /// not form valid layer parameter shapes.
     pub fn new(
         network: &Network<Data>,
         sizes: &[usize],
@@ -74,8 +73,8 @@ impl<Data: Tensorial> Mlp<Data> {
     /// output value.
     ///
     /// # Panics
-    /// Panics if the parameters are not allocated on `network`, or if
-    /// `input`'s shape does not match the topology.
+    /// Panics if the parameters or `input` are not allocated on `network`, or
+    /// if `input` and the initialized layer shapes are incompatible.
     pub fn express<'network>(
         &self,
         network: &'network Network<Data>,
