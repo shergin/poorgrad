@@ -31,10 +31,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   top of it, normalizing by the targets' total mass — the batch size for
   one-hot targets.
 - Add the elementwise operations `Value::sqrt`, `Value::powf`,
-  `Value::maximum`, and `Value::relu`, the composed `Value::abs`, and
-  `Activation::Relu` for layers and neurons. The `Elementary` payload
-  contract gains `sqrt`, `maximum`, and the 0/1 indicator `step`;
-  `Tensorial` gains the `max_along` reduction.
+  `Value::maximum`, and `Value::relu`, and `Activation::Relu` for layers
+  and neurons. The `Elementary` payload contract gains `sqrt`, `maximum`,
+  and the 0/1 indicator `step`; `Tensorial` gains the `max_along`
+  reduction.
+- Add the composite expressions `Value::abs`, `Value::softmax`, and
+  `Value::logsumexp` — formulas recorded as several primitive nodes, with
+  the softmax pair composed stably on top of the fused log-softmax core —
+  collected in a dedicated composition tier beside the single-node opcode
+  methods.
 
 ### Changed
 

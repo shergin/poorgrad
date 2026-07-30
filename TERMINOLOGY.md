@@ -163,6 +163,25 @@ consumed by operators (`let x = v1 + v2;` records a node and keeps `v1`,
 `v2` usable), and cross threads freely. In poorgrad:
 [`Value`](src/engine/value.rs).
 
+**Composite (operation).** A method that expands to several primitive
+nodes: a formula over opcodes whose gradient the chain rule pays with no
+dedicated backward rule. The operation surface has three tiers, marked by
+files rather than by types: [`value.rs`](src/engine/value.rs) holds the
+opcode mnemonics, each recording exactly one computed node (payload
+literals additionally record a leaf — data injection, not computation);
+[`composite.rs`](src/engine/composite.rs) holds the composites (`abs` as
+`maximum(-self)`, `softmax` as `exp(log_softmax)` — stable by inheritance,
+since log-probabilities cannot make `exp` overflow — and `logsumexp`,
+recovered from the fused normalizer with the softmax as its composed
+gradient); and named formulas whose operands play distinct roles (a
+loss's logits and targets have no natural `self`) are free functions in
+domain modules. Composites compile against the public operation surface
+alone — they need no privileged engine access — and once recorded they
+are indistinguishable from hand-written primitives, keeping the tape a
+uniform IR. A formula moves down a tier and earns a `Function` variant
+only when floating point breaks the composed form, as it did for
+`log_softmax`.
+
 **Symbol.** A detached, `Copy` name of a value: the identity that
 persists across time, while `Value` is that identity's state in one
 generation. Each generation acts as an environment;
@@ -391,8 +410,10 @@ everywhere else. The normalizer is the targets' total mass — the batch
 size for one-hot targets, so the reduction is the standard mean, while
 soft or weighted targets normalize by their own weight. The same one-hot
 `Selection` that feeds an embedding gather serves as the targets, fed per
-run. In poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss
-module.
+run. Losses are the third tier of the operation surface (see Composite):
+free functions rather than `Value` methods, because their operands play
+distinct roles and a method would arbitrarily privilege one of them. In
+poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss module.
 
 ## Further reading
 

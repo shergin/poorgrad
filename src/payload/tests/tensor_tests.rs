@@ -811,20 +811,6 @@ fn roots_and_powers_route_gradients() {
 }
 
 #[test]
-fn abs_composes_from_maximum() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([3], [-2.0_f64, 0.0, 3.0]));
-    let magnitude = x.abs();
-    let loss = magnitude.sum();
-
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(magnitude).to_vec(), &[2.0, 0.0, 3.0]);
-
-    let gradients = evaluation.backward(loss);
-    assert_eq!(gradients.of(x).to_vec(), &[-1.0, 1.0, 1.0]);
-}
-
-#[test]
 #[should_panic(expected = "equal shapes")]
 fn maximum_rejects_mismatched_operands() {
     let network = Network::new();

@@ -1,3 +1,4 @@
+mod composite;
 mod evaluation;
 mod field;
 mod function;

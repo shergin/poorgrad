@@ -37,6 +37,12 @@ impl ValueId {
 /// Operations validate network identity and shape compatibility when they are
 /// recorded, so invalid expressions panic before a forward run begins.
 ///
+/// The methods in this file are opcode mnemonics: each records exactly one
+/// computed node, one per `Function` variant (payload literals additionally
+/// record a leaf, which is data injection rather than computation). Methods
+/// that expand to several computed nodes are composites and live in the
+/// composition tier of `composite.rs`.
+///
 /// [`Value::shape`] returns the shape inferred when the node was recorded.
 /// [`Value::payload`] clones the stored payload of a leaf, parameter, or input;
 /// computed values are read from an [`Evaluation`](super::Evaluation).
@@ -181,13 +187,6 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     /// the subgradient at zero is one.
     pub fn relu(self) -> Self {
         self.apply(Function::relu(), &[self.id])
-    }
-
-    /// Records the absolute value of this value as the composition
-    /// `self.maximum(-self)` and returns a proxy to it; the subgradient
-    /// at zero is one.
-    pub fn abs(self) -> Self {
-        self.maximum(-self)
     }
 }
 
