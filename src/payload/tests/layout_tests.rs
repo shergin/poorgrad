@@ -28,7 +28,7 @@ fn contiguous_storage_index_is_the_identity() {
 
 #[test]
 fn transpose_swaps_axes_and_strides() {
-    let transposed = Layout::contiguous(Shape::new([2, 3])).transposed();
+    let transposed = Layout::contiguous(Shape::new([2, 3])).transpose();
     assert_eq!(transposed.shape(), &Shape::new([3, 2]));
     assert_eq!(transposed.strides(), &[1, 3]);
     assert!(!transposed.is_contiguous());
@@ -42,13 +42,13 @@ fn transpose_swaps_axes_and_strides() {
 #[test]
 fn transpose_below_rank_two_is_unchanged() {
     let vector = Layout::contiguous(Shape::new([4]));
-    assert_eq!(vector.transposed(), vector);
+    assert_eq!(vector.transpose(), vector);
 }
 
 #[test]
 #[should_panic(expected = "rank 2 at most")]
 fn transpose_rejects_rank_above_two() {
-    Layout::contiguous(Shape::new([2, 3, 4])).transposed();
+    Layout::contiguous(Shape::new([2, 3, 4])).transpose();
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn extent_one_axes_stay_contiguous() {
 #[test]
 fn reshape_of_a_contiguous_layout_recomputes_strides() {
     let reshaped = Layout::contiguous(Shape::new([2, 3]))
-        .reshaped(Shape::new([3, 2]))
+        .reshape(Shape::new([3, 2]))
         .expect("a contiguous layout reshapes without a copy");
     assert_eq!(reshaped.shape(), &Shape::new([3, 2]));
     assert_eq!(reshaped.strides(), &[2, 1]);
@@ -81,20 +81,20 @@ fn reshape_of_a_contiguous_layout_recomputes_strides() {
 
 #[test]
 fn reshape_of_a_strided_layout_requires_a_copy() {
-    let transposed = Layout::contiguous(Shape::new([2, 3])).transposed();
-    assert!(transposed.reshaped(Shape::new([6])).is_none());
+    let transposed = Layout::contiguous(Shape::new([2, 3])).transpose();
+    assert!(transposed.reshape(Shape::new([6])).is_none());
 }
 
 #[test]
 fn permute_reorders_axes_and_strides() {
-    let permuted = Layout::contiguous(Shape::new([2, 3, 4])).permuted(&[2, 0, 1]);
+    let permuted = Layout::contiguous(Shape::new([2, 3, 4])).permute(&[2, 0, 1]);
     assert_eq!(permuted.shape(), &Shape::new([4, 2, 3]));
     assert_eq!(permuted.strides(), &[1, 12, 4]);
 }
 
 #[test]
 fn narrow_shifts_offset_and_shrinks_the_axis() {
-    let window = Layout::contiguous(Shape::new([2, 3])).narrowed(1, 1, 2);
+    let window = Layout::contiguous(Shape::new([2, 3])).narrow(1, 1, 2);
     assert_eq!(window.shape(), &Shape::new([2, 2]));
     assert_eq!(window.strides(), &[3, 1]);
     assert_eq!(window.offset(), 1);

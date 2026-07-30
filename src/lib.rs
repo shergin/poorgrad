@@ -2,7 +2,7 @@
 //!
 //! Expressions record a static computation graph onto a shared
 //! `Network`; `forward` materializes every value, `backward`
-//! differentiates one scalar target, and `updated` produces the next
+//! differentiates one scalar target, and `update` produces the next
 //! network generation from a gradient step:
 //!
 //! ```
@@ -32,7 +32,7 @@
 //!     let loss = network.resolve(loss_symbol);
 //!     let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
 //!     let gradients = evaluation.backward(loss);
-//!     network = network.updated(&gradients, |w, g| w - 0.02 * g);
+//!     network = network.update(&gradients, |w, g| w - 0.02 * g);
 //! }
 //!
 //! let learned = network.resolve(w_symbol).payload().unwrap();

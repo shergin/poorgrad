@@ -16,8 +16,8 @@ fn algebra_combines_elementwise() {
     assert_eq!(*combined.of(a), 4.0);
     assert_eq!(*combined.of(b), 3.0);
 
-    let scaled = combined.scaled(2.0);
-    assert_eq!(*scaled.of(a), 8.0);
+    let result = combined.scale(2.0);
+    assert_eq!(*result.of(a), 8.0);
 
     let squared = d_product.zip(&d_product, |left, right| left * right);
     assert_eq!(*squared.of(a), 9.0);
@@ -71,8 +71,8 @@ fn fields_survive_generations_within_a_lineage() {
 
     // The next generation is kin to the previous one, so the field still
     // resolves against its values and can drive its update.
-    let updated = network.updated(&gradients, |parameter, direction| parameter - direction);
-    let w = updated.resolve(w_symbol);
+    let next = network.update(&gradients, |parameter, direction| parameter - direction);
+    let w = next.resolve(w_symbol);
     assert_eq!(*gradients.of(w), 1.0);
     assert_eq!(w.payload(), Some(0.0));
 }

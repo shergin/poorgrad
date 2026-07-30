@@ -107,7 +107,7 @@ fn engine_trains_tensor_payloads_unchanged() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(&gradients, |parameter, gradient| {
+        network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.clone()
         });
     }
@@ -126,7 +126,7 @@ fn matmul_transpose_and_sum_compute() {
     assert_eq!(product.shape(), Shape::new([2, 1]));
     assert_eq!(product.to_vec(), &[17.0, 39.0]);
 
-    let transposed = matrix.transposed();
+    let transposed = matrix.transpose();
     assert_eq!(transposed.to_vec(), &[1.0, 3.0, 2.0, 4.0]);
 
     let total = matrix.sum();
@@ -342,14 +342,14 @@ fn broadcast_restores_singleton_shapes_in_backward() {
 
 #[test]
 #[should_panic(expected = "preserve the parameter's shape")]
-fn updated_rejects_shape_changing_updates() {
+fn update_rejects_shape_changing_rules() {
     let network = Network::new();
     let w = network.parameter(Tensor::new([1], [1.0_f64]));
     let loss = w.sum();
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(loss);
-    network.updated(&gradients, |_parameter, _gradient| {
+    network.update(&gradients, |_parameter, _gradient| {
         Tensor::new([2], [7.0, 8.0])
     });
 }
@@ -376,7 +376,7 @@ fn linear_regression_trains_in_matrix_form() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(&gradients, |parameter, gradient| {
+        network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -465,7 +465,7 @@ fn reshape_of_a_strided_view_materializes_in_order() {
     // A transpose is non-contiguous, so reshaping it copies into a fresh
     // contiguous buffer holding the elements in logical order.
     let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
-    let reshaped = matrix.transposed().reshape(Shape::new([6]));
+    let reshaped = matrix.transpose().reshape(Shape::new([6]));
     assert_eq!(reshaped.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
 }
 
@@ -478,23 +478,23 @@ fn reshape_rejects_volume_changes() {
 #[test]
 fn permute_reorders_axes() {
     let tensor = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
-    let permuted = tensor.permuted(&[1, 0]);
+    let permuted = tensor.permute(&[1, 0]);
     assert_eq!(permuted.shape(), Shape::new([3, 2]));
     // For a rank-2 tensor a permutation of the axes is a transpose.
-    assert_eq!(permuted.to_vec(), tensor.transposed().to_vec());
+    assert_eq!(permuted.to_vec(), tensor.transpose().to_vec());
 }
 
 #[test]
 fn permute_is_rank_general() {
     let tensor = Tensor::new([2, 1, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
-    let permuted = tensor.permuted(&[2, 0, 1]);
+    let permuted = tensor.permute(&[2, 0, 1]);
     assert_eq!(permuted.shape(), Shape::new([3, 2, 1]));
 }
 
 #[test]
 #[should_panic(expected = "repeats axis")]
 fn permute_rejects_non_permutations() {
-    Tensor::new([2, 3], vec![1.0_f64; 6]).permuted(&[0, 0]);
+    Tensor::new([2, 3], vec![1.0_f64; 6]).permute(&[0, 0]);
 }
 
 #[test]
@@ -520,9 +520,9 @@ fn permute_routes_gradients_back() {
     let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
     let weight = network.leaf(Tensor::new([3, 2], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
 
-    // `x.permuted([1, 0])` transposes, so weight `(i, j)` multiplies
+    // `x.permute([1, 0])` transposes, so weight `(i, j)` multiplies
     // `x(j, i)`; the gradient is the weights permuted back to `x`'s shape.
-    let loss = (x.permuted([1, 0]) * weight).sum();
+    let loss = (x.permute([1, 0]) * weight).sum();
     let gradients = network.forward().backward(loss);
     assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
     assert_eq!(
@@ -535,8 +535,8 @@ fn permute_routes_gradients_back() {
 fn squeeze_and_unsqueeze_adjust_extent_one_axes() {
     let network = Network::new();
     let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
-    let unsqueezed = x.unsqueezed(0);
-    let squeezed = unsqueezed.squeezed(0);
+    let unsqueezed = x.unsqueeze(0);
+    let squeezed = unsqueezed.squeeze(0);
     assert_eq!(unsqueezed.shape(), Shape::new([1, 3]));
     assert_eq!(squeezed.shape(), Shape::new([3]));
 
@@ -557,11 +557,11 @@ fn recording_rejects_volume_changing_reshape() {
 fn narrow_selects_a_window_along_an_axis() {
     let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
 
-    let columns = matrix.narrowed(1, 1, 2);
+    let columns = matrix.narrow(1, 1, 2);
     assert_eq!(columns.shape(), Shape::new([2, 2]));
     assert_eq!(columns.to_vec(), vec![2.0, 3.0, 5.0, 6.0]);
 
-    let row = matrix.narrowed(0, 1, 1);
+    let row = matrix.narrow(0, 1, 1);
     assert_eq!(row.shape(), Shape::new([1, 3]));
     assert_eq!(row.to_vec(), vec![4.0, 5.0, 6.0]);
 }
@@ -571,20 +571,20 @@ fn narrow_of_the_outer_axis_stays_contiguous() {
     // A window over whole rows keeps the inner axis contiguous, so it can
     // still expose a borrowed slice of the shared buffer.
     let matrix = Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
-    let middle = matrix.narrowed(0, 1, 1);
+    let middle = matrix.narrow(0, 1, 1);
     assert_eq!(middle.as_slice().unwrap().to_vec(), vec![3.0, 4.0]);
 }
 
 #[test]
 #[should_panic(expected = "exceeds axis")]
 fn narrow_rejects_windows_past_the_axis() {
-    Tensor::new([2, 3], vec![1.0_f64; 6]).narrowed(1, 2, 2);
+    Tensor::new([2, 3], vec![1.0_f64; 6]).narrow(1, 2, 2);
 }
 
 #[test]
 fn pad_places_a_window_into_zeros() {
     let window = Tensor::new([2, 2], [2.0_f64, 3.0, 5.0, 6.0]);
-    let padded = window.padded(1, 1, 3);
+    let padded = window.pad(1, 1, 3);
     assert_eq!(padded.shape(), Shape::new([2, 3]));
     assert_eq!(padded.to_vec(), vec![0.0, 2.0, 3.0, 0.0, 5.0, 6.0]);
 }
@@ -680,7 +680,7 @@ fn selection_densifies_for_non_gather_operations() {
     // A selection is stored as its indices, but any operation other than
     // gather still works by densifying it to the one-hot it represents.
     let selection = Tensor::selection(vec![1usize, 1], 3, 1.0_f64);
-    let transposed = selection.transposed();
+    let transposed = selection.transpose();
     assert_eq!(transposed.shape(), Shape::new([3, 2]));
     assert_eq!(transposed.to_vec(), vec![0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
 }

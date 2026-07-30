@@ -82,7 +82,7 @@ impl<Data: Differentiable> Field<Data> {
     /// # Panics
     /// For tensor payloads, panics if `factor` does not have the same shape as
     /// every field entry.
-    pub fn scaled(&self, factor: Data) -> Self {
+    pub fn scale(&self, factor: Data) -> Self {
         self.map(|value| value.clone() * factor.clone())
     }
 

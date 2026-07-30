@@ -56,10 +56,10 @@ impl Permute {
 
 impl<Data: Tensorial> Operation<Data> for Permute {
     fn forward(&self, operands: &[&Data]) -> Data {
-        unary(operands).permuted(&self.order)
+        unary(operands).permute(&self.order)
     }
 
     fn backward(&self, _operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
-        smallvec![Some(gradient.permuted(&self.inverse()))]
+        smallvec![Some(gradient.permute(&self.inverse()))]
     }
 }

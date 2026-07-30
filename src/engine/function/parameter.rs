@@ -1,6 +1,6 @@
 use crate::engine::SlotId;
 
-/// A learnable parameter: a leaf whose payload `Network::updated`
+/// A learnable parameter: a leaf whose payload `Network::update`
 /// replaces on each training step.
 ///
 /// The node holds only its slot; the payload lives in the generation's

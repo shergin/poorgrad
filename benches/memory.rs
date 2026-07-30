@@ -86,7 +86,7 @@ fn main() {
         let target = scalar.resolve(target_symbol);
         let evaluation = scalar.forward();
         let gradients = evaluation.backward(target);
-        scalar = scalar.updated(&gradients, |parameter, gradient| {
+        scalar = scalar.update(&gradients, |parameter, gradient| {
             parameter - 0.01 * gradient
         });
     });
@@ -105,7 +105,7 @@ fn main() {
         let loss = tensor.resolve(loss_symbol);
         let evaluation = tensor.forward();
         let gradients = evaluation.backward(loss);
-        tensor = tensor.updated(&gradients, |parameter, gradient| {
+        tensor = tensor.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     });

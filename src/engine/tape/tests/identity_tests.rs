@@ -92,7 +92,7 @@ fn divergent_forks_probe_and_share_correctly() {
 
 #[test]
 #[should_panic(expected = "divergent fork")]
-fn updated_rejects_fields_from_divergent_forks() {
+fn update_rejects_fields_from_divergent_forks() {
     let network = Network::new();
     let w = network.parameter(1.0_f64);
     let fork = network.clone();
@@ -103,7 +103,7 @@ fn updated_rejects_fields_from_divergent_forks() {
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(w);
-    fork.updated(&gradients, |parameter, gradient| parameter - gradient);
+    fork.update(&gradients, |parameter, gradient| parameter - gradient);
 }
 
 #[test]

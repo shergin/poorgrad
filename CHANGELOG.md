@@ -11,12 +11,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - Back `Tensor` with a strided layout over an extensible `Storage`
   representation (a shared dense buffer or a non-allocating constant), so
-  `transposed` and the broadcasts are O(1) views instead of copies and the
+  `transpose` and the broadcasts are O(1) views instead of copies and the
   `backward` gradient seed no longer allocates a zeroed buffer per node.
-- Add the view operations `Value::reshape` and `Value::permuted` (with the
-  `reshape`-based conveniences `squeezed` and `unsqueezed`), each a
+- Add the view operations `Value::reshape` and `Value::permute` (with the
+  `reshape`-based conveniences `squeeze` and `unsqueeze`), each a
   differentiable graph node whose gradient routes back by the inverse view.
-  `permuted` generalizes `transposed` to any rank.
+  `permute` generalizes `transpose` to any rank.
 - Add `Value::narrow` (a slice window along one axis): the forward is an
   O(1) view and the gradient scatters back into the excluded positions as
   zeros.
@@ -38,9 +38,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Use plain verbs consistently for operations: rename `Field::scaled` to
+  `Field::scale`, `Network::updated` to `Network::update`,
+  `Tensorial::{transposed, permuted, narrowed, padded}` to
+  `Tensorial::{transpose, permute, narrow, pad}` and
+  `Value::{transposed, permuted, squeezed, unsqueezed}` to
+  `Value::{transpose, permute, squeeze, unsqueeze}`; align the internal
+  tape, layout, storage, and test helpers with the same rule.
 - Make `Gradients` an alias for `Field` rather than a wrapper around it.
   `Evaluation::backward` still returns `Gradients`, but the result is a field
-  directly, so `Network::updated` and the field algebra take it without a
+  directly, so `Network::update` and the field algebra take it without a
   conversion.
 - Read tensor elements through `Tensor::iter` (logical row-major order),
   `Tensor::as_slice` (a borrowed slice when contiguous), or `Tensor::to_vec`,
@@ -49,7 +56,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Removed
 
 - Remove `Gradients::as_field` and `Gradients::into_field`. Pass the gradients
-  themselves instead: `network.updated(&gradients, ..)`.
+  themselves instead: `network.update(&gradients, ..)`.
 - Remove `Tensor::elements`; use `iter`, `as_slice`, or `to_vec` instead.
 
 ## [0.2.0] - 2026-07-27

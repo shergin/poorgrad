@@ -79,7 +79,7 @@ fn scale(criterion: &mut Criterion) {
                                 let loss = fork.resolve(loss_symbol);
                                 let evaluation = fork.forward();
                                 let gradients = evaluation.backward(loss);
-                                fork = fork.updated(&gradients, |parameter, gradient| {
+                                fork = fork.update(&gradients, |parameter, gradient| {
                                     parameter - 0.01 * gradient
                                 });
                             }

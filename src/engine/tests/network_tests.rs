@@ -135,7 +135,7 @@ fn training_feeds_batches_without_regrowing_the_tape() {
         let evaluation =
             network.forward_with([(input_symbol, sample_input), (target_symbol, sample_target)]);
         let gradients = evaluation.backward(loss);
-        network = network.updated(&gradients, |parameter, gradient| {
+        network = network.update(&gradients, |parameter, gradient| {
             parameter - 0.05 * gradient
         });
     }
@@ -148,7 +148,7 @@ fn training_feeds_batches_without_regrowing_the_tape() {
 }
 
 #[test]
-fn updated_replaces_parameters_and_keeps_everything_else() {
+fn update_replaces_parameters_and_keeps_everything_else() {
     let network = Network::new();
     let parameter = network.parameter(1.0_f64);
     let input = network.leaf(2.0);
@@ -156,11 +156,11 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(output);
-    let updated = network.updated(&gradients, |parameter, gradient| parameter - gradient);
+    let next = network.update(&gradients, |parameter, gradient| parameter - gradient);
 
-    assert_eq!(updated.len(), network.len());
-    assert_eq!(updated.resolve(parameter.symbol()).payload(), Some(-1.0));
-    assert_eq!(updated.resolve(input.symbol()).payload(), Some(2.0));
+    assert_eq!(next.len(), network.len());
+    assert_eq!(next.resolve(parameter.symbol()).payload(), Some(-1.0));
+    assert_eq!(next.resolve(input.symbol()).payload(), Some(2.0));
     assert_eq!(parameter.payload(), Some(1.0));
 }
 
@@ -179,7 +179,7 @@ fn gradient_descent_converges() {
     for _ in 0..30 {
         let loss = network.resolve(loss_symbol);
         let gradients = network.forward().backward(loss);
-        network = network.updated(&gradients, |parameter, gradient| parameter - 0.3 * gradient);
+        network = network.update(&gradients, |parameter, gradient| parameter - 0.3 * gradient);
     }
 
     let learned = network.resolve(parameter_symbol).payload().unwrap();
@@ -203,10 +203,10 @@ fn momentum_descent_converges() {
         let loss = network.resolve(loss_symbol);
         let gradients = network.forward().backward(loss);
         let step = match velocity {
-            Some(previous) => previous.scaled(0.5) + gradients,
+            Some(previous) => previous.scale(0.5) + gradients,
             None => gradients,
         };
-        network = network.updated(&step, |parameter, direction| parameter - 0.1 * direction);
+        network = network.update(&step, |parameter, direction| parameter - 0.1 * direction);
         velocity = Some(step);
     }
 
@@ -216,20 +216,20 @@ fn momentum_descent_converges() {
 
 #[test]
 #[should_panic(expected = "stale")]
-fn updated_rejects_stale_gradients() {
+fn update_rejects_stale_gradients() {
     let network = Network::new();
     let parameter = network.parameter(1.0_f64);
     let gradients = network.forward().backward(parameter);
     network.leaf(2.0);
-    network.updated(&gradients, |parameter, _gradient| *parameter);
+    network.update(&gradients, |parameter, _gradient| *parameter);
 }
 
 #[test]
 #[should_panic(expected = "different network")]
-fn updated_rejects_foreign_gradients() {
+fn update_rejects_foreign_gradients() {
     let first = Network::new();
     let parameter = first.parameter(1.0_f64);
     let gradients = first.forward().backward(parameter);
     let second = Network::<f64>::new();
-    second.updated(&gradients, |parameter, _gradient| *parameter);
+    second.update(&gradients, |parameter, _gradient| *parameter);
 }

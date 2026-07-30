@@ -1,6 +1,6 @@
 //! Benchmarks of the training-step state transition.
 //!
-//! `updated` is benchmarked across graph sizes at a fixed parameter
+//! `update` is benchmarked across graph sizes at a fixed parameter
 //! count: since the parameter store landed it rebuilds only the store,
 //! so the time must stay flat as the graph grows. This bench is the
 //! regression fence for that O(parameters) claim.
@@ -19,7 +19,7 @@ fn training_step(criterion: &mut Criterion) {
     group.warm_up_time(Duration::from_millis(300));
     group.measurement_time(Duration::from_secs(1));
 
-    // One full step (forward, backward, updated) on a 100-sample scalar
+    // One full step (forward, backward, update) on a 100-sample scalar
     // loss over shared `w` and `b`.
     let scalar = Network::new();
     let w = scalar.parameter(0.0_f64);
@@ -38,7 +38,7 @@ fn training_step(criterion: &mut Criterion) {
         bencher.iter(|| {
             let evaluation = scalar.forward();
             let gradients = evaluation.backward(loss);
-            scalar.updated(&gradients, |parameter, gradient| {
+            scalar.update(&gradients, |parameter, gradient| {
                 parameter - 0.01 * gradient
             })
         });
@@ -57,13 +57,13 @@ fn training_step(criterion: &mut Criterion) {
         bencher.iter(|| {
             let evaluation = tensor.forward();
             let gradients = evaluation.backward(tensor_loss);
-            tensor.updated(&gradients, |parameter, gradient| {
+            tensor.update(&gradients, |parameter, gradient| {
                 parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
             })
         });
     });
 
-    // `updated` alone, with the parameter count fixed and the graph
+    // `update` alone, with the parameter count fixed and the graph
     // padded to increasing sizes.
     for nodes in [1_000usize, 10_000, 100_000] {
         let network = Network::new();
@@ -79,9 +79,9 @@ fn training_step(criterion: &mut Criterion) {
         let direction = evaluation.backward(target);
 
         group.throughput(Throughput::Elements(nodes as u64));
-        group.bench_with_input(BenchmarkId::new("updated", nodes), &nodes, |bencher, _| {
+        group.bench_with_input(BenchmarkId::new("update", nodes), &nodes, |bencher, _| {
             bencher.iter(|| {
-                network.updated(&direction, |parameter, gradient| {
+                network.update(&direction, |parameter, gradient| {
                     parameter - 0.01 * gradient
                 })
             });

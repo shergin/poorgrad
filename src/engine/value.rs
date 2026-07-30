@@ -208,7 +208,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     ///
     /// # Panics
     /// Panics if this value's rank exceeds 2.
-    pub fn transposed(self) -> Self {
+    pub fn transpose(self) -> Self {
         self.apply(Function::transpose(), &[self.id])
     }
 
@@ -267,7 +267,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     ///
     /// # Panics
     /// Panics if `order` is not a permutation of `0..rank`.
-    pub fn permuted(self, order: impl IntoIterator<Item = usize>) -> Self {
+    pub fn permute(self, order: impl IntoIterator<Item = usize>) -> Self {
         self.apply(Function::permute(order), &[self.id])
     }
 
@@ -276,7 +276,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     ///
     /// # Panics
     /// Panics if `axis` exceeds this value's rank.
-    pub fn unsqueezed(self, axis: usize) -> Self {
+    pub fn unsqueeze(self, axis: usize) -> Self {
         let mut axes: Vec<usize> = self.shape().axes().to_vec();
         assert!(axis <= axes.len(), "unsqueeze axis {axis} is out of rank");
         axes.insert(axis, 1);
@@ -288,7 +288,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     ///
     /// # Panics
     /// Panics if `axis` is out of rank or that axis is not extent 1.
-    pub fn squeezed(self, axis: usize) -> Self {
+    pub fn squeeze(self, axis: usize) -> Self {
         let mut axes: Vec<usize> = self.shape().axes().to_vec();
         assert!(axis < axes.len(), "squeeze axis {axis} is out of rank");
         assert_eq!(axes[axis], 1, "squeeze requires an extent-1 axis");

@@ -48,8 +48,8 @@ impl<Data: Tensorial> Operation<Data> for MatMul {
     fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let (&left, &right) = binary(operands);
         smallvec![
-            Some(gradient.matmul(&right.transposed())),
-            Some(left.transposed().matmul(gradient)),
+            Some(gradient.matmul(&right.transpose())),
+            Some(left.transpose().matmul(gradient)),
         ]
     }
 }

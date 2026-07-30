@@ -37,7 +37,7 @@ pub(crate) struct Snapshot<Data> {
 /// The layout is data-oriented: functions and operands are the hot
 /// columns replayed by every run — what each node computes and which
 /// earlier nodes it reads — while shapes are the cold column read at
-/// record time. All columns are lineage-invariant — `updated` replaces
+/// record time. All columns are lineage-invariant — `update` replaces
 /// the parameter store but never touches columns, so one set of columns
 /// serves every generation of a family. The columns always have equal
 /// lengths.
@@ -400,7 +400,7 @@ impl<Data: Differentiable> Tape<Data> {
     }
 
     /// Returns a new tape with every parameter's payload replaced by
-    /// `update(current, gradient)`.
+    /// `rule(current, gradient)`.
     ///
     /// The new tape shares the function and shape columns untouched and
     /// builds a fresh parameter store: a gradient step rewrites every
@@ -411,13 +411,9 @@ impl<Data: Differentiable> Tape<Data> {
     ///
     /// # Panics
     /// Panics if `gradients` does not cover the whole tape, or if
-    /// `update` returns a payload whose shape differs from the
+    /// `rule` returns a payload whose shape differs from the
     /// parameter's recorded shape.
-    pub(crate) fn updated(
-        &self,
-        gradients: &[Data],
-        update: impl Fn(&Data, &Data) -> Data,
-    ) -> Self {
+    pub(crate) fn update(&self, gradients: &[Data], rule: impl Fn(&Data, &Data) -> Data) -> Self {
         let (functions, operands, shapes, parameters, inputs, chain, tip) = {
             let mut inner = self.lock();
             let tip = inner.share_tip();
@@ -438,7 +434,7 @@ impl<Data: Differentiable> Tape<Data> {
         );
         let mut payloads = Vec::with_capacity(parameters.payloads.len());
         for (payload, &node) in parameters.payloads.iter().zip(&parameters.nodes) {
-            let next = update(payload, &gradients[node.index()]);
+            let next = rule(payload, &gradients[node.index()]);
             let declared = shapes.get(node.index()).expect("shapes cover the tape");
             assert_eq!(
                 &next.shape(),

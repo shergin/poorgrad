@@ -8,7 +8,7 @@ use super::{Cotangents, Operation, unary};
 ///
 /// The forward is an O(1) view; the gradient of the operand is the incoming
 /// gradient scattered back into a zero payload of the operand's shape at the
-/// window, which is what [`Tensorial::padded`] computes.
+/// window, which is what [`Tensorial::pad`] computes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Narrow {
     pub(crate) axis: usize,
@@ -51,12 +51,12 @@ impl Narrow {
 
 impl<Data: Tensorial> Operation<Data> for Narrow {
     fn forward(&self, operands: &[&Data]) -> Data {
-        unary(operands).narrowed(self.axis, self.start, self.len)
+        unary(operands).narrow(self.axis, self.start, self.len)
     }
 
     fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let &operand = unary(operands);
         let full_extent = operand.shape().axes()[self.axis];
-        smallvec![Some(gradient.padded(self.axis, self.start, full_extent))]
+        smallvec![Some(gradient.pad(self.axis, self.start, full_extent))]
     }
 }

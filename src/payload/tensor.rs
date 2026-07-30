@@ -28,9 +28,9 @@ assert_impl_all!(Tensor<f64>: Send, Sync);
 /// produces a view rather than copying.
 ///
 /// [`Tensorial::matmul`] requires rank-2 operands, and
-/// [`Tensorial::transposed`] accepts ranks 0 through 2, returning a view.
-/// Reductions and explicit broadcasts are rank-general. Reshaping and
-/// batched matrix multiplication are not supported.
+/// [`Tensorial::transpose`] accepts ranks 0 through 2, returning a view.
+/// Reductions, explicit broadcasts, and reshaping are rank-general;
+/// batched matrix multiplication is not supported.
 #[derive(Debug, Clone)]
 pub struct Tensor<Element> {
     storage: Storage<Element>,
@@ -240,7 +240,7 @@ impl<Element: Differentiable> Tensor<Element> {
     /// It is the correctness fallback for view operations that a `Selection`
     /// does not model directly (transpose, permute, narrow, axis broadcast):
     /// densify first, then take the dense view.
-    fn densified(&self) -> Self {
+    fn densify(&self) -> Self {
         match &self.storage {
             Storage::Dense { layout, .. } if layout.is_contiguous() => self.clone(),
             _ => Self::dense(self.logical_shape().clone(), self.to_vec()),
@@ -294,7 +294,7 @@ impl<Element: Differentiable> Tensor<Element> {
 ///
 /// # Panics
 /// Panics if the rank exceeds 2.
-fn transposed_shape(shape: &Shape) -> Shape {
+fn transpose_shape(shape: &Shape) -> Shape {
     if shape.rank() < 2 {
         return shape.clone();
     }
@@ -541,18 +541,18 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     ///
     /// # Panics
     /// Panics if the tensor's rank exceeds 2.
-    fn transposed(&self) -> Self {
+    fn transpose(&self) -> Self {
         match &self.storage {
             Storage::Dense { data, layout } => Self {
                 storage: Storage::Dense {
                     data: Arc::clone(data),
-                    layout: layout.transposed(),
+                    layout: layout.transpose(),
                 },
             },
             Storage::Constant { shape, value } => {
-                Self::constant(transposed_shape(shape), value.clone())
+                Self::constant(transpose_shape(shape), value.clone())
             }
-            Storage::Selection { .. } => self.densified().transposed(),
+            Storage::Selection { .. } => self.densify().transpose(),
         }
     }
 
@@ -674,7 +674,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                     layout: layout.broadcast_along(axis, reference_shape),
                 },
             },
-            Storage::Selection { .. } => self.densified().broadcast_along(axis, reference),
+            Storage::Selection { .. } => self.densify().broadcast_along(axis, reference),
         }
     }
 
@@ -695,7 +695,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         );
         match &self.storage {
             Storage::Constant { value, .. } => Self::constant(shape, value.clone()),
-            Storage::Dense { data, layout } => match layout.reshaped(shape.clone()) {
+            Storage::Dense { data, layout } => match layout.reshape(shape.clone()) {
                 Some(reshaped) => Self {
                     storage: Storage::Dense {
                         data: Arc::clone(data),
@@ -713,7 +713,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     ///
     /// # Panics
     /// Panics if `order` is not a permutation of `0..rank`.
-    fn permuted(&self, order: &[usize]) -> Self {
+    fn permute(&self, order: &[usize]) -> Self {
         let shape = self.logical_shape();
         assert_eq!(
             order.len(),
@@ -740,10 +740,10 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             Storage::Dense { data, layout } => Self {
                 storage: Storage::Dense {
                     data: Arc::clone(data),
-                    layout: layout.permuted(order),
+                    layout: layout.permute(order),
                 },
             },
-            Storage::Selection { .. } => self.densified().permuted(order),
+            Storage::Selection { .. } => self.densify().permute(order),
         }
     }
 
@@ -752,7 +752,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     ///
     /// # Panics
     /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
-    fn narrowed(&self, axis: usize, start: usize, len: usize) -> Self {
+    fn narrow(&self, axis: usize, start: usize, len: usize) -> Self {
         let shape = self.logical_shape();
         assert!(
             axis < shape.rank(),
@@ -778,10 +778,10 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             Storage::Dense { data, layout } => Self {
                 storage: Storage::Dense {
                     data: Arc::clone(data),
-                    layout: layout.narrowed(axis, start, len),
+                    layout: layout.narrow(axis, start, len),
                 },
             },
-            Storage::Selection { .. } => self.densified().narrowed(axis, start, len),
+            Storage::Selection { .. } => self.densify().narrow(axis, start, len),
         }
     }
 
@@ -790,7 +790,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     ///
     /// # Panics
     /// Panics if `axis` is out of rank or the window exceeds `full_extent`.
-    fn padded(&self, axis: usize, start: usize, full_extent: usize) -> Self {
+    fn pad(&self, axis: usize, start: usize, full_extent: usize) -> Self {
         let shape = self.logical_shape();
         assert!(
             axis < shape.rank(),

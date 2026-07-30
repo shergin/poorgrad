@@ -75,7 +75,7 @@ fn literal_sugar_gradients_match_finite_differences() {
 }
 
 /// Returns `tensor` with the element at `position` shifted by `delta`.
-fn nudged(tensor: &Tensor<f64>, position: usize, delta: f64) -> Tensor<f64> {
+fn nudge(tensor: &Tensor<f64>, position: usize, delta: f64) -> Tensor<f64> {
     let mut elements = tensor.to_vec();
     elements[position] += delta;
     Tensor::new(tensor.shape().axes().iter().copied(), elements)
@@ -127,9 +127,9 @@ fn dense_layer_gradients_match_finite_differences() {
     for (which, input) in base.iter().enumerate() {
         for position in 0..input.to_vec().len() {
             let mut up = base.clone();
-            up[which] = nudged(input, position, STEP);
+            up[which] = nudge(input, position, STEP);
             let mut down = base.clone();
-            down[which] = nudged(input, position, -STEP);
+            down[which] = nudge(input, position, -STEP);
             let numeric = (loss_of(&up) - loss_of(&down)) / (2.0 * STEP);
             let value = analytic[which].to_vec()[position];
             assert!(
@@ -142,7 +142,7 @@ fn dense_layer_gradients_match_finite_differences() {
 }
 
 /// Checks the tensor-native operations the scalar harness cannot reach:
-/// one expression covering `matmul`, `transposed`, `broadcast_like`,
+/// one expression covering `matmul`, `transpose`, `broadcast_like`,
 /// elementwise arithmetic, and `sum`, differentiated per element.
 #[test]
 fn tensor_gradients_match_finite_differences() {
@@ -159,7 +159,7 @@ fn tensor_gradients_match_finite_differences() {
         let w = network.leaf(tensors[1].clone());
         let bias = network.leaf(tensors[2].clone());
         let y = network.leaf(tensors[3].clone());
-        let product = x.matmul(w).transposed();
+        let product = x.matmul(w).transpose();
         let shifted = product + bias.broadcast_like(product);
         let error = shifted - y;
         let loss = (error * error).sum();
@@ -171,7 +171,7 @@ fn tensor_gradients_match_finite_differences() {
     let w = network.leaf(base[1].clone());
     let bias = network.leaf(base[2].clone());
     let y = network.leaf(base[3].clone());
-    let product = x.matmul(w).transposed();
+    let product = x.matmul(w).transpose();
     let shifted = product + bias.broadcast_like(product);
     let error = shifted - y;
     let loss = (error * error).sum();
@@ -187,9 +187,9 @@ fn tensor_gradients_match_finite_differences() {
     for (which, input) in base.iter().enumerate() {
         for position in 0..input.to_vec().len() {
             let mut up = base.clone();
-            up[which] = nudged(input, position, STEP);
+            up[which] = nudge(input, position, STEP);
             let mut down = base.clone();
-            down[which] = nudged(input, position, -STEP);
+            down[which] = nudge(input, position, -STEP);
             let numeric = (loss_of(&up) - loss_of(&down)) / (2.0 * STEP);
             let value = analytic[which].to_vec()[position];
             assert!(

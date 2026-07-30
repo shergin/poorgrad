@@ -5,10 +5,10 @@ use crate::engine::ValueId;
 /// It is the mutable state of a network, split from the immutable tape
 /// columns: structure is recorded once and shared forever, while this
 /// store turns over per generation. Forks share it through an `Arc`;
-/// `updated` builds a fresh store because a gradient step rewrites every
+/// `update` builds a fresh store because a gradient step rewrites every
 /// slot. Beside each payload the store keeps the tape position of the
 /// parameter node, mapping node-indexed gradients to slots and keeping
-/// `updated` at O(parameters).
+/// `update` at O(parameters).
 #[derive(Debug, Clone)]
 pub(crate) struct ParameterStore<Data> {
     pub(super) payloads: Vec<Data>,

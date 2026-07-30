@@ -21,7 +21,7 @@ assert_impl_all!(Network<f64>: Send, Sync);
 /// that borrow the network and therefore cannot outlive it.
 ///
 /// A network can be shared for concurrent recording and evaluation. Cloning
-/// creates an O(1) fork, while [`Network::updated`] creates a new generation
+/// creates an O(1) fork, while [`Network::update`] creates a new generation
 /// with a freshly computed parameter store. Both operations share the
 /// existing graph storage; subsequent recordings on separate networks remain
 /// isolated from one another.
@@ -47,7 +47,7 @@ impl<Data: Differentiable> Network<Data> {
 
     /// Allocates a learnable parameter and returns a proxy to it.
     ///
-    /// Parameters behave like leaves during runs. [`Network::updated`] computes
+    /// Parameters behave like leaves during runs. [`Network::update`] computes
     /// their payloads for the next generation without replacing their recorded
     /// nodes; the nodes live on the graph and the payloads live in the
     /// generation's parameter store.
@@ -61,7 +61,7 @@ impl<Data: Differentiable> Network<Data> {
     /// `initial` supplies the input's recorded shape and its default
     /// payload: a plain `forward` uses the default, while
     /// `forward_with` binds a fed payload for one run. Inputs behave
-    /// like leaves during runs and are never touched by `updated`.
+    /// like leaves during runs and are never touched by [`Network::update`].
     pub fn input(&self, initial: Data) -> Value<'_, Data> {
         let id = self.tape.record_input(initial);
         Value::bind(&self.tape, id)
@@ -123,7 +123,7 @@ impl<Data: Differentiable> Network<Data> {
     }
 
     /// Returns a new network generation with every parameter's payload
-    /// replaced by `update(current, direction)`.
+    /// replaced by `rule(current, direction)`.
     ///
     /// It is the training-step state transition, and `direction` is any
     /// field over this network's lineage: the [`Gradients`](super::Gradients) of
@@ -137,9 +137,9 @@ impl<Data: Differentiable> Network<Data> {
     ///
     /// # Panics
     /// Panics if `direction` belongs to a different network lineage or a
-    /// divergent fork, is stale, or if `update` returns a payload whose
+    /// divergent fork, is stale, or if `rule` returns a payload whose
     /// shape differs from the parameter's recorded shape.
-    pub fn updated(&self, direction: &Field<Data>, update: impl Fn(&Data, &Data) -> Data) -> Self {
+    pub fn update(&self, direction: &Field<Data>, rule: impl Fn(&Data, &Data) -> Data) -> Self {
         assert!(
             direction.lineage() == self.tape.lineage(),
             "field belongs to a different network lineage"
@@ -150,7 +150,7 @@ impl<Data: Differentiable> Network<Data> {
             "field belongs to a divergent fork of this network"
         );
         Self {
-            tape: self.tape.updated(direction.as_slice(), update),
+            tape: self.tape.update(direction.as_slice(), rule),
         }
     }
 }

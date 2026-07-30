@@ -12,7 +12,7 @@ assert_impl_all!(Symbol: Send, Sync, Copy);
 /// outlive the generation that produced it.
 /// [`Network::resolve`](crate::Network::resolve) turns it back into a
 /// generation-bound value, which is useful when a training loop repeatedly
-/// replaces a network with [`Network::updated`](crate::Network::updated).
+/// replaces a network with [`Network::update`](crate::Network::update).
 ///
 /// A symbol records its graph lineage, branch, and node position. Resolution
 /// succeeds only when that node exists on a compatible branch; unrelated

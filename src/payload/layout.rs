@@ -118,7 +118,7 @@ impl Layout {
     ///
     /// # Panics
     /// Panics if the rank exceeds 2.
-    pub(crate) fn transposed(&self) -> Self {
+    pub(crate) fn transpose(&self) -> Self {
         if self.rank() < 2 {
             return self.clone();
         }
@@ -152,7 +152,7 @@ impl Layout {
     /// and the reshape must therefore copy.
     ///
     /// The caller guarantees `shape` has the same volume.
-    pub(crate) fn reshaped(&self, shape: Shape) -> Option<Layout> {
+    pub(crate) fn reshape(&self, shape: Shape) -> Option<Layout> {
         if !self.is_contiguous() {
             return None;
         }
@@ -168,7 +168,7 @@ impl Layout {
     /// the result takes axis `order[i]` of `self`.
     ///
     /// The caller guarantees `order` is a permutation of `0..rank`.
-    pub(crate) fn permuted(&self, order: &[usize]) -> Layout {
+    pub(crate) fn permute(&self, order: &[usize]) -> Layout {
         let axes = self.shape.axes();
         Layout {
             shape: Shape::new(order.iter().map(|&axis| axes[axis])),
@@ -183,7 +183,7 @@ impl Layout {
     /// `len`.
     ///
     /// The caller guarantees `start + len <= extent(axis)`.
-    pub(crate) fn narrowed(&self, axis: usize, start: usize, len: usize) -> Layout {
+    pub(crate) fn narrow(&self, axis: usize, start: usize, len: usize) -> Layout {
         Layout {
             shape: Shape::new(
                 self.shape

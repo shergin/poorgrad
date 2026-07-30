@@ -24,7 +24,7 @@ pub trait Tensorial: Elementary {
     fn matmul(&self, rhs: &Self) -> Self;
 
     /// Returns `self` with its two axes swapped.
-    fn transposed(&self) -> Self;
+    fn transpose(&self) -> Self;
 
     /// Returns the sum of every value in `self`, shaped as a single value.
     fn sum(&self) -> Self;
@@ -58,16 +58,16 @@ pub trait Tensorial: Elementary {
     /// Returns `self` with its axes reordered so that axis `i` of the
     /// result takes axis `order[i]` of `self`; `order` must be a
     /// permutation of `0..rank`.
-    fn permuted(&self, order: &[usize]) -> Self;
+    fn permute(&self, order: &[usize]) -> Self;
 
     /// Returns the window of `len` elements from `start` along `axis`:
     /// `self` with that axis restricted to `start .. start + len`.
-    fn narrowed(&self, axis: usize, start: usize, len: usize) -> Self;
+    fn narrow(&self, axis: usize, start: usize, len: usize) -> Self;
 
     /// Returns `self` placed into a zero payload whose `axis` has extent
     /// `full_extent`, at `start ..`, with zeros elsewhere: the adjoint of
-    /// [`narrowed`](Tensorial::narrowed) and the gradient rule for it.
-    fn padded(&self, axis: usize, start: usize, full_extent: usize) -> Self;
+    /// [`narrow`](Tensorial::narrow) and the gradient rule for it.
+    fn pad(&self, axis: usize, start: usize, full_extent: usize) -> Self;
 
     /// Returns the rows of `self` selected by `selection` (a one-hot
     /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
@@ -85,7 +85,7 @@ impl Tensorial for f32 {
         self * rhs
     }
 
-    fn transposed(&self) -> Self {
+    fn transpose(&self) -> Self {
         *self
     }
 
@@ -113,15 +113,15 @@ impl Tensorial for f32 {
         *self
     }
 
-    fn permuted(&self, _order: &[usize]) -> Self {
+    fn permute(&self, _order: &[usize]) -> Self {
         *self
     }
 
-    fn narrowed(&self, _axis: usize, _start: usize, _len: usize) -> Self {
+    fn narrow(&self, _axis: usize, _start: usize, _len: usize) -> Self {
         *self
     }
 
-    fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
+    fn pad(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
         *self
     }
 
@@ -139,7 +139,7 @@ impl Tensorial for f64 {
         self * rhs
     }
 
-    fn transposed(&self) -> Self {
+    fn transpose(&self) -> Self {
         *self
     }
 
@@ -167,15 +167,15 @@ impl Tensorial for f64 {
         *self
     }
 
-    fn permuted(&self, _order: &[usize]) -> Self {
+    fn permute(&self, _order: &[usize]) -> Self {
         *self
     }
 
-    fn narrowed(&self, _axis: usize, _start: usize, _len: usize) -> Self {
+    fn narrow(&self, _axis: usize, _start: usize, _len: usize) -> Self {
         *self
     }
 
-    fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
+    fn pad(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
         *self
     }
 

@@ -55,7 +55,7 @@ implicitly.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is
-[`Network::updated`](src/engine/network.rs) with an update closure; see
+[`Network::update`](src/engine/network.rs) with an update closure; see
 [`examples/gradient_descent.rs`](examples/gradient_descent.rs).
 
 ## Graph model
@@ -88,7 +88,7 @@ shape-level mirror of `forward`, an abstract interpretation of the tape —
 so shape mismatches panic at the offending expression, before anything
 runs. In the record-once model this recovers most of the benefit of
 type-level shapes at no type-system cost. Shapes are lineage-invariant —
-`updated` validates every replacement payload against the recorded
+`update` validates every replacement payload against the recorded
 shape — and stored as a separate cold column beside the hot function and
 operands columns (data-oriented layout: runs replay functions and operand
 links, never shapes). In poorgrad:
@@ -97,7 +97,10 @@ links, never shapes). In poorgrad:
 
 **Operation.** A differentiable primitive: how to compute a payload from
 operand payloads (`forward`) and the cotangent to hand back to each
-operand (`backward`). The rules are pure and positional: a variant owns
+operand (`backward`). Operation APIs use plain verbs; when a name denotes
+the result, it uses a result noun (`sum`, `maximum`, `step`). Suffix
+families (`_along`, `_like`) preserve that form, and operation names do
+not use participles. The rules are pure and positional: a variant owns
 only its parameters (an axis, a target shape) and declares its arity,
 operands arrive as a slice — payload references for the value rules,
 shapes for shape inference — gathered by the engine from the tape's
@@ -129,7 +132,7 @@ per-run respectively. In poorgrad: `Function::Leaf`, allocated with
 designated as updatable so a training step knows which leaves to replace.
 In poorgrad: `Function::Parameter`, allocated with
 [`Network::parameter`](src/engine/network.rs) and replaced by
-`Network::updated`. The node holds only its slot; the payload lives in the
+`Network::update`. The node holds only its slot; the payload lives in the
 generation's parameter store.
 
 **Input.** A declared per-run leaf: `Network::input` records it with a
@@ -172,7 +175,7 @@ misbinding; within a branch, resolution is positional. In poorgrad:
 [`Symbol`](src/engine/symbol.rs), obtained with `Value::symbol`.
 
 **Generation.** A network state produced by a state transition: a fork
-(`Network::clone`) or a gradient step (`Network::updated`). Generations
+(`Network::clone`) or a gradient step (`Network::update`). Generations
 share the recorded structure through the arena and differ only in their
 parameter store; positions stay stable (symbols keep resolving), and
 older generations remain fully usable — snapshot isolation.
@@ -180,7 +183,7 @@ older generations remain fully usable — snapshot isolation.
 **Parameter store.** The per-generation home of parameter payloads,
 slot-indexed and separate from the immutable tape columns: structure is
 recorded once, state turns over per generation. Forks share the store in
-O(1); `updated` rebuilds it in O(parameters), so replaced payloads are
+O(1); `update` rebuilds it in O(parameters), so replaced payloads are
 reclaimed when their generation drops instead of accumulating in the
 arena. In poorgrad: the crate-internal
 [`ParameterStore`](src/engine/tape/parameter_store.rs).
@@ -200,8 +203,8 @@ read-back accessor, `of(value)`.
 *lineage* rather than to a single generation, so it can be combined across
 runs (averaging data-parallel gradients) and carried across generations
 (momentum velocity, Adam moments). Supports elementwise algebra — `+`,
-`scaled`, `zip`, `map` — with kinship (same lineage, same length,
-agreeing branch chains) checked on every combination; `Network::updated`
+`scale`, `zip`, `map` — with kinship (same lineage, same length,
+agreeing branch chains) checked on every combination; `Network::update`
 takes any field as its update direction. In physics terms, a `Gradients` is
 a discrete gradient field over the graph, which is why `Gradients` is an
 alias for `Field` rather than a wrapper around it: the buffer's invariant is
@@ -248,9 +251,9 @@ through a strided layout: proof that the payload contract holds beyond
 scalars, since a `Network<Tensor<f64>>` runs the engine unchanged.
 Cloning shares the buffer and copies only metadata, so it is O(1).
 Elementwise operations require identical shapes; the tensor-native tier
-adds `matmul`, `transposed`, the reductions `sum` and `sum_along`, and
+adds `matmul`, `transpose`, the reductions `sum` and `sum_along`, and
 the explicit broadcasts `broadcast_like` and `broadcast_along`. Because
-tensors are immutable and buffer-shared, `transposed` and the broadcasts
+tensors are immutable and buffer-shared, `transpose` and the broadcasts
 are O(1) views (or constants) rather than copies: no operation ever
 writes through an alias. Elements are read in logical row-major order
 through `iter`, as a contiguous slice through `as_slice` when the
@@ -294,16 +297,16 @@ is a property of the strides, computed on demand, not a stored flag.
 multiplication, transposition, reductions, and explicit broadcasts —
 with scalars implementing it degenerately (a scalar is a rank-0 tensor;
 the degenerate impls satisfy the bound of running a graph, while
-recording tensor-native expressions demands proper ranks). `matmul`
-stops at rank 2, `transposed` at rank 2 with `permuted` its rank-general
+recording tensor-native expressions demands proper ranks). `matmul` stops
+at rank 2, as does `transpose`, with `permute` its rank-general
 generalization; the axis-wise pair is rank-general; `reshape` reinterprets
 the elements in logical order; there is no batched matmul yet. Summation
 and broadcasting are adjoint in two matched pairs: `sum` with
 `broadcast_like` (the whole shape) and `sum_along` with `broadcast_along`
 (one named axis), each the other's gradient rule. The view operations route their gradient the
-same adjoint way: `reshape` and `permuted` invert their view, and
+same adjoint way: `reshape` and `permute` invert their view, and
 `narrow` selects a window whose gradient `pad`s back into the excluded
-positions as zeros (`narrowed` with `padded` as the third adjoint pair),
+positions as zeros (`narrow` with `pad` as the third adjoint pair),
 and `gather` selects table rows by a one-hot `Selection` whose gradient
 `scatter`s back, accumulating rows selected more than once (`gather` with
 `scatter` as the fourth pair, and the embedding lookup). The selection is
@@ -321,9 +324,9 @@ single value spread across a named reference's shape, or a payload
 repeated along one named axis of a reference — the axis is always
 written, and no operation aligns shapes implicitly. In poorgrad: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
-`Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
-`broadcast_along`, `reshape`, `permuted`, `narrow`, `gather`,
-`log_softmax`, and the `reshape`-based `squeezed` and `unsqueezed`.
+`Value::matmul`, `transpose`, `sum`, `sum_along`, `broadcast_like`,
+`broadcast_along`, `reshape`, `permute`, `narrow`, `gather`,
+`log_softmax`, and the `reshape`-based `squeeze` and `unsqueeze`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

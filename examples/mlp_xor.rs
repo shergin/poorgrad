@@ -74,7 +74,7 @@ fn main() {
             );
         }
         let gradients = evaluation.backward(loss_value);
-        network = network.updated(&gradients, |parameter, gradient| {
+        network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }

@@ -76,7 +76,7 @@ for step in 0..100 {
     let loss = network.resolve(loss_symbol);
     let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
     let gradients = evaluation.backward(loss);
-    network = network.updated(gradients.as_field(), |w, g| w - 0.02 * g);
+    network = network.update(&gradients, |w, g| w - 0.02 * g);
 }
 
 let learned = network.resolve(w_symbol).payload().unwrap();
@@ -104,7 +104,7 @@ crate root keeps the public API flat. From tape to training:
   every value of a graph, backed by the arena-based
   [`cow_vec`](https://crates.io/crates/cow_vec) crate: allocation is
   append-only, cloning forks the network in O(1), and the whole structure is
-  `Send + Sync`. A gradient step is a state transition: `updated` produces
+  `Send + Sync`. A gradient step is a state transition: `update` produces
   the next generation, rebuilding only the parameter store while sharing
   everything else. `input` declares a per-run input with a default
   payload; `forward_with` binds fed payloads to inputs for one run,
@@ -112,7 +112,7 @@ crate root keeps the public API flat. From tape to training:
 - [`Symbol`](src/engine/symbol.rs) — a detached, `Copy` identifier for a value.
   `Network::resolve` turns it into a proxy in a compatible generation, while
   rejecting unrelated or divergent networks. Training loops keep symbols of
-  the loss and parameters across `updated` steps.
+  the loss and parameters across `update` steps.
 - [`Evaluation`](src/engine/evaluation.rs) and
   [`Gradients`](src/engine/field.rs) — the per-run results of `forward`
   and `backward`, read back with the same `Value` proxies that built the
@@ -120,13 +120,13 @@ crate root keeps the public API flat. From tape to training:
   concurrently.
 - [`Field`](src/engine/field.rs) — a value-aligned buffer tied to a network
   lineage rather than one generation, with elementwise algebra (`+`,
-  `scaled`, `zip`, `map`). `Gradients` is an alias for it: the field one
+  `scale`, `zip`, `map`). `Gradients` is an alias for it: the field one
   backward run produces, combined across runs and carried across generations
-  as optimizer state (momentum, Adam) with no conversion; `updated` takes a
+  as optimizer state (momentum, Adam) with no conversion; `update` takes a
   compatible field covering the current graph as its update direction.
 - [`Tensor`](src/payload/tensor.rs) — the built-in tensor payload: an
   immutable runtime shape over a shared element buffer read through a
-  strided layout, so `transposed` and the broadcasts are O(1) views rather
+  strided layout, so `transpose` and the broadcasts are O(1) views rather
   than copies (tensors are immutable, so aliasing a buffer is always safe).
   Its storage is an extensible representation — a dense `Arc`-shared buffer
   or a non-allocating constant today, with room for more — and elements are
@@ -134,7 +134,7 @@ crate root keeps the public API flat. From tape to training:
   the same graph, evaluation, differentiation, and update APIs as a scalar
   network. The
   [`Tensorial`](src/payload/tensorial.rs) trait provides `matmul`,
-  `transposed`, the reductions `sum` and `sum_along`, and the explicit
+  `transpose`, the reductions `sum` and `sum_along`, and the explicit
   broadcasts `broadcast_like` and `broadcast_along` (scalars implement
   scalar semantics for the same trait bound). Broadcasting
   is explicit by design: a single value spread across a named

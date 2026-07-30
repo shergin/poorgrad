@@ -30,10 +30,10 @@ impl Transpose {
 
 impl<Data: Tensorial> Operation<Data> for Transpose {
     fn forward(&self, operands: &[&Data]) -> Data {
-        unary(operands).transposed()
+        unary(operands).transpose()
     }
 
     fn backward(&self, _operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
-        smallvec![Some(gradient.transposed())]
+        smallvec![Some(gradient.transpose())]
     }
 }
