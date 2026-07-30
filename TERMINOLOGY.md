@@ -39,8 +39,11 @@ type.
 
 **Gradient accumulation.** When a value feeds several consumers, its
 gradient is the *sum* of the contributions along every path (the
-multivariate chain rule). This is why `Operation::backward` implementations
-add into the gradient buffer instead of assigning.
+multivariate chain rule). In poorgrad the rule is stated once, in the
+engine: `Operation::backward` returns one cotangent per operand, and
+[`Evaluation::backward`](src/engine/evaluation.rs) adds each into the
+gradient buffer — no operation can assign where it should accumulate,
+because no operation ever touches the buffer.
 
 **Seed (cotangent).** The gradient planted at the target before the backward
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
@@ -93,16 +96,22 @@ links, never shapes). In poorgrad:
 `Differentiable::shape`.
 
 **Operation.** A differentiable primitive: how to compute a payload from
-operand values (`forward`) and how to route the incoming gradient back to
-the operands (`backward`). Operands reach every method as a positional
-slice of links read from the tape's operands column, so a variant owns
-only its parameters (an axis, a target shape), not its edges. In poorgrad:
-the [`Operation`](src/engine/function/operation.rs) trait, implemented by
-each computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`,
-`Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `SumAlong`,
-`Broadcast`, `BroadcastAlong`, `Reshape`, `Permute`, `Narrow`, `Gather`
-under [`src/engine/function/`](src/engine/function/)) and dispatched with
-a plain `match`.
+operand payloads (`forward`) and the cotangent to hand back to each
+operand (`backward`). The rules are pure and positional: a variant owns
+only its parameters (an axis, a target shape) and declares its arity,
+operands arrive as a slice — payload references for the value rules,
+shapes for shape inference — gathered by the engine from the tape's
+operands column, and `backward` returns one cotangent per operand
+(`None` for an operand that is data, like a gather's selection) for the
+engine to accumulate. No rule ever sees the tape, a `ValueId`, or a run
+buffer, so every rule is plain math, testable without a network. In
+poorgrad: the [`Operation`](src/engine/function/operation.rs) trait,
+implemented by each computed `Function` variant (`Add`, `Sub`, `Mul`,
+`Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`,
+`SumAlong`, `Broadcast`, `BroadcastAlong`, `Reshape`, `Permute`,
+`Narrow`, `Gather` under
+[`src/engine/function/`](src/engine/function/)) and dispatched with a
+plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
 the enum's dispatch handles them directly instead of through the trait.
 Arithmetic variants need only `Differentiable`; the transcendental and

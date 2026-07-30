@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// A window of `len` elements from `start` along one axis of a value.
 ///
@@ -16,6 +17,11 @@ pub(crate) struct Narrow {
 }
 
 impl Narrow {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the result shape: the operand's shape with `axis` restricted
     /// to `len`, requiring the window to lie within that axis.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -44,21 +50,13 @@ impl Narrow {
 }
 
 impl<Data: Tensorial> Operation<Data> for Narrow {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].narrowed(self.axis, self.start, self.len)
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).narrowed(self.axis, self.start, self.len)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        let full_extent = values[operand].shape().axes()[self.axis];
-        gradients[operand] =
-            gradients[operand].clone() + gradient.padded(self.axis, self.start, full_extent);
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        let &operand = unary(operands);
+        let full_extent = operand.shape().axes()[self.axis];
+        smallvec![Some(gradient.padded(self.axis, self.start, full_extent))]
     }
 }

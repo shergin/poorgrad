@@ -150,9 +150,15 @@ impl<Data: Differentiable> Tape<Data> {
     /// anything runs.
     ///
     /// # Panics
-    /// Panics if `operands` references a node that is not recorded on
-    /// this tape, or if the operands' shapes are incompatible.
+    /// Panics if `operands` does not match the function's arity or
+    /// references a node that is not recorded on this tape, or if the
+    /// operands' shapes are incompatible.
     pub(crate) fn record(&self, function: Function<Data>, operands: &[ValueId]) -> ValueId {
+        assert_eq!(
+            operands.len(),
+            function.arity(),
+            "operand count must match the operation's arity"
+        );
         let mut inner = self.lock();
         for operand in operands {
             assert!(

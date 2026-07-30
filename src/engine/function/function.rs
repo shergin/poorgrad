@@ -1,11 +1,11 @@
-use crate::engine::{SlotId, ValueId};
+use crate::engine::SlotId;
 use crate::{Differentiable, Shape, Tensorial};
 
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, BroadcastAlong, Div, Exp, Gather, Input, Leaf, Ln, MatMul, Mul, Narrow, Neg,
-    Operation, Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh, Transpose,
+    Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, MatMul, Mul,
+    Narrow, Neg, Operation, Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh, Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -159,6 +159,34 @@ impl<Data> Function<Data> {
         Function::Gather(Gather)
     }
 
+    /// Returns the number of operand links this function expects.
+    ///
+    /// Sources have none; recording asserts every node's operand list
+    /// against this count at the single append site.
+    pub(crate) fn arity(&self) -> usize {
+        match self {
+            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => 0,
+            Function::Add(add) => add.arity(),
+            Function::Sub(sub) => sub.arity(),
+            Function::Mul(mul) => mul.arity(),
+            Function::Div(div) => div.arity(),
+            Function::Neg(neg) => neg.arity(),
+            Function::Tanh(tanh) => tanh.arity(),
+            Function::Exp(exp) => exp.arity(),
+            Function::Ln(ln) => ln.arity(),
+            Function::MatMul(matmul) => matmul.arity(),
+            Function::Transpose(transpose) => transpose.arity(),
+            Function::Sum(sum) => sum.arity(),
+            Function::SumAlong(sum_along) => sum_along.arity(),
+            Function::Broadcast(broadcast) => broadcast.arity(),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.arity(),
+            Function::Reshape(reshape) => reshape.arity(),
+            Function::Permute(permute) => permute.arity(),
+            Function::Narrow(narrow) => narrow.arity(),
+            Function::Gather(gather) => gather.arity(),
+        }
+    }
+
     /// Infers the shape of this function's result from its `operands`'
     /// positional shapes, panicking on incompatibility.
     ///
@@ -207,92 +235,69 @@ impl<Data> Function<Data> {
 /// transcendental and tensor-native variants need it; building and
 /// updating graphs stays arithmetic-only.
 impl<Data: Tensorial> Function<Data> {
-    /// Computes this node's payload from the values of the earlier nodes
-    /// named by `operands`, or supplies it: a leaf's embedded payload, a
-    /// parameter's entry in the run's `parameters` slots, or an input's
-    /// entry in the run's `inputs` slots.
-    pub(crate) fn forward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        parameters: &[Data],
-        inputs: &[Data],
-    ) -> Data {
+    /// Computes this node's payload from its `operands`' payloads
+    /// (gathered positionally by the engine), or supplies it: a leaf's
+    /// embedded payload, a parameter's entry in the run's `parameters`
+    /// slots, or an input's entry in the run's `inputs` slots.
+    pub(crate) fn forward(&self, operands: &[&Data], parameters: &[Data], inputs: &[Data]) -> Data {
         match self {
             Function::Leaf(leaf) => leaf.0.clone(),
             Function::Parameter(parameter) => parameters[parameter.0.index()].clone(),
             Function::Input(input) => inputs[input.0.index()].clone(),
-            Function::Add(add) => add.forward(operands, values),
-            Function::Sub(sub) => sub.forward(operands, values),
-            Function::Mul(mul) => mul.forward(operands, values),
-            Function::Div(div) => div.forward(operands, values),
-            Function::Neg(neg) => neg.forward(operands, values),
-            Function::Tanh(tanh) => tanh.forward(operands, values),
-            Function::Exp(exp) => exp.forward(operands, values),
-            Function::Ln(ln) => ln.forward(operands, values),
-            Function::MatMul(matmul) => matmul.forward(operands, values),
-            Function::Transpose(transpose) => transpose.forward(operands, values),
-            Function::Sum(sum) => sum.forward(operands, values),
-            Function::SumAlong(sum_along) => sum_along.forward(operands, values),
-            Function::Broadcast(broadcast) => broadcast.forward(operands, values),
-            Function::BroadcastAlong(broadcast_along) => broadcast_along.forward(operands, values),
-            Function::Reshape(reshape) => reshape.forward(operands, values),
-            Function::Permute(permute) => permute.forward(operands, values),
-            Function::Narrow(narrow) => narrow.forward(operands, values),
-            Function::Gather(gather) => gather.forward(operands, values),
+            Function::Add(add) => add.forward(operands),
+            Function::Sub(sub) => sub.forward(operands),
+            Function::Mul(mul) => mul.forward(operands),
+            Function::Div(div) => div.forward(operands),
+            Function::Neg(neg) => neg.forward(operands),
+            Function::Tanh(tanh) => tanh.forward(operands),
+            Function::Exp(exp) => exp.forward(operands),
+            Function::Ln(ln) => ln.forward(operands),
+            Function::MatMul(matmul) => matmul.forward(operands),
+            Function::Transpose(transpose) => transpose.forward(operands),
+            Function::Sum(sum) => sum.forward(operands),
+            Function::SumAlong(sum_along) => sum_along.forward(operands),
+            Function::Broadcast(broadcast) => broadcast.forward(operands),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.forward(operands),
+            Function::Reshape(reshape) => reshape.forward(operands),
+            Function::Permute(permute) => permute.forward(operands),
+            Function::Narrow(narrow) => narrow.forward(operands),
+            Function::Gather(gather) => gather.forward(operands),
         }
     }
 
-    /// Accumulates gradients into the `operands`' slots, given this
-    /// node's computed `output` payload and its own `gradient`; a no-op
-    /// for leaves, parameters, and inputs, where gradients stop and get
-    /// read out.
+    /// Computes one cotangent per operand, given this node's computed
+    /// `output` payload and its own `gradient`; empty for leaves,
+    /// parameters, and inputs, where gradients stop and get read out.
+    /// The engine accumulates the returned cotangents into its gradient
+    /// buffer.
     pub(crate) fn backward(
         &self,
-        operands: &[ValueId],
-        values: &[Data],
+        operands: &[&Data],
         output: &Data,
         gradient: &Data,
-        gradients: &mut [Data],
-    ) {
+    ) -> Cotangents<Data> {
         match self {
-            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => {}
-            Function::Add(add) => add.backward(operands, values, output, gradient, gradients),
-            Function::Sub(sub) => sub.backward(operands, values, output, gradient, gradients),
-            Function::Mul(mul) => mul.backward(operands, values, output, gradient, gradients),
-            Function::Div(div) => div.backward(operands, values, output, gradient, gradients),
-            Function::Neg(neg) => neg.backward(operands, values, output, gradient, gradients),
-            Function::Tanh(tanh) => tanh.backward(operands, values, output, gradient, gradients),
-            Function::Exp(exp) => exp.backward(operands, values, output, gradient, gradients),
-            Function::Ln(ln) => ln.backward(operands, values, output, gradient, gradients),
-            Function::MatMul(matmul) => {
-                matmul.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Transpose(transpose) => {
-                transpose.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Sum(sum) => sum.backward(operands, values, output, gradient, gradients),
-            Function::SumAlong(sum_along) => {
-                sum_along.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Broadcast(broadcast) => {
-                broadcast.backward(operands, values, output, gradient, gradients)
-            }
+            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => Cotangents::new(),
+            Function::Add(add) => add.backward(operands, output, gradient),
+            Function::Sub(sub) => sub.backward(operands, output, gradient),
+            Function::Mul(mul) => mul.backward(operands, output, gradient),
+            Function::Div(div) => div.backward(operands, output, gradient),
+            Function::Neg(neg) => neg.backward(operands, output, gradient),
+            Function::Tanh(tanh) => tanh.backward(operands, output, gradient),
+            Function::Exp(exp) => exp.backward(operands, output, gradient),
+            Function::Ln(ln) => ln.backward(operands, output, gradient),
+            Function::MatMul(matmul) => matmul.backward(operands, output, gradient),
+            Function::Transpose(transpose) => transpose.backward(operands, output, gradient),
+            Function::Sum(sum) => sum.backward(operands, output, gradient),
+            Function::SumAlong(sum_along) => sum_along.backward(operands, output, gradient),
+            Function::Broadcast(broadcast) => broadcast.backward(operands, output, gradient),
             Function::BroadcastAlong(broadcast_along) => {
-                broadcast_along.backward(operands, values, output, gradient, gradients)
+                broadcast_along.backward(operands, output, gradient)
             }
-            Function::Reshape(reshape) => {
-                reshape.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Permute(permute) => {
-                permute.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Narrow(narrow) => {
-                narrow.backward(operands, values, output, gradient, gradients)
-            }
-            Function::Gather(gather) => {
-                gather.backward(operands, values, output, gradient, gradients)
-            }
+            Function::Reshape(reshape) => reshape.backward(operands, output, gradient),
+            Function::Permute(permute) => permute.backward(operands, output, gradient),
+            Function::Narrow(narrow) => narrow.backward(operands, output, gradient),
+            Function::Gather(gather) => gather.backward(operands, output, gradient),
         }
     }
 }

@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, binary};
+use super::{Cotangents, Operation, binary};
 
 /// The explicit repetition of a payload along one named axis of a
 /// reference value's shape, with operands `[operand, like]`.
@@ -10,13 +11,18 @@ use super::{Operation, binary};
 /// adjoint: the operand's gradient is the incoming gradient summed
 /// along the repeated axis. The axis is always named, so no shape
 /// alignment is ever inferred; the reference contributes only its
-/// shape and receives no gradient.
+/// shape, which is what its `None` cotangent states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BroadcastAlong {
     pub(crate) axis: usize,
 }
 
 impl BroadcastAlong {
+    /// Returns the arity: two operands.
+    pub(crate) fn arity(&self) -> usize {
+        2
+    }
+
     /// Infers the shape of the result: the reference's shape, reachable
     /// only from an operand shaped like the reference without the axis.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -32,22 +38,12 @@ impl BroadcastAlong {
 }
 
 impl<Data: Tensorial> Operation<Data> for BroadcastAlong {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+    fn forward(&self, operands: &[&Data]) -> Data {
         let (&operand, &like) = binary(operands);
-        values[operand.index()].broadcast_along(self.axis, &values[like.index()])
+        operand.broadcast_along(self.axis, like)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        _values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let (&operand, _) = binary(operands);
-        let operand = operand.index();
-        let contribution = gradient.sum_along(self.axis);
-        gradients[operand] = gradients[operand].clone() + contribution;
+    fn backward(&self, _operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        smallvec![Some(gradient.sum_along(self.axis)), None]
     }
 }

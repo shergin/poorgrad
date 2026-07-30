@@ -40,7 +40,7 @@ pub(crate) use matmul::MatMul;
 pub(crate) use mul::Mul;
 pub(crate) use narrow::Narrow;
 pub(crate) use neg::Neg;
-pub(crate) use operation::{Operation, binary, unary};
+pub(crate) use operation::{Cotangents, Operation, binary, unary};
 pub(crate) use parameter::Parameter;
 pub(crate) use permute::Permute;
 pub(crate) use reshape::Reshape;

@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Elementary, Shape};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The exponential of a value.
 ///
@@ -11,6 +12,11 @@ use super::{Operation, unary};
 pub(crate) struct Exp;
 
 impl Exp {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: the operand's shape.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         unary(operands).clone()
@@ -18,19 +24,11 @@ impl Exp {
 }
 
 impl<Data: Elementary> Operation<Data> for Exp {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].exp()
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).exp()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        _values: &[Data],
-        output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        gradients[operand] = gradients[operand].clone() + gradient.clone() * output.clone();
+    fn backward(&self, _operands: &[&Data], output: &Data, gradient: &Data) -> Cotangents<Data> {
+        smallvec![Some(gradient.clone() * output.clone())]
     }
 }

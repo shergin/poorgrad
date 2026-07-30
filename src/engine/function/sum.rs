@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The sum of every value in a payload, reduced to a single value.
 ///
@@ -12,6 +13,11 @@ use super::{Operation, unary};
 pub(crate) struct Sum;
 
 impl Sum {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: a rank-0 single value.
     pub(crate) fn infer_shape(&self, _operands: &[Shape]) -> Shape {
         Shape::scalar()
@@ -19,19 +25,12 @@ impl Sum {
 }
 
 impl<Data: Tensorial> Operation<Data> for Sum {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].sum()
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).sum()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        gradients[operand] = gradients[operand].clone() + gradient.broadcast_like(&values[operand]);
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        let &operand = unary(operands);
+        smallvec![Some(gradient.broadcast_like(operand))]
     }
 }

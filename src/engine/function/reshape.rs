@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// A reshape of a value to a new shape of the same volume.
 ///
@@ -14,6 +15,11 @@ pub(crate) struct Reshape {
 }
 
 impl Reshape {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the result shape: the requested shape, which must match the
     /// operand's volume.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -29,20 +35,12 @@ impl Reshape {
 }
 
 impl<Data: Tensorial> Operation<Data> for Reshape {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].reshape(self.shape.clone())
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).reshape(self.shape.clone())
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        let operand_shape = values[operand].shape();
-        gradients[operand] = gradients[operand].clone() + gradient.reshape(operand_shape);
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        let &operand = unary(operands);
+        smallvec![Some(gradient.reshape(operand.shape()))]
     }
 }

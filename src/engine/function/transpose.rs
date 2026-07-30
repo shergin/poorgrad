@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The transposition of a value.
 ///
@@ -11,6 +12,11 @@ use super::{Operation, unary};
 pub(crate) struct Transpose;
 
 impl Transpose {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: the operand's axes reversed.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         let operand = unary(operands);
@@ -23,19 +29,11 @@ impl Transpose {
 }
 
 impl<Data: Tensorial> Operation<Data> for Transpose {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].transposed()
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).transposed()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        _values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        gradients[operand] = gradients[operand].clone() + gradient.transposed();
+    fn backward(&self, _operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        smallvec![Some(gradient.transposed())]
     }
 }

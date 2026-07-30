@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, binary};
+use super::{Cotangents, Operation, binary};
 
 /// An embedding-style row gather with operands `[table, selection]`:
 /// `output[i] = table[selection[i]]`, where the selection is a one-hot
@@ -9,13 +10,18 @@ use super::{Operation, binary};
 ///
 /// The gradient flows only to the table, `dtable[selection[i]] += grad[i]`
 /// (a scatter-add that accumulates repeated rows). The selection is data,
-/// not a differentiable value, so it has no gradient term at all: the
+/// not a differentiable value, so its cotangent is `None`: the
 /// non-differentiability of the indices is a structural property of this
 /// operation rather than a runtime flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Gather;
 
 impl Gather {
+    /// Returns the arity: two operands.
+    pub(crate) fn arity(&self) -> usize {
+        2
+    }
+
     /// Infers the result shape `[count, ...table.shape[1..]]`, requiring the
     /// selection to be rank 2 and its vocabulary to match the table's rows.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -41,23 +47,14 @@ impl Gather {
 }
 
 impl<Data: Tensorial> Operation<Data> for Gather {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+    fn forward(&self, operands: &[&Data]) -> Data {
         let (&table, &selection) = binary(operands);
-        values[table.index()].gather(&values[selection.index()])
+        table.gather(selection)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let (&table, &selection) = binary(operands);
-        let table = table.index();
-        let rows = values[table].shape().axes()[0];
-        gradients[table] =
-            gradients[table].clone() + gradient.scatter(&values[selection.index()], rows);
+        let rows = table.shape().axes()[0];
+        smallvec![Some(gradient.scatter(selection, rows)), None]
     }
 }

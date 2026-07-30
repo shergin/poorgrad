@@ -1,9 +1,8 @@
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
-use crate::engine::ValueId;
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// A permutation of a value's axes: axis `i` of the result takes axis
 /// `order[i]` of the operand.
@@ -16,6 +15,11 @@ pub(crate) struct Permute {
 }
 
 impl Permute {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the result shape: the operand's axes reordered by `order`,
     /// which must be a permutation of the operand's axes.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -51,19 +55,11 @@ impl Permute {
 }
 
 impl<Data: Tensorial> Operation<Data> for Permute {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].permuted(&self.order)
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).permuted(&self.order)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        _values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        gradients[operand] = gradients[operand].clone() + gradient.permuted(&self.inverse());
+    fn backward(&self, _operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        smallvec![Some(gradient.permuted(&self.inverse()))]
     }
 }

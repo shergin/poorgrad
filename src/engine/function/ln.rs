@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Elementary, Shape};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The natural logarithm of a value.
 ///
@@ -13,6 +14,11 @@ use super::{Operation, unary};
 pub(crate) struct Ln;
 
 impl Ln {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: the operand's shape.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         unary(operands).clone()
@@ -20,20 +26,12 @@ impl Ln {
 }
 
 impl<Data: Elementary> Operation<Data> for Ln {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].ln()
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).ln()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        gradients[operand] =
-            gradients[operand].clone() + gradient.clone() / values[operand].clone();
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        let &operand = unary(operands);
+        smallvec![Some(gradient.clone() / operand.clone())]
     }
 }

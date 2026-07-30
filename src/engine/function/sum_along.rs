@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The sum of a payload along one named axis.
 ///
@@ -14,6 +15,11 @@ pub(crate) struct SumAlong {
 }
 
 impl SumAlong {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: the operand's shape with the
     /// axis removed.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -22,20 +28,12 @@ impl SumAlong {
 }
 
 impl<Data: Tensorial> Operation<Data> for SumAlong {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].sum_along(self.axis)
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).sum_along(self.axis)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
-        let contribution = gradient.broadcast_along(self.axis, &values[operand]);
-        gradients[operand] = gradients[operand].clone() + contribution;
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
+        let &operand = unary(operands);
+        smallvec![Some(gradient.broadcast_along(self.axis, operand))]
     }
 }

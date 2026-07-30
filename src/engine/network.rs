@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
@@ -213,13 +214,15 @@ impl<Data: Tensorial> Network<Data> {
             Arc::new(overlaid)
         };
         let mut values = Vec::with_capacity(snapshot.functions.len());
-        for (function, operands) in snapshot.functions.iter().zip(snapshot.operands.iter()) {
-            let value = function.forward(
-                operands.as_slice(),
-                &values,
-                snapshot.parameters.payloads(),
-                &inputs,
-            );
+        for (function, links) in snapshot.functions.iter().zip(snapshot.operands.iter()) {
+            let value = {
+                let operands: SmallVec<[&Data; 2]> = links
+                    .as_slice()
+                    .iter()
+                    .map(|link| &values[link.index()])
+                    .collect();
+                function.forward(&operands, snapshot.parameters.payloads(), &inputs)
+            };
             values.push(value);
         }
         Evaluation::new(

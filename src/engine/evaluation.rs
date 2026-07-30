@@ -2,6 +2,7 @@ use std::ptr;
 use std::sync::Arc;
 
 use cow_vec::CowVec;
+use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
@@ -125,16 +126,28 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
                 continue;
             }
             let function = self.nodes.get(index).expect("snapshot cannot shrink");
-            let operands = self
+            let links = self
                 .operands
                 .get(index)
                 .expect("snapshot cannot shrink")
                 .as_slice();
-            for &operand in operands {
-                ancestors[operand.index()] = true;
+            for &link in links {
+                ancestors[link.index()] = true;
             }
+            let operands: SmallVec<[&Data; 2]> =
+                links.iter().map(|link| &values[link.index()]).collect();
             let gradient = gradients[index].clone();
-            function.backward(operands, values, &values[index], &gradient, &mut gradients);
+            let cotangents = function.backward(&operands, &values[index], &gradient);
+            debug_assert_eq!(cotangents.len(), links.len());
+            // Accumulation is the multivariate chain rule: when a value
+            // feeds several consumers, its gradient is the sum of the
+            // cotangents arriving along every path.
+            for (&link, cotangent) in links.iter().zip(cotangents) {
+                if let Some(contribution) = cotangent {
+                    let slot = link.index();
+                    gradients[slot] = gradients[slot].clone() + contribution;
+                }
+            }
         }
         Field::new(self.tape.lineage(), Arc::clone(&self.chain), gradients)
     }

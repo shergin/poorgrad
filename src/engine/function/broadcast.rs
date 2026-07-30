@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, binary};
+use super::{Cotangents, Operation, binary};
 
 /// The explicit broadcast of a single-value payload across another
 /// value's shape, with operands `[operand, like]`.
@@ -11,11 +12,17 @@ use super::{Operation, binary};
 /// value, never from an alignment rule. Broadcasting and summation are
 /// adjoint, so the operand's gradient is the sum of the incoming
 /// gradient, restored to the operand's own single-value shape; the
-/// reference contributes only its shape and receives no gradient.
+/// reference contributes only its shape, which is what its `None`
+/// cotangent states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Broadcast;
 
 impl Broadcast {
+    /// Returns the arity: two operands.
+    pub(crate) fn arity(&self) -> usize {
+        2
+    }
+
     /// Infers the shape of the result: the reference's shape, reachable
     /// only from a single-value operand.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
@@ -30,25 +37,16 @@ impl Broadcast {
 }
 
 impl<Data: Tensorial> Operation<Data> for Broadcast {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+    fn forward(&self, operands: &[&Data]) -> Data {
         let (&operand, &like) = binary(operands);
-        values[operand.index()].broadcast_like(&values[like.index()])
+        operand.broadcast_like(like)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let (&operand, _) = binary(operands);
-        let operand = operand.index();
         // The reduced gradient is rank 0, but the operand may be any
         // volume-1 shape (such as `[1]`); broadcasting the sum back to
         // the operand's own shape keeps the accumulation well-formed.
-        let contribution = gradient.sum().broadcast_like(&values[operand]);
-        gradients[operand] = gradients[operand].clone() + contribution;
+        smallvec![Some(gradient.sum().broadcast_like(operand)), None]
     }
 }

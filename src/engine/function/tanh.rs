@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Elementary, Shape};
 
-use super::{Operation, unary};
+use super::{Cotangents, Operation, unary};
 
 /// The hyperbolic tangent of a value.
 ///
@@ -12,6 +13,11 @@ use super::{Operation, unary};
 pub(crate) struct Tanh;
 
 impl Tanh {
+    /// Returns the arity: one operand.
+    pub(crate) fn arity(&self) -> usize {
+        1
+    }
+
     /// Infers the shape of the result: the operand's shape.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         unary(operands).clone()
@@ -19,20 +25,12 @@ impl Tanh {
 }
 
 impl<Data: Elementary> Operation<Data> for Tanh {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
-        values[unary(operands).index()].tanh()
+    fn forward(&self, operands: &[&Data]) -> Data {
+        unary(operands).tanh()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        _values: &[Data],
-        output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
-        let operand = unary(operands).index();
+    fn backward(&self, _operands: &[&Data], output: &Data, gradient: &Data) -> Cotangents<Data> {
         let derivative = output.one_like() - output.clone() * output.clone();
-        gradients[operand] = gradients[operand].clone() + gradient.clone() * derivative;
+        smallvec![Some(gradient.clone() * derivative)]
     }
 }

@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Shape, Tensorial};
 
-use super::{Operation, binary};
+use super::{Cotangents, Operation, binary};
 
 /// The matrix product of two values, with operands `[left, right]`.
 ///
@@ -11,6 +12,11 @@ use super::{Operation, binary};
 pub(crate) struct MatMul;
 
 impl MatMul {
+    /// Returns the arity: two operands.
+    pub(crate) fn arity(&self) -> usize {
+        2
+    }
+
     /// Infers the shape `[m, n]` of a `[m, k] . [k, n]` product.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         let (left, right) = binary(operands);
@@ -34,23 +40,16 @@ impl MatMul {
 }
 
 impl<Data: Tensorial> Operation<Data> for MatMul {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+    fn forward(&self, operands: &[&Data]) -> Data {
         let (&left, &right) = binary(operands);
-        values[left.index()].matmul(&values[right.index()])
+        left.matmul(right)
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let (&left, &right) = binary(operands);
-        let left = left.index();
-        let right = right.index();
-        gradients[left] = gradients[left].clone() + gradient.matmul(&values[right].transposed());
-        gradients[right] = gradients[right].clone() + values[left].transposed().matmul(gradient);
+        smallvec![
+            Some(gradient.matmul(&right.transposed())),
+            Some(left.transposed().matmul(gradient)),
+        ]
     }
 }

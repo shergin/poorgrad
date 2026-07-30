@@ -1,7 +1,8 @@
-use crate::engine::ValueId;
+use smallvec::smallvec;
+
 use crate::{Differentiable, Shape};
 
-use super::{Operation, binary};
+use super::{Cotangents, Operation, binary};
 
 /// The product of two values, with operands `[left, right]`.
 ///
@@ -11,6 +12,11 @@ use super::{Operation, binary};
 pub(crate) struct Mul;
 
 impl Mul {
+    /// Returns the arity: two operands.
+    pub(crate) fn arity(&self) -> usize {
+        2
+    }
+
     /// Infers the shape of the result, which both operands must share.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         let (left, right) = binary(operands);
@@ -23,23 +29,16 @@ impl Mul {
 }
 
 impl<Data: Differentiable> Operation<Data> for Mul {
-    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+    fn forward(&self, operands: &[&Data]) -> Data {
         let (&left, &right) = binary(operands);
-        values[left.index()].clone() * values[right.index()].clone()
+        left.clone() * right.clone()
     }
 
-    fn backward(
-        &self,
-        operands: &[ValueId],
-        values: &[Data],
-        _output: &Data,
-        gradient: &Data,
-        gradients: &mut [Data],
-    ) {
+    fn backward(&self, operands: &[&Data], _output: &Data, gradient: &Data) -> Cotangents<Data> {
         let (&left, &right) = binary(operands);
-        let left = left.index();
-        let right = right.index();
-        gradients[left] = gradients[left].clone() + gradient.clone() * values[right].clone();
-        gradients[right] = gradients[right].clone() + gradient.clone() * values[left].clone();
+        smallvec![
+            Some(gradient.clone() * right.clone()),
+            Some(gradient.clone() * left.clone()),
+        ]
     }
 }
