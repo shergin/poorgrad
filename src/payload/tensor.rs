@@ -587,6 +587,86 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             },
         }
     }
+
+    /// Returns the window of `len` elements from `start` along `axis` as a
+    /// view over the same buffer.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
+    fn narrowed(&self, axis: usize, start: usize, len: usize) -> Self {
+        let shape = self.logical_shape();
+        assert!(
+            axis < shape.rank(),
+            "narrow axis {axis} is out of rank for {shape}"
+        );
+        let extent = shape.axes()[axis];
+        assert!(
+            start + len <= extent,
+            "narrow window {start}..{} exceeds axis {axis} extent {extent}",
+            start + len
+        );
+        match &self.storage {
+            Storage::Constant { value, .. } => {
+                let narrowed = Shape::new(
+                    shape
+                        .axes()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, &e)| if index == axis { len } else { e }),
+                );
+                Self::constant(narrowed, value.clone())
+            }
+            Storage::Dense { data, layout } => Self {
+                storage: Storage::Dense {
+                    data: Arc::clone(data),
+                    layout: layout.narrowed(axis, start, len),
+                },
+            },
+        }
+    }
+
+    /// Returns `self` placed at `start ..` along `axis` inside a tensor
+    /// whose `axis` has extent `full_extent`, with zeros elsewhere.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank or the window exceeds `full_extent`.
+    fn padded(&self, axis: usize, start: usize, full_extent: usize) -> Self {
+        let shape = self.logical_shape();
+        assert!(
+            axis < shape.rank(),
+            "pad axis {axis} is out of rank for {shape}"
+        );
+        let axes = shape.axes();
+        let len = axes[axis];
+        assert!(
+            start + len <= full_extent,
+            "pad window {start}..{} exceeds the full extent {full_extent}",
+            start + len
+        );
+        let outer: usize = axes[..axis].iter().product();
+        let inner: usize = axes[axis + 1..].iter().product();
+        let zero = self.get(0).zero_like();
+
+        let mut elements = Vec::with_capacity(outer * full_extent * inner);
+        for outer_index in 0..outer {
+            for position in 0..full_extent {
+                for inner_index in 0..inner {
+                    if position >= start && position < start + len {
+                        let source = (outer_index * len + (position - start)) * inner + inner_index;
+                        elements.push(self.get(source).clone());
+                    } else {
+                        elements.push(zero.clone());
+                    }
+                }
+            }
+        }
+        let padded = Shape::new(
+            axes.iter()
+                .enumerate()
+                .map(|(index, &e)| if index == axis { full_extent } else { e }),
+        );
+        Self::dense(padded, elements)
+    }
 }
 
 #[cfg(test)]

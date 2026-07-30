@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   `reshape`-based conveniences `squeezed` and `unsqueezed`), each a
   differentiable graph node whose gradient routes back by the inverse view.
   `permuted` generalizes `transposed` to any rank.
+- Add `Value::narrow` (a slice window along one axis): the forward is an
+  O(1) view and the gradient scatters back into the excluded positions as
+  zeros.
 
 ### Changed
 

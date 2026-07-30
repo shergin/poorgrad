@@ -91,3 +91,11 @@ fn permute_reorders_axes_and_strides() {
     assert_eq!(permuted.shape(), &Shape::new([4, 2, 3]));
     assert_eq!(permuted.strides(), &[1, 12, 4]);
 }
+
+#[test]
+fn narrow_shifts_offset_and_shrinks_the_axis() {
+    let window = Layout::contiguous(Shape::new([2, 3])).narrowed(1, 1, 2);
+    assert_eq!(window.shape(), &Shape::new([2, 2]));
+    assert_eq!(window.strides(), &[3, 1]);
+    assert_eq!(window.offset(), 1);
+}

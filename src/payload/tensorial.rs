@@ -50,6 +50,15 @@ pub trait Tensorial: Elementary {
     /// result takes axis `order[i]` of `self`; `order` must be a
     /// permutation of `0..rank`.
     fn permuted(&self, order: &[usize]) -> Self;
+
+    /// Returns the window of `len` elements from `start` along `axis`:
+    /// `self` with that axis restricted to `start .. start + len`.
+    fn narrowed(&self, axis: usize, start: usize, len: usize) -> Self;
+
+    /// Returns `self` placed into a zero payload whose `axis` has extent
+    /// `full_extent`, at `start ..`, with zeros elsewhere: the adjoint of
+    /// [`narrowed`](Tensorial::narrowed) and the gradient rule for it.
+    fn padded(&self, axis: usize, start: usize, full_extent: usize) -> Self;
 }
 
 impl Tensorial for f32 {
@@ -84,6 +93,14 @@ impl Tensorial for f32 {
     fn permuted(&self, _order: &[usize]) -> Self {
         *self
     }
+
+    fn narrowed(&self, _axis: usize, _start: usize, _len: usize) -> Self {
+        *self
+    }
+
+    fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
+        *self
+    }
 }
 
 impl Tensorial for f64 {
@@ -116,6 +133,14 @@ impl Tensorial for f64 {
     }
 
     fn permuted(&self, _order: &[usize]) -> Self {
+        *self
+    }
+
+    fn narrowed(&self, _axis: usize, _start: usize, _len: usize) -> Self {
+        *self
+    }
+
+    fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
         *self
     }
 }

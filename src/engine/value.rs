@@ -243,6 +243,17 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         axes.remove(axis);
         self.reshape(axes)
     }
+
+    /// Records the window of `len` elements from `start` along `axis` on
+    /// the same network and returns a proxy to it; the forward is an O(1)
+    /// view and the gradient scatters back into the unselected positions
+    /// as zeros.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
+    pub fn narrow(self, axis: usize, start: usize, len: usize) -> Self {
+        self.apply(Function::narrow(self.id, axis, start, len))
+    }
 }
 
 // Manual implementations avoid the `Data: Clone`/`Data: Copy` bounds a

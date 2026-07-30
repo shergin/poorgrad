@@ -4,7 +4,7 @@ use crate::{Differentiable, Shape, Tensorial};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, BroadcastAlong, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Neg, Operation,
+    Add, Broadcast, BroadcastAlong, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Narrow, Neg, Operation,
     Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh, Transpose,
 };
 
@@ -40,6 +40,7 @@ pub(crate) enum Function<Data> {
     BroadcastAlong(BroadcastAlong),
     Reshape(Reshape),
     Permute(Permute),
+    Narrow(Narrow),
 }
 
 impl<Data> Function<Data> {
@@ -146,6 +147,17 @@ impl<Data> Function<Data> {
         })
     }
 
+    /// Creates the window of `len` elements from `start` along `axis` of
+    /// `operand`.
+    pub(crate) fn narrow(operand: ValueId, axis: usize, start: usize, len: usize) -> Self {
+        Function::Narrow(Narrow {
+            operand,
+            axis,
+            start,
+            len,
+        })
+    }
+
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, visitor: impl FnMut(ValueId)) {
         match self {
@@ -168,6 +180,7 @@ impl<Data> Function<Data> {
             Function::BroadcastAlong(broadcast_along) => broadcast_along.visit_operands(visitor),
             Function::Reshape(reshape) => reshape.visit_operands(visitor),
             Function::Permute(permute) => permute.visit_operands(visitor),
+            Function::Narrow(narrow) => narrow.visit_operands(visitor),
         }
     }
 
@@ -204,6 +217,7 @@ impl<Data> Function<Data> {
             Function::BroadcastAlong(broadcast_along) => broadcast_along.inferred_shape(shape_of),
             Function::Reshape(reshape) => reshape.inferred_shape(shape_of),
             Function::Permute(permute) => permute.inferred_shape(shape_of),
+            Function::Narrow(narrow) => narrow.inferred_shape(shape_of),
         }
     }
 }
@@ -242,6 +256,7 @@ impl<Data: Tensorial> Function<Data> {
             Function::BroadcastAlong(broadcast_along) => broadcast_along.forward(values),
             Function::Reshape(reshape) => reshape.forward(values),
             Function::Permute(permute) => permute.forward(values),
+            Function::Narrow(narrow) => narrow.forward(values),
         }
     }
 
@@ -281,6 +296,7 @@ impl<Data: Tensorial> Function<Data> {
             }
             Function::Reshape(reshape) => reshape.backward(values, output, gradient, gradients),
             Function::Permute(permute) => permute.backward(values, output, gradient, gradients),
+            Function::Narrow(narrow) => narrow.backward(values, output, gradient, gradients),
         }
     }
 }

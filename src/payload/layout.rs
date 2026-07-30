@@ -176,6 +176,26 @@ impl Layout {
             offset: self.offset,
         }
     }
+
+    /// Returns the layout of a window of `len` elements starting at `start`
+    /// along `axis`, a view sharing the buffer: the offset advances by
+    /// `start` steps of that axis's stride and the axis extent shrinks to
+    /// `len`.
+    ///
+    /// The caller guarantees `start + len <= extent(axis)`.
+    pub(crate) fn narrowed(&self, axis: usize, start: usize, len: usize) -> Layout {
+        Layout {
+            shape: Shape::new(
+                self.shape
+                    .axes()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, &extent)| if index == axis { len } else { extent }),
+            ),
+            strides: self.strides.clone(),
+            offset: self.offset + start * self.strides[axis],
+        }
+    }
 }
 
 #[cfg(test)]

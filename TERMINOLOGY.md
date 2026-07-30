@@ -274,16 +274,17 @@ generalization; the axis-wise pair is rank-general; `reshape` reinterprets
 the elements in logical order; there is no batched matmul yet. Summation
 and broadcasting are adjoint in two matched pairs: `sum` with
 `broadcast_like` (the whole shape) and `sum_along` with `broadcast_along`
-(one named axis), each the other's gradient rule. The view operations are
-self-adjoint pairs too: `reshape` and `permuted` route their gradient
-back by the inverse view. Broadcasting is explicit by design: a single
-value spread across a named reference's shape, or a payload repeated
-along one named axis of a reference — the axis is always written, and
-no operation aligns shapes implicitly. In poorgrad: the
-[`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
-`Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
-`broadcast_along`, `reshape`, `permuted`, and the `reshape`-based
-`squeezed` and `unsqueezed`.
+(one named axis), each the other's gradient rule. The view operations route their gradient the
+same adjoint way: `reshape` and `permuted` invert their view, and
+`narrow` selects a window whose gradient `pad`s back into the excluded
+positions as zeros (`narrowed` with `padded` as the third adjoint pair).
+Broadcasting is explicit by design: a single value spread across a named
+reference's shape, or a payload repeated along one named axis of a
+reference — the axis is always written, and no operation aligns shapes
+implicitly. In poorgrad: the [`Tensorial`](src/payload/tensorial.rs)
+trait, recorded into graphs via `Value::matmul`, `transposed`, `sum`,
+`sum_along`, `broadcast_like`, `broadcast_along`, `reshape`, `permuted`,
+`narrow`, and the `reshape`-based `squeezed` and `unsqueezed`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

@@ -513,3 +513,52 @@ fn recording_rejects_volume_changing_reshape() {
     let x = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
     x.reshape([4]);
 }
+
+#[test]
+fn narrow_selects_a_window_along_an_axis() {
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+    let columns = matrix.narrowed(1, 1, 2);
+    assert_eq!(columns.shape(), Shape::new([2, 2]));
+    assert_eq!(columns.to_vec(), vec![2.0, 3.0, 5.0, 6.0]);
+
+    let row = matrix.narrowed(0, 1, 1);
+    assert_eq!(row.shape(), Shape::new([1, 3]));
+    assert_eq!(row.to_vec(), vec![4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn narrow_of_the_outer_axis_stays_contiguous() {
+    // A window over whole rows keeps the inner axis contiguous, so it can
+    // still expose a borrowed slice of the shared buffer.
+    let matrix = Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let middle = matrix.narrowed(0, 1, 1);
+    assert_eq!(middle.as_slice().unwrap().to_vec(), vec![3.0, 4.0]);
+}
+
+#[test]
+#[should_panic(expected = "exceeds axis")]
+fn narrow_rejects_windows_past_the_axis() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).narrowed(1, 2, 2);
+}
+
+#[test]
+fn pad_places_a_window_into_zeros() {
+    let window = Tensor::new([2, 2], [2.0_f64, 3.0, 5.0, 6.0]);
+    let padded = window.padded(1, 1, 3);
+    assert_eq!(padded.shape(), Shape::new([2, 3]));
+    assert_eq!(padded.to_vec(), vec![0.0, 2.0, 3.0, 0.0, 5.0, 6.0]);
+}
+
+#[test]
+fn narrow_routes_gradients_to_the_window() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+
+    // Summing columns 1..3 gives a gradient of one there and zero in the
+    // column the window excludes.
+    let loss = x.narrow(1, 1, 2).sum();
+    let gradients = network.forward().backward(loss);
+    assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
+    assert_eq!(gradients.of(x).to_vec(), vec![0.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
+}
