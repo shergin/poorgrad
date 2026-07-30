@@ -221,6 +221,32 @@ fn sum_along_reduces_the_named_axis() {
 }
 
 #[test]
+fn maximum_picks_the_larger_element() {
+    let left = Tensor::new([3], [1.0_f64, 5.0, -2.0]);
+    let right = Tensor::new([3], [4.0, 2.0, -3.0]);
+    assert_eq!(left.maximum(&right).to_vec(), &[4.0, 5.0, -2.0]);
+}
+
+#[test]
+fn max_along_reduces_the_named_axis() {
+    let matrix = Tensor::new([2, 3], [1.0_f64, 5.0, 3.0, 4.0, 2.0, 6.0]);
+
+    let columns = matrix.max_along(0);
+    assert_eq!(columns.shape(), Shape::new([3]));
+    assert_eq!(columns.to_vec(), &[4.0, 5.0, 6.0]);
+
+    let rows = matrix.max_along(1);
+    assert_eq!(rows.shape(), Shape::new([2]));
+    assert_eq!(rows.to_vec(), &[5.0, 6.0]);
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn max_along_rejects_excessive_axes() {
+    Tensor::filled([2, 3], 1.0_f64).max_along(2);
+}
+
+#[test]
 fn broadcast_along_repeats_the_named_axis() {
     let row = Tensor::new([3], [1.0_f64, 2.0, 3.0]);
     let reference = Tensor::filled([2, 3], 0.0);
@@ -696,4 +722,43 @@ fn gather_rejects_vocabulary_mismatch() {
     let table = network.leaf(Tensor::new([3, 2], vec![0.0_f64; 6]));
     let selection = network.input(Tensor::selection(vec![0usize], 4, 1.0));
     table.gather(selection);
+}
+
+#[test]
+fn log_softmax_normalizes_along_the_named_axis() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::new([2, 2], [0.0_f64, 0.0, 1.0, 3.0]));
+    let log_probabilities = logits.log_softmax(1);
+    assert_eq!(log_probabilities.shape(), Shape::new([2, 2]));
+
+    let evaluation = network.forward();
+    let probabilities = evaluation.of(log_probabilities).exp();
+    for total in probabilities.sum_along(1).to_vec() {
+        assert!((total - 1.0).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn log_softmax_routes_gradients_through_the_probabilities() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));
+
+    // Summing one row of log-probabilities seeds every class with one, so
+    // the cotangent is `1 - classes * softmax`: `[1 - 2 * 0.25, 1 - 2 * 0.75]`.
+    let loss = logits.log_softmax(1).sum();
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(loss);
+    let expected = [0.5, -0.5];
+    for (computed, expected) in gradients.of(logits).to_vec().into_iter().zip(expected) {
+        assert!((computed - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn log_softmax_rejects_excessive_axes() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::filled([2, 3], 0.0_f64));
+    logits.log_softmax(2);
 }

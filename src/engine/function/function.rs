@@ -4,8 +4,9 @@ use crate::{Differentiable, Shape, Tensorial};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, MatMul, Mul,
-    Narrow, Neg, Operation, Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh, Transpose,
+    Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, LogSoftmax,
+    MatMul, Mul, Narrow, Neg, Operation, Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh,
+    Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -44,6 +45,7 @@ pub(crate) enum Function<Data> {
     Permute(Permute),
     Narrow(Narrow),
     Gather(Gather),
+    LogSoftmax(LogSoftmax),
 }
 
 impl<Data> Function<Data> {
@@ -159,6 +161,11 @@ impl<Data> Function<Data> {
         Function::Gather(Gather)
     }
 
+    /// Creates the log-softmax of the single operand along `axis`.
+    pub(crate) fn log_softmax(axis: usize) -> Self {
+        Function::LogSoftmax(LogSoftmax { axis })
+    }
+
     /// Returns the number of operand links this function expects.
     ///
     /// Sources have none; recording asserts every node's operand list
@@ -184,6 +191,7 @@ impl<Data> Function<Data> {
             Function::Permute(permute) => permute.arity(),
             Function::Narrow(narrow) => narrow.arity(),
             Function::Gather(gather) => gather.arity(),
+            Function::LogSoftmax(log_softmax) => log_softmax.arity(),
         }
     }
 
@@ -222,6 +230,7 @@ impl<Data> Function<Data> {
             Function::Permute(permute) => permute.infer_shape(operands),
             Function::Narrow(narrow) => narrow.infer_shape(operands),
             Function::Gather(gather) => gather.infer_shape(operands),
+            Function::LogSoftmax(log_softmax) => log_softmax.infer_shape(operands),
         }
     }
 }
@@ -262,6 +271,7 @@ impl<Data: Tensorial> Function<Data> {
             Function::Permute(permute) => permute.forward(operands),
             Function::Narrow(narrow) => narrow.forward(operands),
             Function::Gather(gather) => gather.forward(operands),
+            Function::LogSoftmax(log_softmax) => log_softmax.forward(operands),
         }
     }
 
@@ -298,6 +308,7 @@ impl<Data: Tensorial> Function<Data> {
             Function::Permute(permute) => permute.backward(operands, output, gradient),
             Function::Narrow(narrow) => narrow.backward(operands, output, gradient),
             Function::Gather(gather) => gather.backward(operands, output, gradient),
+            Function::LogSoftmax(log_softmax) => log_softmax.backward(operands, output, gradient),
         }
     }
 }

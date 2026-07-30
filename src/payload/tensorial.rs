@@ -33,6 +33,15 @@ pub trait Tensorial: Elementary {
     /// shape is `self`'s with that axis removed.
     fn sum_along(&self, axis: usize) -> Self;
 
+    /// Returns `self` with `axis` reduced to its largest value by the
+    /// elementwise [`maximum`](Elementary::maximum): the result's shape is
+    /// `self`'s with that axis removed.
+    ///
+    /// It is the reduction behind stable normalization (`log_softmax`
+    /// shifts by the axis maximum before exponentiating) and is not a
+    /// recorded graph operation of its own.
+    fn max_along(&self, axis: usize) -> Self;
+
     /// Returns this payload's single value spread across `reference`'s
     /// shape.
     fn broadcast_like(&self, reference: &Self) -> Self;
@@ -88,6 +97,10 @@ impl Tensorial for f32 {
         *self
     }
 
+    fn max_along(&self, _axis: usize) -> Self {
+        *self
+    }
+
     fn broadcast_like(&self, _reference: &Self) -> Self {
         *self
     }
@@ -135,6 +148,10 @@ impl Tensorial for f64 {
     }
 
     fn sum_along(&self, _axis: usize) -> Self {
+        *self
+    }
+
+    fn max_along(&self, _axis: usize) -> Self {
         *self
     }
 

@@ -109,7 +109,7 @@ poorgrad: the [`Operation`](src/engine/function/operation.rs) trait,
 implemented by each computed `Function` variant (`Add`, `Sub`, `Mul`,
 `Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`,
 `SumAlong`, `Broadcast`, `BroadcastAlong`, `Reshape`, `Permute`,
-`Narrow`, `Gather` under
+`Narrow`, `Gather`, `LogSoftmax` under
 [`src/engine/function/`](src/engine/function/)) and dispatched with a
 plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
@@ -233,8 +233,11 @@ crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
 contract is the [`Differentiable`](src/payload/differentiable.rs) trait —
 arithmetic operators, `zero_like`/`one_like`, and `Send + Sync`;
-[`Elementary`](src/payload/elementary.rs) adds the transcendentals
-activations need.
+[`Elementary`](src/payload/elementary.rs) adds the transcendentals and the
+elementwise `maximum` that activations and stable normalization need —
+order enters the contract as a payload-returning operation, never as
+`PartialOrd`, whose `bool` answer cannot express an elementwise
+comparison.
 
 **Tensor.** A fixed-shape payload backed by a shared element buffer read
 through a strided layout: proof that the payload contract holds beyond
@@ -302,14 +305,21 @@ and `gather` selects table rows by a one-hot `Selection` whose gradient
 `scatter` as the fourth pair, and the embedding lookup). The selection is
 data, so `gather`'s backward has no gradient term for it at all: the
 non-differentiability of the indices is a structural property of the
-operation, not a runtime flag. Broadcasting is explicit by design: a
+operation, not a runtime flag. `max_along` is `sum_along`'s
+order-theoretic sibling — the same axis reduction, folding with the
+elementwise `maximum` — and serves stable normalization rather than
+recording: `log_softmax`, the one fused operation, shifts by the axis
+maximum before exponentiating (which no composition of recorded
+operations could do) and routes its gradient as
+`g - exp(output) * sum_along(g)`, recovering the probabilities from the
+node's own output. Broadcasting is explicit by design: a
 single value spread across a named reference's shape, or a payload
 repeated along one named axis of a reference — the axis is always
 written, and no operation aligns shapes implicitly. In poorgrad: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
-`broadcast_along`, `reshape`, `permuted`, `narrow`, `gather`, and the
-`reshape`-based `squeezed` and `unsqueezed`.
+`broadcast_along`, `reshape`, `permuted`, `narrow`, `gather`,
+`log_softmax`, and the `reshape`-based `squeezed` and `unsqueezed`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or
@@ -357,6 +367,20 @@ graph operation like any other, so it participates in differentiation
 (`Function::Tanh`, recorded by `Value::tanh`; the derivative
 `1 - tanh(x)^2` reuses the node's own output). In poorgrad: the
 [`Activation`](src/neural/activation.rs) enum selecting `Identity` or `Tanh`.
+
+**Loss.** A scalar training objective written as a composed formula over
+recorded operations, not as a primitive: its gradient falls out of the
+chain rule with no dedicated backward rule. A formula earns a fused
+`Function` variant only where composition cannot express it — the
+cross-entropy loss
+`-(targets * log_softmax(logits)).sum() / targets.sum()` keeps only
+`log_softmax` fused (for the stabilizing max shift) and stays composition
+everywhere else. The normalizer is the targets' total mass — the batch
+size for one-hot targets, so the reduction is the standard mean, while
+soft or weighted targets normalize by their own weight. The same one-hot
+`Selection` that feeds an embedding gather serves as the targets, fed per
+run. In poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss
+module.
 
 ## Further reading
 

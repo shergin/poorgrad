@@ -160,6 +160,10 @@ crate root keeps the public API flat. From tape to training:
 - [`Mlp`](src/neural/mlp.rs) — dense layers described by a sequence of widths
   such as `[3, 4, 4, 1]`: tanh hidden layers, an affine output, and
   caller-controlled initialization from each parameter's requested shape.
+- [`cross_entropy`](src/neural/loss.rs) — the classification loss as a
+  composed formula over the fused, numerically stable `Value::log_softmax`:
+  the mean negative log-likelihood of one-hot (or soft) targets, fed per
+  run like any other input.
 
 ## The name
 

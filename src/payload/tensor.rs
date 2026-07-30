@@ -482,6 +482,10 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
             element.powf(exponent.clone())
         })
     }
+
+    fn maximum(&self, other: &Self) -> Self {
+        self.zip(other, |element, other| element.maximum(other))
+    }
 }
 
 impl<Element: Elementary> Tensorial for Tensor<Element> {
@@ -583,6 +587,37 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                     total = total + self.get(position(step)).clone();
                 }
                 elements.push(total);
+            }
+        }
+        Self::dense(shape.without_axis(axis), elements)
+    }
+
+    /// Returns the tensor with `axis` reduced to its largest element by the
+    /// elementwise [`Elementary::maximum`].
+    ///
+    /// The reduction is rank-general and mirrors [`Tensorial::sum_along`]:
+    /// the elements are viewed as `[outer, axis, inner]` in logical order
+    /// and folded over the middle extent.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    fn max_along(&self, axis: usize) -> Self {
+        let shape = self.logical_shape();
+        let axes = shape.axes();
+        assert!(axis < axes.len(), "axis {axis} is out of rank for {shape}");
+        let outer: usize = axes[..axis].iter().product();
+        let extent = axes[axis];
+        let inner: usize = axes[axis + 1..].iter().product();
+
+        let mut elements = Vec::with_capacity(outer * inner);
+        for outer_index in 0..outer {
+            for inner_index in 0..inner {
+                let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
+                let mut largest = self.get(position(0)).clone();
+                for step in 1..extent {
+                    largest = largest.maximum(self.get(position(step)));
+                }
+                elements.push(largest);
             }
         }
         Self::dense(shape.without_axis(axis), elements)

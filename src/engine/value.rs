@@ -277,6 +277,20 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.assert_same_network(&selection);
         self.apply(Function::gather(), &[self.id, selection.id])
     }
+
+    /// Records the log-softmax of this value along `axis` on the same
+    /// network and returns a proxy to it: the logarithm of the softmax
+    /// probabilities, computed stably in one fused node.
+    ///
+    /// Exponentiating the result recovers the probabilities themselves; the
+    /// fused form exists because the stable computation shifts by the axis
+    /// maximum, which no composition of recorded operations can express.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    pub fn log_softmax(self, axis: usize) -> Self {
+        self.apply(Function::log_softmax(axis), &[self.id])
+    }
 }
 
 // Manual implementations avoid the `Data: Clone`/`Data: Copy` bounds a

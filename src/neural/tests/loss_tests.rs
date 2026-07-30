@@ -1,0 +1,88 @@
+use crate::{Network, Shape, Tensor};
+
+use super::cross_entropy;
+
+#[test]
+fn uniform_logits_cost_the_log_of_the_class_count() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::filled([4, 3], 0.0_f64));
+    let targets = network.input(Tensor::selection(vec![0usize, 1, 2, 0], 3, 1.0));
+
+    let loss = cross_entropy(logits, targets);
+    assert_eq!(loss.shape(), Shape::scalar());
+
+    let evaluation = network.forward();
+    let cost = evaluation.of(loss).to_vec()[0];
+    assert!((cost - 3.0_f64.ln()).abs() < 1e-12);
+}
+
+#[test]
+fn confident_correct_logits_cost_nothing() {
+    let network = Network::new();
+    // The extreme margin would overflow a naive softmax; the fused
+    // log-softmax keeps the loss an exact zero.
+    let logits = network.leaf(Tensor::new([1, 2], [1000.0_f64, -1000.0]));
+    let targets = network.input(Tensor::selection(vec![0usize], 2, 1.0));
+
+    let loss = cross_entropy(logits, targets);
+
+    let evaluation = network.forward();
+    let cost = evaluation.of(loss).to_vec()[0];
+    assert!(cost.is_finite());
+    assert!(cost.abs() < 1e-12);
+}
+
+#[test]
+fn gradient_is_probabilities_minus_targets_over_the_batch() {
+    let network = Network::new();
+    // Row softmaxes are `[0.25, 0.75]` and `[0.5, 0.5]`; with targets `0`
+    // and `1` the mean-loss gradient is `(softmax - onehot) / batch`.
+    let logits = network.parameter(Tensor::new([2, 2], [0.0_f64, 3.0_f64.ln(), 0.0, 0.0]));
+    let targets = network.input(Tensor::selection(vec![0usize, 1], 2, 1.0));
+
+    let loss = cross_entropy(logits, targets);
+
+    let evaluation = network.forward();
+    let gradients = evaluation.backward(loss);
+    let expected = [-0.375, 0.375, 0.25, -0.25];
+    for (computed, expected) in gradients.of(logits).to_vec().into_iter().zip(expected) {
+        assert!((computed - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn served_batches_vary_per_run() {
+    let network = Network::new();
+    let logits = network.input(Tensor::filled([2, 3], 0.0_f64));
+    let targets = network.input(Tensor::selection(vec![0usize, 1], 3, 1.0));
+    let logits_symbol = logits.symbol();
+    let targets_symbol = targets.symbol();
+
+    let loss = cross_entropy(logits, targets);
+
+    // A batch that puts all its mass on the labeled classes drives the loss
+    // toward zero, while the recorded graph stays fixed.
+    let confident = Tensor::new([2, 3], [50.0_f64, 0.0, 0.0, 0.0, 50.0, 0.0]);
+    let labels = Tensor::selection(vec![0usize, 1], 3, 1.0);
+    let evaluation = network.forward_with([(logits_symbol, confident), (targets_symbol, labels)]);
+    let cost = evaluation.of(loss).to_vec()[0];
+    assert!(cost.abs() < 1e-12);
+}
+
+#[test]
+#[should_panic(expected = "must be rank 2")]
+fn rejects_non_matrix_logits() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::filled([3], 0.0_f64));
+    let targets = network.input(Tensor::selection(vec![0usize], 3, 1.0));
+    cross_entropy(logits, targets);
+}
+
+#[test]
+#[should_panic(expected = "must be shaped like the logits")]
+fn rejects_mismatched_targets() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::filled([2, 3], 0.0_f64));
+    let targets = network.input(Tensor::selection(vec![0usize], 3, 1.0));
+    cross_entropy(logits, targets);
+}
