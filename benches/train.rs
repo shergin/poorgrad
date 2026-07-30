@@ -38,7 +38,7 @@ fn training_step(criterion: &mut Criterion) {
         bencher.iter(|| {
             let evaluation = scalar.forward();
             let gradients = evaluation.backward(loss);
-            scalar.updated(gradients.as_field(), |parameter, gradient| {
+            scalar.updated(&gradients, |parameter, gradient| {
                 parameter - 0.01 * gradient
             })
         });
@@ -57,7 +57,7 @@ fn training_step(criterion: &mut Criterion) {
         bencher.iter(|| {
             let evaluation = tensor.forward();
             let gradients = evaluation.backward(tensor_loss);
-            tensor.updated(gradients.as_field(), |parameter, gradient| {
+            tensor.updated(&gradients, |parameter, gradient| {
                 parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
             })
         });
@@ -76,8 +76,7 @@ fn training_step(criterion: &mut Criterion) {
             padding = padding * padding;
         }
         let evaluation = network.forward();
-        let gradients = evaluation.backward(target);
-        let direction = gradients.into_field();
+        let direction = evaluation.backward(target);
 
         group.throughput(Throughput::Elements(nodes as u64));
         group.bench_with_input(BenchmarkId::new("updated", nodes), &nodes, |bencher, _| {

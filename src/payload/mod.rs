@@ -1,6 +1,8 @@
 mod differentiable;
 mod elementary;
+mod layout;
 mod shape;
+mod storage;
 mod tensor;
 mod tensorial;
 

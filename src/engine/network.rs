@@ -125,9 +125,9 @@ impl<Data: Differentiable> Network<Data> {
     /// replaced by `update(current, direction)`.
     ///
     /// It is the training-step state transition, and `direction` is any
-    /// field over this network's lineage: a raw gradient buffer via
-    /// [`Gradients::as_field`](super::Gradients::as_field), or a derived update
-    /// direction such as a momentum velocity. The new generation shares the
+    /// field over this network's lineage: the [`Gradients`](super::Gradients) of
+    /// a backward run, or a derived update direction such as a momentum
+    /// velocity. The new generation shares the
     /// complete recorded graph and rebuilds only the parameter store, so node
     /// positions remain stable and compatible [`Symbol`]s keep resolving. The
     /// old generation remains fully usable with its own proxies and runs. The

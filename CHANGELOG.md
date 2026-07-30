@@ -7,6 +7,29 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Back `Tensor` with a strided layout over an extensible `Storage`
+  representation (a shared dense buffer or a non-allocating constant), so
+  `transposed` and the broadcasts are O(1) views instead of copies and the
+  `backward` gradient seed no longer allocates a zeroed buffer per node.
+
+### Changed
+
+- Make `Gradients` an alias for `Field` rather than a wrapper around it.
+  `Evaluation::backward` still returns `Gradients`, but the result is a field
+  directly, so `Network::updated` and the field algebra take it without a
+  conversion.
+- Read tensor elements through `Tensor::iter` (logical row-major order),
+  `Tensor::as_slice` (a borrowed slice when contiguous), or `Tensor::to_vec`,
+  and compare tensors by logical value across storage representations.
+
+### Removed
+
+- Remove `Gradients::as_field` and `Gradients::into_field`. Pass the gradients
+  themselves instead: `network.updated(&gradients, ..)`.
+- Remove `Tensor::elements`; use `iter`, `as_slice`, or `to_vec` instead.
+
 ## [0.2.0] - 2026-07-27
 
 ### Added

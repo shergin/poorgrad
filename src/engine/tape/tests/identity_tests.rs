@@ -103,9 +103,7 @@ fn updated_rejects_fields_from_divergent_forks() {
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(w);
-    fork.updated(gradients.as_field(), |parameter, gradient| {
-        parameter - gradient
-    });
+    fork.updated(&gradients, |parameter, gradient| parameter - gradient);
 }
 
 #[test]

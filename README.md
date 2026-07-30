@@ -114,20 +114,25 @@ crate root keeps the public API flat. From tape to training:
   rejecting unrelated or divergent networks. Training loops keep symbols of
   the loss and parameters across `updated` steps.
 - [`Evaluation`](src/engine/evaluation.rs) and
-  [`Gradients`](src/engine/gradients.rs) — the per-run results of `forward`
+  [`Gradients`](src/engine/field.rs) — the per-run results of `forward`
   and `backward`, read back with the same `Value` proxies that built the
   graph. Runs never mutate the network, so any number of them can execute
   concurrently.
 - [`Field`](src/engine/field.rs) — a value-aligned buffer tied to a network
   lineage rather than one generation, with elementwise algebra (`+`,
-  `scaled`, `zip`, `map`). Gradients convert into fields to be combined
-  across runs and carried across generations as optimizer state (momentum,
-  Adam); `updated` takes a compatible field covering the current graph as its
-  update direction.
-- [`Tensor`](src/payload/tensor.rs) — the built-in dense tensor payload, with
-  an immutable runtime shape, row-major storage, and element buffers shared
-  through `Arc`. A `Network<Tensor<f64>>` uses the same graph, evaluation,
-  differentiation, and update APIs as a scalar network. The
+  `scaled`, `zip`, `map`). `Gradients` is an alias for it: the field one
+  backward run produces, combined across runs and carried across generations
+  as optimizer state (momentum, Adam) with no conversion; `updated` takes a
+  compatible field covering the current graph as its update direction.
+- [`Tensor`](src/payload/tensor.rs) — the built-in tensor payload: an
+  immutable runtime shape over a shared element buffer read through a
+  strided layout, so `transposed` and the broadcasts are O(1) views rather
+  than copies (tensors are immutable, so aliasing a buffer is always safe).
+  Its storage is an extensible representation — a dense `Arc`-shared buffer
+  or a non-allocating constant today, with room for more — and elements are
+  read with `iter`, `as_slice`, or `to_vec`. A `Network<Tensor<f64>>` uses
+  the same graph, evaluation, differentiation, and update APIs as a scalar
+  network. The
   [`Tensorial`](src/payload/tensorial.rs) trait provides `matmul`,
   `transposed`, the reductions `sum` and `sum_along`, and the explicit
   broadcasts `broadcast_like` and `broadcast_along` (scalars implement

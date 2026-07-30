@@ -68,14 +68,14 @@ fn mlp_learns_xor() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
 
     let evaluation = network.forward();
     let outputs = evaluation.of(network.resolve(predicted_symbol));
-    for (prediction, target) in outputs.elements().iter().zip([-1.0, 1.0, 1.0, -1.0]) {
+    for (prediction, target) in outputs.iter().zip([-1.0, 1.0, 1.0, -1.0]) {
         assert!(
             (prediction - target).abs() < 0.2,
             "prediction {prediction} misses target {target}"

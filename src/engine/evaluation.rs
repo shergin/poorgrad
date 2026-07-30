@@ -125,11 +125,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             let gradient = gradients[index].clone();
             function.backward(values, &values[index], &gradient, &mut gradients);
         }
-        Gradients::new(Field::new(
-            self.tape.lineage(),
-            Arc::clone(&self.chain),
-            gradients,
-        ))
+        Field::new(self.tape.lineage(), Arc::clone(&self.chain), gradients)
     }
 }
 

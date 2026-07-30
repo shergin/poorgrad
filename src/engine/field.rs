@@ -13,11 +13,12 @@ assert_impl_all!(Field<f64>: Send, Sync);
 
 /// A value-aligned buffer over the nodes captured by a graph snapshot.
 ///
-/// A [`Gradients`](super::Gradients) buffer is one kind of field. Other fields
-/// can hold optimizer state such as momentum or moments, or combine gradients
-/// from several runs. Fields carry graph lineage and branch information rather
-/// than borrowing one network generation, allowing a compatible field to be
-/// reused across parameter updates.
+/// The [`Gradients`] of a backward run are one kind of field. Other fields can
+/// hold optimizer state such as momentum or moments, or combine gradients from
+/// several runs; an [`Evaluation`](super::Evaluation) holds its forward payloads
+/// in one too. Fields carry graph lineage and branch information rather than
+/// borrowing one network generation, allowing a compatible field to be reused
+/// across parameter updates.
 ///
 /// Field operations require both operands to cover the same number of nodes in
 /// compatible branches of the same graph lineage. A field produced before the
@@ -29,6 +30,19 @@ pub struct Field<Data> {
     chain: Arc<Vec<Segment>>,
     values: Vec<Data>,
 }
+
+/// The gradients of one backward run: the derivative of the run's target with
+/// respect to every node.
+///
+/// It is an alias rather than a distinct type because gradients *are* a field,
+/// the one that differentiation produces, so every field operation applies to
+/// them unchanged. Read a single gradient with [`Field::of`], and combine runs
+/// or carry optimizer state with the rest of the field algebra. The alias names
+/// the role at the API boundary, most visibly on
+/// [`Evaluation::backward`](super::Evaluation::backward), while the type keeps
+/// the one invariant it actually enforces: alignment to a graph, not
+/// differentiation.
+pub type Gradients<Data> = Field<Data>;
 
 impl<Data: Differentiable> Field<Data> {
     pub(crate) fn new(lineage: Lineage, chain: Arc<Vec<Segment>>, values: Vec<Data>) -> Self {

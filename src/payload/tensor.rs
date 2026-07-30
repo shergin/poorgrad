@@ -3,32 +3,106 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
+use super::layout::{Layout, Strides};
+use super::storage::Storage;
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Tensor<f64>: Send, Sync);
 
-/// A dense tensor with an immutable, runtime-defined [`Shape`] and row-major
-/// element storage.
+/// A dense tensor with an immutable, runtime-defined [`Shape`] and a shared
+/// element buffer read through a strided [`layout`](super::layout::Layout).
 ///
-/// Every tensor contains at least one element. Cloning shares the element
-/// buffer through an [`Arc`] and clones the shape metadata; it does not clone
-/// the elements.
+/// The elements are held behind a [`Storage`] representation: an
+/// `Arc`-shared row-major buffer addressed by strides and an offset, or a
+/// non-allocating constant. Cloning shares the buffer and clones only the
+/// metadata; it does not clone the elements. Because tensors are immutable
+/// and buffer-shared, view operations that alias a buffer (transpose and
+/// broadcast) are always safe: no operation ever writes through an alias.
 ///
-/// Arithmetic and [`Elementary`] functions operate elementwise. Binary
-/// elementwise operations require identical shapes and never broadcast
-/// implicitly. Broadcasting is available only through
-/// [`Tensorial::broadcast_like`] and [`Tensorial::broadcast_along`].
+/// Arithmetic and [`Elementary`] functions operate elementwise in logical
+/// row-major order. Binary elementwise operations require identical shapes
+/// and never broadcast implicitly. Broadcasting is available only through
+/// [`Tensorial::broadcast_like`] and [`Tensorial::broadcast_along`], and it
+/// produces a view rather than copying.
 ///
 /// [`Tensorial::matmul`] requires rank-2 operands, and
-/// [`Tensorial::transposed`] accepts ranks 0 through 2. Reductions and explicit
-/// broadcasts are rank-general. Reshaping and batched matrix multiplication
-/// are not supported.
-#[derive(Debug, Clone, PartialEq)]
+/// [`Tensorial::transposed`] accepts ranks 0 through 2, returning a view.
+/// Reductions and explicit broadcasts are rank-general. Reshaping and
+/// batched matrix multiplication are not supported.
+#[derive(Debug, Clone)]
 pub struct Tensor<Element> {
-    shape: Shape,
-    elements: Arc<Vec<Element>>,
+    storage: Storage<Element>,
+}
+
+impl<Element> Tensor<Element> {
+    /// Returns the logical shape, the one descriptor every representation
+    /// answers for.
+    fn logical_shape(&self) -> &Shape {
+        match &self.storage {
+            Storage::Dense { layout, .. } => layout.shape(),
+            Storage::Constant { shape, .. } => shape,
+        }
+    }
+
+    /// Returns the element at logical row-major `position`.
+    ///
+    /// It is the general per-element read shared by every operation; a
+    /// dense layout resolves it through the stride and offset arithmetic,
+    /// and a constant answers with its single value.
+    fn get(&self, position: usize) -> &Element {
+        match &self.storage {
+            Storage::Dense { data, layout } => &data[layout.storage_index(position)],
+            Storage::Constant { value, .. } => value,
+        }
+    }
+
+    /// Returns the elements as a contiguous slice when the tensor is stored
+    /// as a contiguous dense buffer, or `None` for a strided view or a
+    /// constant.
+    pub fn as_slice(&self) -> Option<&[Element]> {
+        match &self.storage {
+            Storage::Dense { data, layout } if layout.is_contiguous() => {
+                let start = layout.offset();
+                Some(&data.as_slice()[start..start + layout.volume()])
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the elements in logical row-major order.
+    ///
+    /// A contiguous dense buffer iterates its slice directly; a strided
+    /// view walks its layout with an odometer; a constant repeats its
+    /// single value across the shape's volume.
+    pub fn iter(&self) -> impl Iterator<Item = &Element> + '_ {
+        match &self.storage {
+            Storage::Constant { shape, value } => ElementIter::Constant {
+                value,
+                remaining: shape.volume(),
+            },
+            Storage::Dense { data, layout } if layout.is_contiguous() => {
+                let start = layout.offset();
+                ElementIter::Contiguous(data.as_slice()[start..start + layout.volume()].iter())
+            }
+            Storage::Dense { data, layout } => ElementIter::Strided {
+                data: data.as_slice(),
+                shape: layout.shape().axes(),
+                strides: layout.strides(),
+                coordinates: std::iter::repeat_n(0usize, layout.rank()).collect(),
+                index: layout.offset(),
+                remaining: layout.volume(),
+            },
+        }
+    }
+}
+
+impl<Element: Clone> Tensor<Element> {
+    /// Returns the elements in logical row-major order as an owned vector.
+    pub fn to_vec(&self) -> Vec<Element> {
+        self.iter().cloned().collect()
+    }
 }
 
 impl<Element: Differentiable> Tensor<Element> {
@@ -52,57 +126,169 @@ impl<Element: Differentiable> Tensor<Element> {
             !elements.is_empty(),
             "tensors must hold at least one element"
         );
-        Self {
-            shape,
-            elements: Arc::new(elements),
-        }
+        Self::dense(shape, elements)
     }
 
-    /// Creates a tensor of `shape` with every element set to `element`.
+    /// Creates a tensor of `shape` with every element set to `element`,
+    /// stored as a non-allocating constant.
     ///
     /// # Panics
     /// Panics if the shape's volume overflows `usize` or the shape holds no
     /// elements, as documented on [`Tensor::new`].
     pub fn filled(shape: impl IntoIterator<Item = usize>, element: Element) -> Self {
         let shape = Shape::new(shape);
-        let volume = shape.volume();
-        assert!(volume > 0, "tensors must hold at least one element");
+        assert!(shape.volume() > 0, "tensors must hold at least one element");
+        Self::constant(shape, element)
+    }
+
+    /// Builds a contiguous dense tensor of `shape` from `elements`, without
+    /// the public constructor's validation.
+    fn dense(shape: Shape, elements: Vec<Element>) -> Self {
         Self {
-            shape,
-            elements: Arc::new(vec![element; volume]),
+            storage: Storage::Dense {
+                layout: Layout::contiguous(shape),
+                data: Arc::new(elements),
+            },
         }
     }
 
-    /// Returns the elements in row-major order.
-    pub fn elements(&self) -> &[Element] {
-        &self.elements
+    /// Builds a constant tensor of `shape` filled with `value`.
+    fn constant(shape: Shape, value: Element) -> Self {
+        Self {
+            storage: Storage::Constant { shape, value },
+        }
     }
 
-    /// Returns a tensor with every element passed through `transform`,
-    /// sharing this tensor's shape.
+    /// Returns a tensor with every element passed through `transform`.
+    ///
+    /// A constant maps in place to another constant; a dense tensor
+    /// materializes the transformed elements in logical order.
     fn map(&self, transform: impl Fn(&Element) -> Element) -> Self {
-        Self {
-            shape: self.shape.clone(),
-            elements: Arc::new(self.elements.iter().map(transform).collect()),
+        match &self.storage {
+            Storage::Constant { shape, value } => Self::constant(shape.clone(), transform(value)),
+            Storage::Dense { .. } => Self::dense(
+                self.logical_shape().clone(),
+                self.iter().map(transform).collect(),
+            ),
         }
     }
 
     /// Combines two tensors element by element with `combine`.
     ///
+    /// Two constants combine into a constant; otherwise the result is a
+    /// dense tensor built in logical order.
+    ///
     /// # Panics
     /// Panics if the tensors have different shapes.
     fn zip(&self, other: &Self, combine: impl Fn(&Element, &Element) -> Element) -> Self {
-        assert_eq!(self.shape, other.shape, "tensors have different shapes");
-        Self {
-            shape: self.shape.clone(),
-            elements: Arc::new(
-                self.elements
-                    .iter()
-                    .zip(other.elements.iter())
+        assert_eq!(
+            self.logical_shape(),
+            other.logical_shape(),
+            "tensors have different shapes"
+        );
+        match (&self.storage, &other.storage) {
+            (Storage::Constant { value: left, .. }, Storage::Constant { value: right, .. }) => {
+                Self::constant(self.logical_shape().clone(), combine(left, right))
+            }
+            _ => Self::dense(
+                self.logical_shape().clone(),
+                self.iter()
+                    .zip(other.iter())
                     .map(|(left, right)| combine(left, right))
                     .collect(),
             ),
         }
+    }
+}
+
+/// Returns the shape with its two axes swapped, matching the payload
+/// transpose that a constant undergoes without touching a buffer.
+///
+/// # Panics
+/// Panics if the rank exceeds 2.
+fn transposed_shape(shape: &Shape) -> Shape {
+    if shape.rank() < 2 {
+        return shape.clone();
+    }
+    assert_eq!(shape.rank(), 2, "transpose supports rank 2 at most");
+    let axes = shape.axes();
+    Shape::new([axes[1], axes[0]])
+}
+
+/// Iterator over a tensor's elements in logical row-major order.
+///
+/// The variants mirror the storage representations: a repeated constant, a
+/// direct slice walk for a contiguous buffer, and an odometer walk for a
+/// strided view.
+enum ElementIter<'tensor, Element> {
+    Constant {
+        value: &'tensor Element,
+        remaining: usize,
+    },
+    Contiguous(std::slice::Iter<'tensor, Element>),
+    Strided {
+        data: &'tensor [Element],
+        shape: &'tensor [usize],
+        strides: &'tensor [usize],
+        coordinates: Strides,
+        index: usize,
+        remaining: usize,
+    },
+}
+
+impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
+    type Item = &'tensor Element;
+
+    fn next(&mut self) -> Option<&'tensor Element> {
+        match self {
+            ElementIter::Constant { value, remaining } => {
+                if *remaining == 0 {
+                    return None;
+                }
+                *remaining -= 1;
+                Some(*value)
+            }
+            ElementIter::Contiguous(iterator) => iterator.next(),
+            ElementIter::Strided {
+                data,
+                shape,
+                strides,
+                coordinates,
+                index,
+                remaining,
+            } => {
+                if *remaining == 0 {
+                    return None;
+                }
+                let slice: &'tensor [Element] = data;
+                let element = &slice[*index];
+                *remaining -= 1;
+                if *remaining > 0 {
+                    // Advance the odometer: step the innermost axis, carrying
+                    // into the outer axes and adjusting the flat index by the
+                    // stride of whichever axis moved.
+                    for axis in (0..shape.len()).rev() {
+                        coordinates[axis] += 1;
+                        if coordinates[axis] < shape[axis] {
+                            *index += strides[axis];
+                            break;
+                        }
+                        *index -= (shape[axis] - 1) * strides[axis];
+                        coordinates[axis] = 0;
+                    }
+                }
+                Some(element)
+            }
+        }
+    }
+}
+
+impl<Element: PartialEq> PartialEq for Tensor<Element> {
+    /// Compares two tensors by logical value: equal shapes and equal
+    /// elements in logical order, independent of storage representation, so
+    /// a view compares equal to its materialized twin.
+    fn eq(&self, other: &Self) -> bool {
+        self.logical_shape() == other.logical_shape() && self.iter().eq(other.iter())
     }
 }
 
@@ -147,16 +333,22 @@ impl<Element: Differentiable> Neg for Tensor<Element> {
 }
 
 impl<Element: Differentiable> Differentiable for Tensor<Element> {
+    /// Returns a zero shaped like `self`, stored as a constant.
+    ///
+    /// It reads one element's `zero_like` as the fill, which is exact for
+    /// the scalar payloads a tensor holds: their identity does not vary
+    /// across the buffer.
     fn zero_like(&self) -> Self {
-        self.map(|element| element.zero_like())
+        Self::constant(self.logical_shape().clone(), self.get(0).zero_like())
     }
 
+    /// Returns a one shaped like `self`, stored as a constant.
     fn one_like(&self) -> Self {
-        self.map(|element| element.one_like())
+        Self::constant(self.logical_shape().clone(), self.get(0).one_like())
     }
 
     fn shape(&self) -> Shape {
-        self.shape.clone()
+        self.logical_shape().clone()
     }
 }
 
@@ -183,14 +375,20 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
 impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// Returns the matrix product of two rank-2 tensors.
     ///
+    /// Operands are read through logical access, so strided views (a
+    /// transposed operand, most often) multiply without first being
+    /// materialized.
+    ///
     /// # Panics
     /// Panics if either operand is not rank 2, the inner dimensions do not
     /// agree, or any dimension is empty.
     fn matmul(&self, rhs: &Self) -> Self {
-        assert_eq!(self.shape.rank(), 2, "matmul requires rank-2 tensors");
-        assert_eq!(rhs.shape.rank(), 2, "matmul requires rank-2 tensors");
-        let (rows, inner) = (self.shape.axes()[0], self.shape.axes()[1]);
-        let (rhs_inner, columns) = (rhs.shape.axes()[0], rhs.shape.axes()[1]);
+        let left = self.logical_shape();
+        let right = rhs.logical_shape();
+        assert_eq!(left.rank(), 2, "matmul requires rank-2 tensors");
+        assert_eq!(right.rank(), 2, "matmul requires rank-2 tensors");
+        let (rows, inner) = (left.axes()[0], left.axes()[1]);
+        let (rhs_inner, columns) = (right.axes()[0], right.axes()[1]);
         assert_eq!(inner, rhs_inner, "matmul inner dimensions do not agree");
         assert!(
             rows > 0 && inner > 0 && columns > 0,
@@ -200,77 +398,65 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         let mut elements = Vec::with_capacity(rows * columns);
         for row in 0..rows {
             for column in 0..columns {
-                let mut total = self.elements[row * inner].clone() * rhs.elements[column].clone();
+                let mut total = self.get(row * inner).clone() * rhs.get(column).clone();
                 for step in 1..inner {
                     total = total
-                        + self.elements[row * inner + step].clone()
-                            * rhs.elements[step * columns + column].clone();
+                        + self.get(row * inner + step).clone()
+                            * rhs.get(step * columns + column).clone();
                 }
                 elements.push(total);
             }
         }
-        Self {
-            shape: Shape::new([rows, columns]),
-            elements: Arc::new(elements),
-        }
+        Self::dense(Shape::new([rows, columns]), elements)
     }
 
-    /// Returns the tensor with its two axes swapped.
+    /// Returns the tensor with its two axes swapped as a view over the same
+    /// buffer.
     ///
     /// Rank-0 and rank-1 tensors are returned unchanged.
     ///
     /// # Panics
     /// Panics if the tensor's rank exceeds 2.
     fn transposed(&self) -> Self {
-        if self.shape.rank() < 2 {
-            return self.clone();
-        }
-        assert_eq!(self.shape.rank(), 2, "transpose supports rank 2 at most");
-        let (rows, columns) = (self.shape.axes()[0], self.shape.axes()[1]);
-        let mut elements = Vec::with_capacity(rows * columns);
-        for column in 0..columns {
-            for row in 0..rows {
-                elements.push(self.elements[row * columns + column].clone());
+        match &self.storage {
+            Storage::Dense { data, layout } => Self {
+                storage: Storage::Dense {
+                    data: Arc::clone(data),
+                    layout: layout.transposed(),
+                },
+            },
+            Storage::Constant { shape, value } => {
+                Self::constant(transposed_shape(shape), value.clone())
             }
-        }
-        Self {
-            shape: Shape::new([columns, rows]),
-            elements: Arc::new(elements),
         }
     }
 
-    /// Returns the sum of every element as a rank-0 tensor.
+    /// Returns the sum of every element as a rank-0 constant.
     ///
-    /// Elements are accumulated from left to right without pairwise or
-    /// compensated summation.
+    /// Elements are accumulated in logical order from left to right without
+    /// pairwise or compensated summation.
     fn sum(&self) -> Self {
-        let mut elements = self.elements.iter();
+        let mut elements = self.iter();
         let first = elements
             .next()
             .expect("sum requires a non-empty tensor")
             .clone();
         let total = elements.fold(first, |total, element| total + element.clone());
-        Self {
-            shape: Shape::scalar(),
-            elements: Arc::new(vec![total]),
-        }
+        Self::constant(Shape::scalar(), total)
     }
 
     /// Returns the tensor with `axis` reduced by summation.
     ///
     /// The reduction is rank-general: the elements are viewed as
-    /// `[outer, axis, inner]` in row-major order and summed over the
-    /// middle extent.
+    /// `[outer, axis, inner]` in logical order and summed over the middle
+    /// extent.
     ///
     /// # Panics
     /// Panics if `axis` is out of rank.
     fn sum_along(&self, axis: usize) -> Self {
-        let axes = self.shape.axes();
-        assert!(
-            axis < axes.len(),
-            "axis {axis} is out of rank for {}",
-            self.shape
-        );
+        let shape = self.logical_shape();
+        let axes = shape.axes();
+        assert!(axis < axes.len(), "axis {axis} is out of rank for {shape}");
         let outer: usize = axes[..axis].iter().product();
         let extent = axes[axis];
         let inner: usize = axes[axis + 1..].iter().product();
@@ -279,70 +465,59 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for inner_index in 0..inner {
                 let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
-                let mut total = self.elements[position(0)].clone();
+                let mut total = self.get(position(0)).clone();
                 for step in 1..extent {
-                    total = total + self.elements[position(step)].clone();
+                    total = total + self.get(position(step)).clone();
                 }
                 elements.push(total);
             }
         }
-        Self {
-            shape: self.shape.without_axis(axis),
-            elements: Arc::new(elements),
-        }
+        Self::dense(shape.without_axis(axis), elements)
     }
 
     /// Returns this tensor's single element spread across `reference`'s
-    /// shape: the whole-shape form of explicit broadcasting.
+    /// shape as a constant: the whole-shape form of explicit broadcasting.
     ///
     /// # Panics
     /// Panics if `self` holds more than one element.
     fn broadcast_like(&self, reference: &Self) -> Self {
         assert_eq!(
-            self.elements.len(),
+            self.logical_shape().volume(),
             1,
             "broadcast requires a single-element tensor"
         );
-        Self {
-            shape: reference.shape.clone(),
-            elements: Arc::new(vec![self.elements[0].clone(); reference.elements.len()]),
-        }
+        Self::constant(reference.logical_shape().clone(), self.get(0).clone())
     }
 
     /// Returns the tensor repeated along `axis` to match `reference`'s
-    /// shape: the named-axis form of explicit broadcasting.
+    /// shape as a stride-0 view: the named-axis form of explicit
+    /// broadcasting.
     ///
     /// # Panics
     /// Panics if `axis` is out of `reference`'s rank or `self`'s shape
     /// differs from `reference`'s with that axis removed.
     fn broadcast_along(&self, axis: usize, reference: &Self) -> Self {
-        let axes = reference.shape.axes();
+        let reference_shape = reference.logical_shape();
+        let axes = reference_shape.axes();
         assert!(
             axis < axes.len(),
-            "axis {axis} is out of rank for {}",
-            reference.shape
+            "axis {axis} is out of rank for {reference_shape}"
         );
         assert_eq!(
-            self.shape,
-            reference.shape.without_axis(axis),
-            "broadcast along axis {axis} of {} requires the remaining shape",
-            reference.shape
+            self.logical_shape(),
+            &reference_shape.without_axis(axis),
+            "broadcast along axis {axis} of {reference_shape} requires the remaining shape"
         );
-        let outer: usize = axes[..axis].iter().product();
-        let extent = axes[axis];
-        let inner: usize = axes[axis + 1..].iter().product();
-
-        let mut elements = Vec::with_capacity(reference.elements.len());
-        for outer_index in 0..outer {
-            for _ in 0..extent {
-                for inner_index in 0..inner {
-                    elements.push(self.elements[outer_index * inner + inner_index].clone());
-                }
+        match &self.storage {
+            Storage::Constant { value, .. } => {
+                Self::constant(reference_shape.clone(), value.clone())
             }
-        }
-        Self {
-            shape: reference.shape.clone(),
-            elements: Arc::new(elements),
+            Storage::Dense { data, layout } => Self {
+                storage: Storage::Dense {
+                    data: Arc::clone(data),
+                    layout: layout.broadcast_along(axis, reference_shape),
+                },
+            },
         }
     }
 }

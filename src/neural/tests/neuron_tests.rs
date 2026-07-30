@@ -68,9 +68,7 @@ fn neuron_trains_toward_a_target() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
-            parameter - 0.5 * gradient
-        });
+        network = network.updated(&gradients, |parameter, gradient| parameter - 0.5 * gradient);
     }
 
     let output = network.resolve(output_symbol);

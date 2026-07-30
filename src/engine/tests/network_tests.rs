@@ -135,7 +135,7 @@ fn training_feeds_batches_without_regrowing_the_tape() {
         let evaluation =
             network.forward_with([(input_symbol, sample_input), (target_symbol, sample_target)]);
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter - 0.05 * gradient
         });
     }
@@ -156,9 +156,7 @@ fn updated_replaces_parameters_and_keeps_everything_else() {
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(output);
-    let updated = network.updated(gradients.as_field(), |parameter, gradient| {
-        parameter - gradient
-    });
+    let updated = network.updated(&gradients, |parameter, gradient| parameter - gradient);
 
     assert_eq!(updated.len(), network.len());
     assert_eq!(updated.resolve(parameter.symbol()).payload(), Some(-1.0));
@@ -181,9 +179,7 @@ fn gradient_descent_converges() {
     for _ in 0..30 {
         let loss = network.resolve(loss_symbol);
         let gradients = network.forward().backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
-            parameter - 0.3 * gradient
-        });
+        network = network.updated(&gradients, |parameter, gradient| parameter - 0.3 * gradient);
     }
 
     let learned = network.resolve(parameter_symbol).payload().unwrap();
@@ -207,8 +203,8 @@ fn momentum_descent_converges() {
         let loss = network.resolve(loss_symbol);
         let gradients = network.forward().backward(loss);
         let step = match velocity {
-            Some(previous) => previous.scaled(0.5) + gradients.into_field(),
-            None => gradients.into_field(),
+            Some(previous) => previous.scaled(0.5) + gradients,
+            None => gradients,
         };
         network = network.updated(&step, |parameter, direction| parameter - 0.1 * direction);
         velocity = Some(step);
@@ -225,7 +221,7 @@ fn updated_rejects_stale_gradients() {
     let parameter = network.parameter(1.0_f64);
     let gradients = network.forward().backward(parameter);
     network.leaf(2.0);
-    network.updated(gradients.as_field(), |parameter, _gradient| *parameter);
+    network.updated(&gradients, |parameter, _gradient| *parameter);
 }
 
 #[test]
@@ -235,5 +231,5 @@ fn updated_rejects_foreign_gradients() {
     let parameter = first.parameter(1.0_f64);
     let gradients = first.forward().backward(parameter);
     let second = Network::<f64>::new();
-    second.updated(gradients.as_field(), |parameter, _gradient| *parameter);
+    second.updated(&gradients, |parameter, _gradient| *parameter);
 }

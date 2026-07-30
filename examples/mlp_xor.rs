@@ -70,11 +70,11 @@ fn main() {
         if step % 800 == 0 {
             println!(
                 "step {step:4}: minibatch loss = {:.6}",
-                evaluation.of(loss_value).elements()[0]
+                evaluation.of(loss_value).to_vec()[0]
             );
         }
         let gradients = evaluation.backward(loss_value);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -87,13 +87,9 @@ fn main() {
         let evaluation =
             network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
         let outputs = evaluation.of(network.resolve(predicted_symbol));
-        for (sample, (prediction, target)) in outputs
-            .elements()
-            .iter()
-            .zip(batch_y.elements())
-            .enumerate()
-        {
-            let features = &batch_x.elements()[sample * 2..sample * 2 + 2];
+        for (sample, (prediction, target)) in outputs.iter().zip(batch_y.iter()).enumerate() {
+            let features = batch_x.as_slice().expect("a fed minibatch is contiguous");
+            let features = &features[sample * 2..sample * 2 + 2];
             println!(
                 "  {:?} -> {prediction:+.3} ({target:+.0})",
                 (features[0], features[1])

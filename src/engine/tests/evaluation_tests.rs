@@ -76,7 +76,7 @@ fn literal_sugar_gradients_match_finite_differences() {
 
 /// Returns `tensor` with the element at `position` shifted by `delta`.
 fn nudged(tensor: &Tensor<f64>, position: usize, delta: f64) -> Tensor<f64> {
-    let mut elements = tensor.elements().to_vec();
+    let mut elements = tensor.to_vec();
     elements[position] += delta;
     Tensor::new(tensor.shape().axes().iter().copied(), elements)
 }
@@ -103,7 +103,7 @@ fn dense_layer_gradients_match_finite_differences() {
         let activated = (product + bias.broadcast_along(0, product)).tanh();
         let error = activated - y;
         let loss = (error * error).sum();
-        network.forward().of(loss).elements()[0]
+        network.forward().of(loss).to_vec()[0]
     };
 
     let network = Network::new();
@@ -125,13 +125,13 @@ fn dense_layer_gradients_match_finite_differences() {
     ];
 
     for (which, input) in base.iter().enumerate() {
-        for position in 0..input.elements().len() {
+        for position in 0..input.to_vec().len() {
             let mut up = base.clone();
             up[which] = nudged(input, position, STEP);
             let mut down = base.clone();
             down[which] = nudged(input, position, -STEP);
             let numeric = (loss_of(&up) - loss_of(&down)) / (2.0 * STEP);
-            let value = analytic[which].elements()[position];
+            let value = analytic[which].to_vec()[position];
             assert!(
                 (value - numeric).abs() <= TOLERANCE * (1.0 + numeric.abs()),
                 "dense input {which} element {position} diverges: \
@@ -163,7 +163,7 @@ fn tensor_gradients_match_finite_differences() {
         let shifted = product + bias.broadcast_like(product);
         let error = shifted - y;
         let loss = (error * error).sum();
-        network.forward().of(loss).elements()[0]
+        network.forward().of(loss).to_vec()[0]
     };
 
     let network = Network::new();
@@ -185,13 +185,13 @@ fn tensor_gradients_match_finite_differences() {
     ];
 
     for (which, input) in base.iter().enumerate() {
-        for position in 0..input.elements().len() {
+        for position in 0..input.to_vec().len() {
             let mut up = base.clone();
             up[which] = nudged(input, position, STEP);
             let mut down = base.clone();
             down[which] = nudged(input, position, -STEP);
             let numeric = (loss_of(&up) - loss_of(&down)) / (2.0 * STEP);
-            let value = analytic[which].elements()[position];
+            let value = analytic[which].to_vec()[position];
             assert!(
                 (value - numeric).abs() <= TOLERANCE * (1.0 + numeric.abs()),
                 "tensor input {which} element {position} diverges: \

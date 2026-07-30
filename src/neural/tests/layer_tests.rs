@@ -61,7 +61,7 @@ fn express_records_tensor_granularity() {
 
     let evaluation = network.forward();
     assert_eq!(
-        evaluation.of(output).elements(),
+        evaluation.of(output).to_vec(),
         &[11.0, 22.0, 13.0, 24.0, 14.0, 26.0]
     );
 }
@@ -94,7 +94,7 @@ fn layer_trains_toward_targets() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -102,7 +102,7 @@ fn layer_trains_toward_targets() {
     let parameters: Vec<_> = layer.parameters().collect();
     let weights = network.resolve(parameters[0]).payload().unwrap();
     let bias = network.resolve(parameters[1]).payload().unwrap();
-    assert!((weights.elements()[0] - 2.0).abs() < 1e-3);
-    assert!((weights.elements()[1] + 1.0).abs() < 1e-3);
-    assert!((bias.elements()[0] - 0.5).abs() < 1e-3);
+    assert!((weights.to_vec()[0] - 2.0).abs() < 1e-3);
+    assert!((weights.to_vec()[1] + 1.0).abs() < 1e-3);
+    assert!((bias.to_vec()[0] - 0.5).abs() < 1e-3);
 }

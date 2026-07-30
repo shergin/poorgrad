@@ -6,7 +6,7 @@ use super::Tensor;
 fn new_builds_from_shape_and_elements() {
     let tensor = Tensor::new([2, 3], vec![1.0_f64; 6]);
     assert_eq!(tensor.shape(), Shape::new([2, 3]));
-    assert_eq!(tensor.elements().len(), 6);
+    assert_eq!(tensor.to_vec().len(), 6);
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn filled_rejects_empty_tensors() {
 fn clone_shares_storage() {
     let tensor = Tensor::new([2], [1.0_f64, 2.0]);
     let clone = tensor.clone();
-    assert!(tensor.elements().as_ptr() == clone.elements().as_ptr());
+    assert!(tensor.as_slice().unwrap().as_ptr() == clone.as_slice().unwrap().as_ptr());
 }
 
 #[test]
@@ -39,11 +39,11 @@ fn arithmetic_applies_elementwise() {
     let left = Tensor::new([2], [1.0_f64, 2.0]);
     let right = Tensor::new([2], [10.0, 20.0]);
 
-    assert_eq!((left.clone() + right.clone()).elements(), &[11.0, 22.0]);
-    assert_eq!((right.clone() - left.clone()).elements(), &[9.0, 18.0]);
-    assert_eq!((left.clone() * right.clone()).elements(), &[10.0, 40.0]);
-    assert_eq!((right.clone() / left.clone()).elements(), &[10.0, 10.0]);
-    assert_eq!((-left).elements(), &[-1.0, -2.0]);
+    assert_eq!((left.clone() + right.clone()).to_vec(), &[11.0, 22.0]);
+    assert_eq!((right.clone() - left.clone()).to_vec(), &[9.0, 18.0]);
+    assert_eq!((left.clone() * right.clone()).to_vec(), &[10.0, 40.0]);
+    assert_eq!((right.clone() / left.clone()).to_vec(), &[10.0, 10.0]);
+    assert_eq!((-left).to_vec(), &[-1.0, -2.0]);
 }
 
 #[test]
@@ -58,16 +58,16 @@ fn likes_preserve_shape() {
     let zero = tensor.zero_like();
     let one = tensor.one_like();
     assert_eq!(zero.shape(), Shape::new([2, 2]));
-    assert_eq!(zero.elements(), &[0.0; 4]);
-    assert_eq!(one.elements(), &[1.0; 4]);
+    assert_eq!(zero.to_vec(), &[0.0; 4]);
+    assert_eq!(one.to_vec(), &[1.0; 4]);
 }
 
 #[test]
 fn transcendentals_apply_elementwise() {
     let tensor = Tensor::new([2], [0.0_f64, 1.0]);
     let result = tensor.tanh();
-    assert!((result.elements()[0]).abs() < 1e-12);
-    assert!((result.elements()[1] - 1.0_f64.tanh()).abs() < 1e-12);
+    assert!((result.to_vec()[0]).abs() < 1e-12);
+    assert!((result.to_vec()[1] - 1.0_f64.tanh()).abs() < 1e-12);
 }
 
 #[test]
@@ -78,8 +78,8 @@ fn tensor_payloads_flow_through_the_graph() {
 
     let evaluation = network.forward();
     let result = evaluation.of(y);
-    assert!((result.elements()[0]).abs() < 1e-12);
-    assert!((result.elements()[1] - 1.0_f64.tanh()).abs() < 1e-12);
+    assert!((result.to_vec()[0]).abs() < 1e-12);
+    assert!((result.to_vec()[1] - 1.0_f64.tanh()).abs() < 1e-12);
 }
 
 #[test]
@@ -107,14 +107,14 @@ fn engine_trains_tensor_payloads_unchanged() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.clone()
         });
     }
 
     let learned = network.resolve(w_symbol).payload().unwrap();
-    assert!((learned.elements()[0] - 5.0).abs() < 1e-6);
-    assert!((learned.elements()[1] + 3.0).abs() < 1e-6);
+    assert!((learned.to_vec()[0] - 5.0).abs() < 1e-6);
+    assert!((learned.to_vec()[1] + 3.0).abs() < 1e-6);
 }
 
 #[test]
@@ -124,18 +124,18 @@ fn matmul_transpose_and_sum_compute() {
 
     let product = matrix.matmul(&column);
     assert_eq!(product.shape(), Shape::new([2, 1]));
-    assert_eq!(product.elements(), &[17.0, 39.0]);
+    assert_eq!(product.to_vec(), &[17.0, 39.0]);
 
     let transposed = matrix.transposed();
-    assert_eq!(transposed.elements(), &[1.0, 3.0, 2.0, 4.0]);
+    assert_eq!(transposed.to_vec(), &[1.0, 3.0, 2.0, 4.0]);
 
     let total = matrix.sum();
     assert_eq!(total.shape(), Shape::scalar());
-    assert_eq!(total.elements(), &[10.0]);
+    assert_eq!(total.to_vec(), &[10.0]);
 
     let spread = total.broadcast_like(&column);
     assert_eq!(spread.shape(), Shape::new([2, 1]));
-    assert_eq!(spread.elements(), &[10.0, 10.0]);
+    assert_eq!(spread.to_vec(), &[10.0, 10.0]);
 }
 
 #[test]
@@ -168,8 +168,8 @@ fn matmul_routes_gradients_through_transposed_operands() {
     // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
     // `dB = A^T . 1` column-summed.
     let gradients = evaluation.backward(loss);
-    assert_eq!(gradients.of(a).elements(), &[5.0, 6.0, 5.0, 6.0]);
-    assert_eq!(gradients.of(b).elements(), &[4.0, 6.0]);
+    assert_eq!(gradients.of(a).to_vec(), &[5.0, 6.0, 5.0, 6.0]);
+    assert_eq!(gradients.of(b).to_vec(), &[4.0, 6.0]);
 }
 
 #[test]
@@ -186,8 +186,8 @@ fn broadcast_and_sum_are_adjoint() {
     // The broadcast spreads to three positions, so the scalar's gradient
     // is the sum of three ones; the shape reference receives none.
     let gradients = evaluation.backward(loss);
-    assert_eq!(gradients.of(scalar).elements(), &[3.0]);
-    assert_eq!(gradients.of(reference).elements(), &[0.0, 0.0, 0.0]);
+    assert_eq!(gradients.of(scalar).to_vec(), &[3.0]);
+    assert_eq!(gradients.of(reference).to_vec(), &[0.0, 0.0, 0.0]);
 }
 
 #[test]
@@ -213,11 +213,11 @@ fn sum_along_reduces_the_named_axis() {
 
     let columns = matrix.sum_along(0);
     assert_eq!(columns.shape(), Shape::new([3]));
-    assert_eq!(columns.elements(), &[5.0, 7.0, 9.0]);
+    assert_eq!(columns.to_vec(), &[5.0, 7.0, 9.0]);
 
     let rows = matrix.sum_along(1);
     assert_eq!(rows.shape(), Shape::new([2]));
-    assert_eq!(rows.elements(), &[6.0, 15.0]);
+    assert_eq!(rows.to_vec(), &[6.0, 15.0]);
 }
 
 #[test]
@@ -227,11 +227,11 @@ fn broadcast_along_repeats_the_named_axis() {
 
     let spread = row.broadcast_along(0, &reference);
     assert_eq!(spread.shape(), Shape::new([2, 3]));
-    assert_eq!(spread.elements(), &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+    assert_eq!(spread.to_vec(), &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
 
     let column = Tensor::new([2], [1.0_f64, 2.0]);
     let spread = column.broadcast_along(1, &reference);
-    assert_eq!(spread.elements(), &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
+    assert_eq!(spread.to_vec(), &[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
 }
 
 #[test]
@@ -248,8 +248,8 @@ fn axis_sum_and_broadcast_are_adjoint() {
     // Each bias element is repeated across the two rows, so its
     // gradient is the sum of two ones; the shape reference gets none.
     let gradients = evaluation.backward(loss);
-    assert_eq!(gradients.of(bias).elements(), &[2.0, 2.0, 2.0]);
-    assert_eq!(gradients.of(reference).elements(), &[0.0; 6]);
+    assert_eq!(gradients.of(bias).to_vec(), &[2.0, 2.0, 2.0]);
+    assert_eq!(gradients.of(reference).to_vec(), &[0.0; 6]);
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn updated_rejects_shape_changing_updates() {
 
     let evaluation = network.forward();
     let gradients = evaluation.backward(loss);
-    network.updated(gradients.as_field(), |_parameter, _gradient| {
+    network.updated(&gradients, |_parameter, _gradient| {
         Tensor::new([2], [7.0, 8.0])
     });
 }
@@ -337,14 +337,14 @@ fn linear_regression_trains_in_matrix_form() {
         let loss = network.resolve(loss_symbol);
         let evaluation = network.forward();
         let gradients = evaluation.backward(loss);
-        network = network.updated(gradients.as_field(), |parameter, gradient| {
+        network = network.updated(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
 
     let learned = network.resolve(w_symbol).payload().unwrap();
-    assert!((learned.elements()[0] - 2.0).abs() < 1e-6);
-    assert!((learned.elements()[1] + 1.0).abs() < 1e-6);
+    assert!((learned.to_vec()[0] - 2.0).abs() < 1e-6);
+    assert!((learned.to_vec()[1] + 1.0).abs() < 1e-6);
 }
 
 #[test]
@@ -355,7 +355,7 @@ fn tensor_literals_mix_into_expressions() {
     let y = Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0);
 
     let evaluation = network.forward();
-    assert_eq!(evaluation.of(y).elements(), &[11.0, 21.0]);
+    assert_eq!(evaluation.of(y).to_vec(), &[11.0, 21.0]);
 }
 
 #[test]

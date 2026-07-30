@@ -32,7 +32,7 @@
 //!     let loss = network.resolve(loss_symbol);
 //!     let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
 //!     let gradients = evaluation.backward(loss);
-//!     network = network.updated(gradients.as_field(), |w, g| w - 0.02 * g);
+//!     network = network.updated(&gradients, |w, g| w - 0.02 * g);
 //! }
 //!
 //! let learned = network.resolve(w_symbol).payload().unwrap();

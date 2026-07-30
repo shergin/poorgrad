@@ -33,8 +33,9 @@ in [`Operation::backward`](src/engine/function/operation.rs).
 **Gradient.** The vector of partial derivatives of one chosen scalar (the
 *target*) with respect to every other value. A gradient is always "of a
 target"; there is no target-free gradient of a network. In poorgrad:
-[`Gradients`](src/engine/gradients.rs), produced by one backward sweep and tied to
-one evaluation and one target.
+[`Gradients`](src/engine/field.rs), produced by one backward sweep and tied to
+one evaluation and one target; it is a named role of `Field`, not a separate
+type.
 
 **Gradient accumulation.** When a value feeds several consumers, its
 gradient is the *sum* of the contributions along every path (the
@@ -174,8 +175,8 @@ are per-run buffers read back with the same proxies that built the graph:
 [`Evaluation`](src/engine/evaluation.rs) (a payload per node,
 generation-pinned, carrying its own tape snapshot so `backward`
 differentiates it without touching the network) and
-[`Gradients`](src/engine/gradients.rs) (a gradient per node, for one target;
-convertible into a `Field` for combination and optimizer state). Every
+[`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
+a `Field`, so it combines and carries optimizer state directly). Every
 position-indexed buffer — evaluations, gradients, fields — answers the same
 read-back accessor, `of(value)`.
 
@@ -186,8 +187,11 @@ runs (averaging data-parallel gradients) and carried across generations
 `scaled`, `zip`, `map` — with kinship (same lineage, same length,
 agreeing branch chains) checked on every combination; `Network::updated`
 takes any field as its update direction. In physics terms, a `Gradients` is
-a discrete gradient field over the graph. In poorgrad:
-[`Field`](src/engine/field.rs).
+a discrete gradient field over the graph, which is why `Gradients` is an
+alias for `Field` rather than a wrapper around it: the buffer's invariant is
+alignment to a graph, not differentiation, and Adam's second moment or an
+evaluation's forward payloads are fields that are not gradients at all. In
+poorgrad: [`Field`](src/engine/field.rs).
 
 **Lineage.** The family of networks descending from a common origin
 through forks and updates. Within a lineage, positions are attributed to
@@ -216,13 +220,49 @@ arithmetic operators, `zero_like`/`one_like`, and `Send + Sync`;
 [`Elementary`](src/payload/elementary.rs) adds the transcendentals
 activations need.
 
-**Tensor.** A dense, fixed-shape payload: proof that the payload
-contract holds beyond scalars, since a `Network<Tensor<f64>>` runs the
-engine unchanged. Shape and elements live behind `Arc`s so cloning is
-O(1); elementwise operations require identical shapes, and the
-tensor-native tier adds `matmul`, `transposed`, the reductions `sum` and
-`sum_along`, and the explicit broadcasts `broadcast_like` and
-`broadcast_along`. In poorgrad: [`Tensor`](src/payload/tensor.rs).
+**Tensor.** A fixed-shape payload backed by a shared element buffer read
+through a strided layout: proof that the payload contract holds beyond
+scalars, since a `Network<Tensor<f64>>` runs the engine unchanged.
+Cloning shares the buffer and copies only metadata, so it is O(1).
+Elementwise operations require identical shapes; the tensor-native tier
+adds `matmul`, `transposed`, the reductions `sum` and `sum_along`, and
+the explicit broadcasts `broadcast_like` and `broadcast_along`. Because
+tensors are immutable and buffer-shared, `transposed` and the broadcasts
+are O(1) views (or constants) rather than copies: no operation ever
+writes through an alias. Elements are read in logical row-major order
+through `iter`, as a contiguous slice through `as_slice` when the
+representation allows, or copied out with `to_vec`. In poorgrad:
+[`Tensor`](src/payload/tensor.rs).
+
+**Storage.** The buffer representation behind a `Tensor`, and the
+extension seam for how elements are held: today an `Arc`-shared row-major
+`Dense` buffer addressed by a `Layout`, and a non-allocating `Constant`
+that fills its shape with a single value. Each variant carries exactly
+its own metadata — the strides live inside `Dense`, not at the tensor
+level — so a future representation (a sparse or a SIMD-aligned buffer) is
+a new variant that a shared logical element access reaches without
+disturbing the operations. `Constant` is the first non-`Dense` variant:
+it makes `filled`, `zero_like`, `one_like`, and whole-shape broadcasts
+O(1) and closed under algebra, which most visibly keeps `backward`'s
+per-node gradient seed from allocating a zeroed buffer for every node.
+In poorgrad: the crate-internal [`Storage`](src/payload/storage.rs).
+
+**Layout.** How a dense buffer's logical indices map onto its flat
+storage: the shape, the per-axis strides, and the offset of the first
+element. The element at multi-index `(i0, ..., in)` lives at
+`offset + sum(i_k * strides_k)`. A contiguous row-major layout has
+`strides_k = product(shape[k + 1 ..])` and offset zero; view operations
+produce a new layout over the same buffer without moving any element. A
+stride of `0` marks a broadcast axis, whose steps do not advance within
+the buffer, which is how `broadcast_along` repeats without copying. In
+poorgrad: the crate-internal [`Layout`](src/payload/layout.rs).
+
+**Contiguity.** Whether a dense layout addresses a row-major slice of its
+buffer starting at its offset (extent-1 axes impose no constraint;
+stride-0 broadcast axes are never contiguous). A contiguous tensor
+exposes its elements as a borrowed slice and takes a flat iteration fast
+path, while a strided view walks its layout with an odometer. Contiguity
+is a property of the strides, computed on demand, not a stored flag.
 
 **Tensorial.** The payload tier of tensor-native operations — matrix
 multiplication, transposition, reductions, and explicit broadcasts —
