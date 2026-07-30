@@ -598,3 +598,102 @@ fn embedding_lookup_is_a_one_hot_matmul() {
         vec![2.0, 2.0, 0.0, 0.0, 1.0, 1.0]
     );
 }
+
+#[test]
+fn selection_is_a_one_hot_matrix() {
+    let selection = Tensor::selection(vec![0usize, 2, 0], 3, 1.0_f64);
+    assert_eq!(selection.shape(), Shape::new([3, 3]));
+    assert_eq!(
+        selection.to_vec(),
+        vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
+    );
+}
+
+#[test]
+#[should_panic(expected = "out of vocabulary")]
+fn selection_rejects_out_of_range_indices() {
+    Tensor::selection(vec![3usize], 3, 1.0_f64);
+}
+
+#[test]
+fn gather_selects_table_rows() {
+    let table = Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let selection = Tensor::selection(vec![0usize, 2, 0], 3, 1.0);
+    let gathered = table.gather(&selection);
+    assert_eq!(gathered.shape(), Shape::new([3, 2]));
+    assert_eq!(gathered.to_vec(), vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]);
+}
+
+#[test]
+fn scatter_accumulates_repeated_rows() {
+    let gradient = Tensor::filled([3, 2], 1.0_f64);
+    let selection = Tensor::selection(vec![0usize, 2, 0], 3, 1.0);
+
+    // Rows are scattered by index; token 0 is selected twice, so its row
+    // accumulates two ones, and token 1 (never selected) stays zero.
+    let scattered = gradient.scatter(&selection, 3);
+    assert_eq!(scattered.shape(), Shape::new([3, 2]));
+    assert_eq!(scattered.to_vec(), vec![2.0, 2.0, 0.0, 0.0, 1.0, 1.0]);
+}
+
+#[test]
+fn selection_densifies_for_non_gather_operations() {
+    // A selection is stored as its indices, but any operation other than
+    // gather still works by densifying it to the one-hot it represents.
+    let selection = Tensor::selection(vec![1usize, 1], 3, 1.0_f64);
+    let transposed = selection.transposed();
+    assert_eq!(transposed.shape(), Shape::new([3, 2]));
+    assert_eq!(transposed.to_vec(), vec![0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
+}
+
+#[test]
+fn gather_op_routes_gradients_by_scatter_add() {
+    let network = Network::new();
+    let table = network.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    // The selection is a per-run input: only its shape is fixed at record
+    // time, so one graph serves any batch of tokens.
+    let selection = network.input(Tensor::selection(vec![0usize, 0, 0], 3, 1.0));
+    let selection_symbol = selection.symbol();
+
+    let embedded = table.gather(selection);
+    let loss = embedded.sum();
+
+    let evaluation = network.forward_with([(
+        selection_symbol,
+        Tensor::selection(vec![0usize, 2, 0], 3, 1.0),
+    )]);
+    assert_eq!(
+        evaluation.of(embedded).to_vec(),
+        vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]
+    );
+
+    // The dedicated op's backward is the scatter-add, with no term for the
+    // selection at all: the indices are data.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(table).shape(), Shape::new([3, 2]));
+    assert_eq!(
+        gradients.of(table).to_vec(),
+        vec![2.0, 2.0, 0.0, 0.0, 1.0, 1.0]
+    );
+    assert_eq!(gradients.of(selection).to_vec(), vec![0.0; 9]);
+}
+
+#[test]
+fn gather_infers_the_result_shape() {
+    let network = Network::new();
+    let table = network.leaf(Tensor::new([4, 3], vec![0.0_f64; 12]));
+    let selection = network.input(Tensor::selection(vec![0usize, 1], 4, 1.0));
+
+    let embedded = table.gather(selection);
+    // [count, vocab] gather [vocab, dim] -> [count, dim].
+    assert_eq!(embedded.shape(), Shape::new([2, 3]));
+}
+
+#[test]
+#[should_panic(expected = "does not match table rows")]
+fn gather_rejects_vocabulary_mismatch() {
+    let network = Network::new();
+    let table = network.leaf(Tensor::new([3, 2], vec![0.0_f64; 6]));
+    let selection = network.input(Tensor::selection(vec![0usize], 4, 1.0));
+    table.gather(selection);
+}

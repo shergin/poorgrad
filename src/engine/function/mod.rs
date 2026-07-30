@@ -3,6 +3,7 @@ mod broadcast;
 mod broadcast_along;
 mod div;
 mod exp;
+mod gather;
 // The module convention names each file after its main concept, and this
 // module's main concept is the `Function` enum itself; the inception is
 // deliberate.
@@ -31,6 +32,7 @@ pub(crate) use broadcast_along::BroadcastAlong;
 pub(crate) use div::Div;
 pub(crate) use exp::Exp;
 pub(crate) use function::Function;
+pub(crate) use gather::Gather;
 pub(crate) use input::Input;
 pub(crate) use leaf::Leaf;
 pub(crate) use ln::Ln;

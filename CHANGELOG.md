@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Add `Value::narrow` (a slice window along one axis): the forward is an
   O(1) view and the gradient scatters back into the excluded positions as
   zeros.
+- Add `Value::gather` and `Tensor::selection`: an embedding-style row
+  lookup, `table.gather(selection)`, where `selection` is a one-hot
+  `[count, vocab]` input stored as its `usize` indices. The gradient
+  scatter-adds into the table only (repeated rows accumulate); the
+  selection is data and takes no gradient.
 
 ### Changed
 

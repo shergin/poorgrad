@@ -59,6 +59,16 @@ pub trait Tensorial: Elementary {
     /// `full_extent`, at `start ..`, with zeros elsewhere: the adjoint of
     /// [`narrowed`](Tensorial::narrowed) and the gradient rule for it.
     fn padded(&self, axis: usize, start: usize, full_extent: usize) -> Self;
+
+    /// Returns the rows of `self` selected by `selection` (a one-hot
+    /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
+    /// embedding-style row gather, `result[i] = self[selection_index(i)]`.
+    fn gather(&self, selection: &Self) -> Self;
+
+    /// Scatter-adds the rows of `self` into a zero payload of `rows` rows by
+    /// `selection`'s indices: the adjoint of [`gather`](Tensorial::gather)
+    /// and its gradient rule, accumulating rows selected more than once.
+    fn scatter(&self, selection: &Self, rows: usize) -> Self;
 }
 
 impl Tensorial for f32 {
@@ -101,6 +111,14 @@ impl Tensorial for f32 {
     fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
         *self
     }
+
+    fn gather(&self, _selection: &Self) -> Self {
+        *self
+    }
+
+    fn scatter(&self, _selection: &Self, _rows: usize) -> Self {
+        *self
+    }
 }
 
 impl Tensorial for f64 {
@@ -141,6 +159,14 @@ impl Tensorial for f64 {
     }
 
     fn padded(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
+        *self
+    }
+
+    fn gather(&self, _selection: &Self) -> Self {
+        *self
+    }
+
+    fn scatter(&self, _selection: &Self, _rows: usize) -> Self {
         *self
     }
 }

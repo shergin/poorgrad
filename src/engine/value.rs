@@ -254,6 +254,23 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     pub fn narrow(self, axis: usize, start: usize, len: usize) -> Self {
         self.apply(Function::narrow(self.id, axis, start, len))
     }
+
+    /// Records the row gather of this value (the table) by `selection`, a
+    /// one-hot `[count, vocab]` whose vocabulary matches the table's first
+    /// axis: `output[i]` is the table row `selection` names for position
+    /// `i`. The gradient scatter-adds into the table only; the selection is
+    /// data and receives no gradient.
+    ///
+    /// It is the embedding lookup: feed `selection` per run, so one graph
+    /// serves any batch of indices.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks, `selection` is not
+    /// rank 2, or its vocabulary does not match this value's first axis.
+    pub fn gather(self, selection: Self) -> Self {
+        self.assert_same_network(&selection);
+        self.apply(Function::gather(self.id, selection.id))
+    }
 }
 
 // Manual implementations avoid the `Data: Clone`/`Data: Copy` bounds a

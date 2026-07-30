@@ -23,6 +23,15 @@ use super::layout::Layout;
 /// is a single value that logically fills its shape without allocating a
 /// buffer, which keeps `filled`, `zero_like`, `one_like`, and whole-shape
 /// broadcasts O(1) and lets their algebra stay closed.
+///
+/// `Selection` is a one-hot `[count, vocab]` matrix stored as its `count`
+/// row indices: `t[i, j]` is `one` when `indices[i] == j` and `zero`
+/// otherwise. It keeps the token indices of an embedding lookup as `usize`
+/// inside a homogeneous payload (no integer encoding, no separate index
+/// type), lets the buffer stay O(count) instead of O(count * vocab), and is
+/// what a [`Gather`](crate) reads directly. The stored `zero` and `one` are
+/// the values the logical-access fallback hands out by reference, since a
+/// computed representation has no buffer to borrow from.
 #[derive(Debug, Clone)]
 pub(crate) enum Storage<Element> {
     Dense {
@@ -32,5 +41,11 @@ pub(crate) enum Storage<Element> {
     Constant {
         shape: Shape,
         value: Element,
+    },
+    Selection {
+        indices: Arc<Vec<usize>>,
+        shape: Shape,
+        zero: Element,
+        one: Element,
     },
 }

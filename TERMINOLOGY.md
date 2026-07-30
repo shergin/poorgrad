@@ -245,6 +245,9 @@ disturbing the operations. `Constant` is the first non-`Dense` variant:
 it makes `filled`, `zero_like`, `one_like`, and whole-shape broadcasts
 O(1) and closed under algebra, which most visibly keeps `backward`'s
 per-node gradient seed from allocating a zeroed buffer for every node.
+`Selection` is the second: a one-hot `[count, vocab]` matrix stored as its
+row indices, which keeps an embedding lookup's token indices as `usize`
+inside a homogeneous payload and lets a `Gather` read them directly.
 In poorgrad: the crate-internal [`Storage`](src/payload/storage.rs).
 
 **Layout.** How a dense buffer's logical indices map onto its flat
@@ -277,14 +280,20 @@ and broadcasting are adjoint in two matched pairs: `sum` with
 (one named axis), each the other's gradient rule. The view operations route their gradient the
 same adjoint way: `reshape` and `permuted` invert their view, and
 `narrow` selects a window whose gradient `pad`s back into the excluded
-positions as zeros (`narrowed` with `padded` as the third adjoint pair).
-Broadcasting is explicit by design: a single value spread across a named
-reference's shape, or a payload repeated along one named axis of a
-reference — the axis is always written, and no operation aligns shapes
-implicitly. In poorgrad: the [`Tensorial`](src/payload/tensorial.rs)
-trait, recorded into graphs via `Value::matmul`, `transposed`, `sum`,
-`sum_along`, `broadcast_like`, `broadcast_along`, `reshape`, `permuted`,
-`narrow`, and the `reshape`-based `squeezed` and `unsqueezed`.
+positions as zeros (`narrowed` with `padded` as the third adjoint pair),
+and `gather` selects table rows by a one-hot `Selection` whose gradient
+`scatter`s back, accumulating rows selected more than once (`gather` with
+`scatter` as the fourth pair, and the embedding lookup). The selection is
+data, so `gather`'s backward has no gradient term for it at all: the
+non-differentiability of the indices is a structural property of the
+operation, not a runtime flag. Broadcasting is explicit by design: a
+single value spread across a named reference's shape, or a payload
+repeated along one named axis of a reference — the axis is always
+written, and no operation aligns shapes implicitly. In poorgrad: the
+[`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
+`Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
+`broadcast_along`, `reshape`, `permuted`, `narrow`, `gather`, and the
+`reshape`-based `squeezed` and `unsqueezed`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

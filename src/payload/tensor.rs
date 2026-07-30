@@ -43,6 +43,7 @@ impl<Element> Tensor<Element> {
         match &self.storage {
             Storage::Dense { layout, .. } => layout.shape(),
             Storage::Constant { shape, .. } => shape,
+            Storage::Selection { shape, .. } => shape,
         }
     }
 
@@ -55,6 +56,30 @@ impl<Element> Tensor<Element> {
         match &self.storage {
             Storage::Dense { data, layout } => &data[layout.storage_index(position)],
             Storage::Constant { value, .. } => value,
+            Storage::Selection {
+                indices,
+                shape,
+                zero,
+                one,
+            } => {
+                let vocab = shape.axes()[1];
+                if indices[position / vocab] == position % vocab {
+                    one
+                } else {
+                    zero
+                }
+            }
+        }
+    }
+
+    /// Returns the row indices of a `Selection` payload.
+    ///
+    /// # Panics
+    /// Panics if `self` is not a selection built with [`Tensor::selection`].
+    fn selection_indices(&self) -> &[usize] {
+        match &self.storage {
+            Storage::Selection { indices, .. } => indices,
+            _ => panic!("gather requires a selection tensor built with `Tensor::selection`"),
         }
     }
 
@@ -93,6 +118,19 @@ impl<Element> Tensor<Element> {
                 coordinates: std::iter::repeat_n(0usize, layout.rank()).collect(),
                 index: layout.offset(),
                 remaining: layout.volume(),
+            },
+            Storage::Selection {
+                indices,
+                shape,
+                zero,
+                one,
+            } => ElementIter::Selection {
+                indices: indices.as_slice(),
+                vocab: shape.axes()[1],
+                zero,
+                one,
+                position: 0,
+                total: shape.volume(),
             },
         }
     }
@@ -159,6 +197,56 @@ impl<Element: Differentiable> Tensor<Element> {
         }
     }
 
+    /// Creates the one-hot `[indices.len(), vocab]` selection matrix whose
+    /// row `i` is `one` at column `indices[i]` and zero elsewhere, stored as
+    /// its indices rather than a dense buffer.
+    ///
+    /// It carries the token indices of an embedding lookup: feed it as a
+    /// per-run input and read it with [`Tensorial::gather`](super::Tensorial::gather).
+    /// `one` is the value placed at each selected position (the
+    /// multiplicative identity, e.g. `1.0`); the zero is derived from it.
+    ///
+    /// # Panics
+    /// Panics if `vocab` is zero, `indices` is empty, or any index is not
+    /// below `vocab`.
+    pub fn selection(indices: impl Into<Vec<usize>>, vocab: usize, one: Element) -> Self {
+        let indices = indices.into();
+        assert!(vocab > 0, "a selection needs a non-empty vocabulary");
+        assert!(
+            !indices.is_empty(),
+            "tensors must hold at least one element"
+        );
+        for &index in &indices {
+            assert!(
+                index < vocab,
+                "selection index {index} is out of vocabulary {vocab}"
+            );
+        }
+        let zero = one.zero_like();
+        let shape = Shape::new([indices.len(), vocab]);
+        Self {
+            storage: Storage::Selection {
+                indices: Arc::new(indices),
+                shape,
+                zero,
+                one,
+            },
+        }
+    }
+
+    /// Returns an equivalent contiguous dense tensor, materializing any
+    /// non-dense or strided representation.
+    ///
+    /// It is the correctness fallback for view operations that a `Selection`
+    /// does not model directly (transpose, permute, narrow, axis broadcast):
+    /// densify first, then take the dense view.
+    fn densified(&self) -> Self {
+        match &self.storage {
+            Storage::Dense { layout, .. } if layout.is_contiguous() => self.clone(),
+            _ => Self::dense(self.logical_shape().clone(), self.to_vec()),
+        }
+    }
+
     /// Returns a tensor with every element passed through `transform`.
     ///
     /// A constant maps in place to another constant; a dense tensor
@@ -166,7 +254,7 @@ impl<Element: Differentiable> Tensor<Element> {
     fn map(&self, transform: impl Fn(&Element) -> Element) -> Self {
         match &self.storage {
             Storage::Constant { shape, value } => Self::constant(shape.clone(), transform(value)),
-            Storage::Dense { .. } => Self::dense(
+            _ => Self::dense(
                 self.logical_shape().clone(),
                 self.iter().map(transform).collect(),
             ),
@@ -234,6 +322,14 @@ enum ElementIter<'tensor, Element> {
         index: usize,
         remaining: usize,
     },
+    Selection {
+        indices: &'tensor [usize],
+        vocab: usize,
+        zero: &'tensor Element,
+        one: &'tensor Element,
+        position: usize,
+        total: usize,
+    },
 }
 
 impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
@@ -278,6 +374,22 @@ impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
                     }
                 }
                 Some(element)
+            }
+            ElementIter::Selection {
+                indices,
+                vocab,
+                zero,
+                one,
+                position,
+                total,
+            } => {
+                if *position >= *total {
+                    return None;
+                }
+                let row = *position / *vocab;
+                let column = *position % *vocab;
+                *position += 1;
+                Some(if indices[row] == column { *one } else { *zero })
             }
         }
     }
@@ -428,6 +540,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             Storage::Constant { shape, value } => {
                 Self::constant(transposed_shape(shape), value.clone())
             }
+            Storage::Selection { .. } => self.densified().transposed(),
         }
     }
 
@@ -518,6 +631,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                     layout: layout.broadcast_along(axis, reference_shape),
                 },
             },
+            Storage::Selection { .. } => self.densified().broadcast_along(axis, reference),
         }
     }
 
@@ -547,6 +661,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                 },
                 None => Self::dense(shape, self.to_vec()),
             },
+            Storage::Selection { .. } => Self::dense(shape, self.to_vec()),
         }
     }
 
@@ -585,6 +700,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                     layout: layout.permuted(order),
                 },
             },
+            Storage::Selection { .. } => self.densified().permuted(order),
         }
     }
 
@@ -622,6 +738,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                     layout: layout.narrowed(axis, start, len),
                 },
             },
+            Storage::Selection { .. } => self.densified().narrowed(axis, start, len),
         }
     }
 
@@ -666,6 +783,60 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                 .map(|(index, &e)| if index == axis { full_extent } else { e }),
         );
         Self::dense(padded, elements)
+    }
+
+    /// Returns the rows of `self` selected by `selection`, a one-hot
+    /// `[count, vocab]` whose vocabulary must equal `self`'s first axis; the
+    /// result is `[count, ...self.shape[1..]]` with row `i` equal to
+    /// `self`'s row `selection_index(i)`.
+    ///
+    /// # Panics
+    /// Panics if `selection` is not a `[count, vocab]` selection, `self` has
+    /// no axes, or the vocabulary does not match `self`'s first axis.
+    fn gather(&self, selection: &Self) -> Self {
+        let table = self.logical_shape();
+        let indices = selection.selection_indices();
+        assert!(table.rank() >= 1, "gather table needs at least one axis");
+        let vocabulary = selection.logical_shape().axes()[1];
+        assert_eq!(
+            vocabulary,
+            table.axes()[0],
+            "gather selection vocabulary {vocabulary} does not match table rows {}",
+            table.axes()[0]
+        );
+        let row_size: usize = table.axes()[1..].iter().product();
+
+        let mut elements = Vec::with_capacity(indices.len() * row_size);
+        for &row in indices {
+            for offset in 0..row_size {
+                elements.push(self.get(row * row_size + offset).clone());
+            }
+        }
+        let result =
+            Shape::new(std::iter::once(indices.len()).chain(table.axes()[1..].iter().copied()));
+        Self::dense(result, elements)
+    }
+
+    /// Scatter-adds the rows of `self` (a `[count, ...]` gradient) into a
+    /// zero `[rows, ...]` payload by `selection`'s indices: the adjoint of
+    /// [`gather`](Tensorial::gather) and its gradient rule. Rows selected
+    /// more than once accumulate.
+    fn scatter(&self, selection: &Self, rows: usize) -> Self {
+        let gradient = self.logical_shape();
+        let indices = selection.selection_indices();
+        let row_size: usize = gradient.axes()[1..].iter().product();
+        let zero = self.get(0).zero_like();
+
+        let mut elements = vec![zero; rows * row_size];
+        for (source, &target) in indices.iter().enumerate() {
+            for offset in 0..row_size {
+                let position = target * row_size + offset;
+                elements[position] =
+                    elements[position].clone() + self.get(source * row_size + offset).clone();
+            }
+        }
+        let result = Shape::new(std::iter::once(rows).chain(gradient.axes()[1..].iter().copied()));
+        Self::dense(result, elements)
     }
 }
 
