@@ -562,3 +562,39 @@ fn narrow_routes_gradients_to_the_window() {
     assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
     assert_eq!(gradients.of(x).to_vec(), vec![0.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
 }
+
+#[test]
+fn embedding_lookup_is_a_one_hot_matmul() {
+    // An embedding lookup `table[tokens]` is `onehot.matmul(table)`, so it
+    // needs no dedicated gather op. The one-hot rows are per-run data fed as
+    // an input, so one recorded graph serves any minibatch, and `matmul`'s
+    // backward is exactly the scatter-add embedding gradient.
+    let network = Network::new();
+    let table = network.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    // Only the shape of the token batch is fixed at record time; the tokens
+    // themselves arrive per run through `forward_with`.
+    let onehot = network.input(Tensor::filled([3, 3], 0.0));
+    let onehot_symbol = onehot.symbol();
+
+    let embedded = onehot.matmul(table);
+    let loss = embedded.sum();
+
+    // Feed the tokens [0, 2, 0] as one-hot rows over a vocabulary of three.
+    let tokens = Tensor::new([3, 3], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
+    let evaluation = network.forward_with([(onehot_symbol, tokens)]);
+
+    // The result rows are the looked-up table rows, in token order.
+    assert_eq!(
+        evaluation.of(embedded).to_vec(),
+        vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]
+    );
+
+    // Token 0 is selected twice, so its row accumulates two ones; token 1 is
+    // never selected, so its row's gradient is zero. That accumulation is the
+    // scatter-add a dedicated gather would have to implement by hand.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(
+        gradients.of(table).to_vec(),
+        vec![2.0, 2.0, 0.0, 0.0, 1.0, 1.0]
+    );
+}
