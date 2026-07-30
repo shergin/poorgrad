@@ -228,6 +228,19 @@ fn maximum_picks_the_larger_element() {
 }
 
 #[test]
+fn sqrt_applies_elementwise() {
+    let tensor = Tensor::new([2], [4.0_f64, 9.0]);
+    assert_eq!(tensor.sqrt().to_vec(), &[2.0, 3.0]);
+}
+
+#[test]
+fn step_indicates_reached_thresholds() {
+    let values = Tensor::new([3], [1.0_f64, 2.0, 3.0]);
+    let thresholds = Tensor::filled([3], 2.0);
+    assert_eq!(values.step(&thresholds).to_vec(), &[0.0, 1.0, 1.0]);
+}
+
+#[test]
 fn max_along_reduces_the_named_axis() {
     let matrix = Tensor::new([2, 3], [1.0_f64, 5.0, 3.0, 4.0, 2.0, 6.0]);
 
@@ -761,4 +774,61 @@ fn log_softmax_rejects_excessive_axes() {
     let network = Network::new();
     let logits = network.leaf(Tensor::filled([2, 3], 0.0_f64));
     logits.log_softmax(2);
+}
+
+#[test]
+fn relu_masks_gradients_by_sign() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([4], [-2.0_f64, -0.5, 0.0, 3.0]));
+    let activated = x.relu();
+    let loss = activated.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(activated).to_vec(), &[0.0, 0.0, 0.0, 3.0]);
+
+    // The gradient passes only where the operand reached zero; the
+    // subgradient at zero itself is one.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(x).to_vec(), &[0.0, 0.0, 1.0, 1.0]);
+}
+
+#[test]
+fn roots_and_powers_route_gradients() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [4.0_f64, 9.0]));
+    let exponent = network.leaf(Tensor::filled([2], 2.0));
+    let loss = (x.sqrt() + x.powf(exponent)).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.of(loss), Tensor::new([], [102.0]));
+
+    // Per element: `1 / (2 sqrt(x)) + 2 x`, so `[0.25 + 8, 1/6 + 18]`.
+    let gradients = evaluation.backward(loss);
+    let expected = [8.25, 18.0 + 1.0 / 6.0];
+    for (computed, expected) in gradients.of(x).to_vec().into_iter().zip(expected) {
+        assert!((computed - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn abs_composes_from_maximum() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3], [-2.0_f64, 0.0, 3.0]));
+    let magnitude = x.abs();
+    let loss = magnitude.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(magnitude).to_vec(), &[2.0, 0.0, 3.0]);
+
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(x).to_vec(), &[-1.0, 1.0, 1.0]);
+}
+
+#[test]
+#[should_panic(expected = "equal shapes")]
+fn maximum_rejects_mismatched_operands() {
+    let network = Network::new();
+    let left = network.leaf(Tensor::filled([2], 0.0_f64));
+    let right = network.leaf(Tensor::filled([3], 0.0));
+    left.maximum(right);
 }

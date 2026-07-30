@@ -82,6 +82,7 @@ impl<Data: Elementary> Neuron<Data> {
         match self.activation {
             Activation::Identity => sum,
             Activation::Tanh => sum.tanh(),
+            Activation::Relu => sum.relu(),
         }
     }
 }

@@ -67,6 +67,23 @@ fn express_records_tensor_granularity() {
 }
 
 #[test]
+fn relu_layers_rectify_their_output() {
+    let network = Network::new();
+    let layer = Layer::new(
+        &network,
+        Tensor::new([1, 2], [1.0_f64, -1.0]),
+        Tensor::filled([2], 0.0),
+        Activation::Relu,
+    );
+    let input = network.leaf(Tensor::new([2, 1], [2.0, -3.0]));
+
+    let output = layer.express(&network, input);
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(output).to_vec(), &[2.0, 0.0, 0.0, 3.0]);
+}
+
+#[test]
 fn layer_trains_toward_targets() {
     // Fit `y = x . w + b` for `w = [[2], [-1]]` and `b = [0.5]`, feeding
     // the whole batch through one tensor-granularity layer.

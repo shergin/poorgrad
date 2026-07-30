@@ -473,6 +473,10 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
         self.map(|element| element.ln())
     }
 
+    fn sqrt(&self) -> Self {
+        self.map(|element| element.sqrt())
+    }
+
     fn tanh(&self) -> Self {
         self.map(|element| element.tanh())
     }
@@ -485,6 +489,10 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
 
     fn maximum(&self, other: &Self) -> Self {
         self.zip(other, |element, other| element.maximum(other))
+    }
+
+    fn step(&self, threshold: &Self) -> Self {
+        self.zip(threshold, |element, threshold| element.step(threshold))
     }
 }
 

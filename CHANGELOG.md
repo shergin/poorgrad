@@ -25,6 +25,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   `[count, vocab]` input stored as its `usize` indices. The gradient
   scatter-adds into the table only (repeated rows accumulate); the
   selection is data and takes no gradient.
+- Add `Value::log_softmax`, a fused, numerically stable log-softmax along
+  a named axis (the max-shifted forward cannot be composed from recorded
+  operations), and `cross_entropy`, the classification loss composed on
+  top of it, normalizing by the targets' total mass — the batch size for
+  one-hot targets.
+- Add the elementwise operations `Value::sqrt`, `Value::powf`,
+  `Value::maximum`, and `Value::relu`, the composed `Value::abs`, and
+  `Activation::Relu` for layers and neurons. The `Elementary` payload
+  contract gains `sqrt`, `maximum`, and the 0/1 indicator `step`;
+  `Tensorial` gains the `max_along` reduction.
 
 ### Changed
 

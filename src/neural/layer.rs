@@ -95,6 +95,7 @@ impl<Data: Tensorial> Layer<Data> {
         match self.activation {
             Activation::Identity => shifted,
             Activation::Tanh => shifted.tanh(),
+            Activation::Relu => shifted.relu(),
         }
     }
 }

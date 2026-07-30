@@ -14,6 +14,13 @@ pub trait Elementary: Differentiable {
     /// Returns the natural logarithm of `self`.
     fn ln(&self) -> Self;
 
+    /// Returns the square root of `self`.
+    ///
+    /// It is a distinct operation rather than `powf(0.5)` because IEEE 754
+    /// requires `sqrt` to be correctly rounded and makes no such promise
+    /// for `pow`.
+    fn sqrt(&self) -> Self;
+
     /// Returns the hyperbolic tangent of `self`.
     fn tanh(&self) -> Self;
 
@@ -26,6 +33,14 @@ pub trait Elementary: Differentiable {
     /// could not express an elementwise result, so order enters the
     /// contract as an operation rather than as `PartialOrd`.
     fn maximum(&self, other: &Self) -> Self;
+
+    /// Returns the elementwise 0/1 indicator of `self >= threshold`: the
+    /// Heaviside step, one where `self` reaches the threshold and zero
+    /// elsewhere.
+    ///
+    /// It carries the derivative of the `maximum` family, marking the
+    /// positions where the left side won; ties answer one.
+    fn step(&self, threshold: &Self) -> Self;
 }
 
 impl Elementary for f32 {
@@ -35,6 +50,10 @@ impl Elementary for f32 {
 
     fn ln(&self) -> Self {
         f32::ln(*self)
+    }
+
+    fn sqrt(&self) -> Self {
+        f32::sqrt(*self)
     }
 
     fn tanh(&self) -> Self {
@@ -48,6 +67,10 @@ impl Elementary for f32 {
     fn maximum(&self, other: &Self) -> Self {
         f32::max(*self, *other)
     }
+
+    fn step(&self, threshold: &Self) -> Self {
+        if *self >= *threshold { 1.0 } else { 0.0 }
+    }
 }
 
 impl Elementary for f64 {
@@ -57,6 +80,10 @@ impl Elementary for f64 {
 
     fn ln(&self) -> Self {
         f64::ln(*self)
+    }
+
+    fn sqrt(&self) -> Self {
+        f64::sqrt(*self)
     }
 
     fn tanh(&self) -> Self {
@@ -69,5 +96,9 @@ impl Elementary for f64 {
 
     fn maximum(&self, other: &Self) -> Self {
         f64::max(*self, *other)
+    }
+
+    fn step(&self, threshold: &Self) -> Self {
+        if *self >= *threshold { 1.0 } else { 0.0 }
     }
 }

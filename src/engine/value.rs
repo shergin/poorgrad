@@ -143,6 +143,52 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     pub fn ln(self) -> Self {
         self.apply(Function::ln(), &[self.id])
     }
+
+    /// Records the square root of this value on the same network and
+    /// returns a proxy to it.
+    pub fn sqrt(self) -> Self {
+        self.apply(Function::sqrt(), &[self.id])
+    }
+
+    /// Records this value raised elementwise to the power of `exponent`
+    /// on the same network and returns a proxy to it.
+    ///
+    /// The exponent-side gradient involves the logarithm of this value,
+    /// so it is a number only where this value is positive.
+    ///
+    /// # Panics
+    /// Panics if the operands belong to different networks or their
+    /// shapes differ.
+    pub fn powf(self, exponent: Self) -> Self {
+        self.assert_same_network(&exponent);
+        self.apply(Function::powf(), &[self.id, exponent.id])
+    }
+
+    /// Records the elementwise maximum of this value and `rhs` on the
+    /// same network and returns a proxy to it; on a tie the gradient goes
+    /// to this value, not `rhs`.
+    ///
+    /// # Panics
+    /// Panics if the operands belong to different networks or their
+    /// shapes differ.
+    pub fn maximum(self, rhs: Self) -> Self {
+        self.assert_same_network(&rhs);
+        self.apply(Function::maximum(), &[self.id, rhs.id])
+    }
+
+    /// Records the rectified linear unit of this value — its elementwise
+    /// maximum with zero — on the same network and returns a proxy to it;
+    /// the subgradient at zero is one.
+    pub fn relu(self) -> Self {
+        self.apply(Function::relu(), &[self.id])
+    }
+
+    /// Records the absolute value of this value as the composition
+    /// `self.maximum(-self)` and returns a proxy to it; the subgradient
+    /// at zero is one.
+    pub fn abs(self) -> Self {
+        self.maximum(-self)
+    }
 }
 
 impl<'network, Data: Tensorial> Value<'network, Data> {

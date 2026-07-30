@@ -107,9 +107,9 @@ engine to accumulate. No rule ever sees the tape, a `ValueId`, or a run
 buffer, so every rule is plain math, testable without a network. In
 poorgrad: the [`Operation`](src/engine/function/operation.rs) trait,
 implemented by each computed `Function` variant (`Add`, `Sub`, `Mul`,
-`Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`,
-`SumAlong`, `Broadcast`, `BroadcastAlong`, `Reshape`, `Permute`,
-`Narrow`, `Gather`, `LogSoftmax` under
+`Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `Sqrt`, `Powf`, `Maximum`, `Relu`,
+`MatMul`, `Transpose`, `Sum`, `SumAlong`, `Broadcast`, `BroadcastAlong`,
+`Reshape`, `Permute`, `Narrow`, `Gather`, `LogSoftmax` under
 [`src/engine/function/`](src/engine/function/)) and dispatched with a
 plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
@@ -233,11 +233,15 @@ crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
 contract is the [`Differentiable`](src/payload/differentiable.rs) trait —
 arithmetic operators, `zero_like`/`one_like`, and `Send + Sync`;
-[`Elementary`](src/payload/elementary.rs) adds the transcendentals and the
-elementwise `maximum` that activations and stable normalization need —
-order enters the contract as a payload-returning operation, never as
+[`Elementary`](src/payload/elementary.rs) adds the transcendentals, the
+correctly rounded `sqrt` (which `powf(0.5)` is not), and the order pair
+`maximum`/`step` that activations and stable normalization need — order
+enters the contract as payload-returning operations, never as
 `PartialOrd`, whose `bool` answer cannot express an elementwise
-comparison.
+comparison. `step` is the Heaviside 0/1 indicator of `self >= threshold`
+that carries the `maximum` family's derivative; ties answer one, so
+`maximum` hands a tied gradient to its left operand and the relu
+subgradient at zero is one.
 
 **Tensor.** A fixed-shape payload backed by a shared element buffer read
 through a strided layout: proof that the payload contract holds beyond
@@ -364,9 +368,14 @@ initializer. In poorgrad: [`Mlp`](src/neural/mlp.rs).
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
 is what gives stacked neurons expressive power beyond affine maps. It is a
 graph operation like any other, so it participates in differentiation
-(`Function::Tanh`, recorded by `Value::tanh`; the derivative
-`1 - tanh(x)^2` reuses the node's own output). In poorgrad: the
-[`Activation`](src/neural/activation.rs) enum selecting `Identity` or `Tanh`.
+(`Function::Tanh`, recorded by `Value::tanh`, whose derivative
+`1 - tanh(x)^2` reuses the node's own output; `Function::Relu`, recorded
+by `Value::relu`, whose gradient is masked by the 0/1 `step` indicator —
+a dedicated unary variant because recording cannot construct a zero
+payload for a generic `Data`, while the rule reaches one at run time
+through `zero_like`). In poorgrad: the
+[`Activation`](src/neural/activation.rs) enum selecting `Identity`,
+`Tanh`, or `Relu`.
 
 **Loss.** A scalar training objective written as a composed formula over
 recorded operations, not as a primitive: its gradient falls out of the

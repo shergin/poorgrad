@@ -5,8 +5,8 @@ use static_assertions::assert_impl_all;
 
 use super::{
     Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, LogSoftmax,
-    MatMul, Mul, Narrow, Neg, Operation, Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh,
-    Transpose,
+    MatMul, Maximum, Mul, Narrow, Neg, Operation, Parameter, Permute, Powf, Relu, Reshape, Sqrt,
+    Sub, Sum, SumAlong, Tanh, Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -46,6 +46,10 @@ pub(crate) enum Function<Data> {
     Narrow(Narrow),
     Gather(Gather),
     LogSoftmax(LogSoftmax),
+    Sqrt(Sqrt),
+    Powf(Powf),
+    Maximum(Maximum),
+    Relu(Relu),
 }
 
 impl<Data> Function<Data> {
@@ -166,6 +170,26 @@ impl<Data> Function<Data> {
         Function::LogSoftmax(LogSoftmax { axis })
     }
 
+    /// Creates the square root of the single operand.
+    pub(crate) fn sqrt() -> Self {
+        Function::Sqrt(Sqrt)
+    }
+
+    /// Creates the elementwise power of the `[base, exponent]` operands.
+    pub(crate) fn powf() -> Self {
+        Function::Powf(Powf)
+    }
+
+    /// Creates the elementwise maximum of the `[left, right]` operands.
+    pub(crate) fn maximum() -> Self {
+        Function::Maximum(Maximum)
+    }
+
+    /// Creates the rectified linear unit of the single operand.
+    pub(crate) fn relu() -> Self {
+        Function::Relu(Relu)
+    }
+
     /// Returns the number of operand links this function expects.
     ///
     /// Sources have none; recording asserts every node's operand list
@@ -192,6 +216,10 @@ impl<Data> Function<Data> {
             Function::Narrow(narrow) => narrow.arity(),
             Function::Gather(gather) => gather.arity(),
             Function::LogSoftmax(log_softmax) => log_softmax.arity(),
+            Function::Sqrt(sqrt) => sqrt.arity(),
+            Function::Powf(powf) => powf.arity(),
+            Function::Maximum(maximum) => maximum.arity(),
+            Function::Relu(relu) => relu.arity(),
         }
     }
 
@@ -231,6 +259,10 @@ impl<Data> Function<Data> {
             Function::Narrow(narrow) => narrow.infer_shape(operands),
             Function::Gather(gather) => gather.infer_shape(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.infer_shape(operands),
+            Function::Sqrt(sqrt) => sqrt.infer_shape(operands),
+            Function::Powf(powf) => powf.infer_shape(operands),
+            Function::Maximum(maximum) => maximum.infer_shape(operands),
+            Function::Relu(relu) => relu.infer_shape(operands),
         }
     }
 }
@@ -272,6 +304,10 @@ impl<Data: Tensorial> Function<Data> {
             Function::Narrow(narrow) => narrow.forward(operands),
             Function::Gather(gather) => gather.forward(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.forward(operands),
+            Function::Sqrt(sqrt) => sqrt.forward(operands),
+            Function::Powf(powf) => powf.forward(operands),
+            Function::Maximum(maximum) => maximum.forward(operands),
+            Function::Relu(relu) => relu.forward(operands),
         }
     }
 
@@ -309,6 +345,10 @@ impl<Data: Tensorial> Function<Data> {
             Function::Narrow(narrow) => narrow.backward(operands, output, gradient),
             Function::Gather(gather) => gather.backward(operands, output, gradient),
             Function::LogSoftmax(log_softmax) => log_softmax.backward(operands, output, gradient),
+            Function::Sqrt(sqrt) => sqrt.backward(operands, output, gradient),
+            Function::Powf(powf) => powf.backward(operands, output, gradient),
+            Function::Maximum(maximum) => maximum.backward(operands, output, gradient),
+            Function::Relu(relu) => relu.backward(operands, output, gradient),
         }
     }
 }

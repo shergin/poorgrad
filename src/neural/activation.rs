@@ -5,4 +5,6 @@ pub enum Activation {
     Identity,
     /// Applies the hyperbolic tangent elementwise.
     Tanh,
+    /// Applies the rectified linear unit elementwise.
+    Relu,
 }
