@@ -78,6 +78,12 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.tape.with_node(self.id, |function| function.clone())
     }
 
+    /// Returns the operand links of this value's node.
+    #[cfg(test)]
+    pub(crate) fn operands(&self) -> Vec<ValueId> {
+        self.tape.operands_of(self.id).as_slice().to_vec()
+    }
+
     /// Returns the shape of this value, inferred when it was recorded.
     pub fn shape(&self) -> Shape {
         self.tape.shape(self.id)
@@ -94,10 +100,10 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.tape.payload_of(self.id)
     }
 
-    /// Records a computed node produced by `function` on the same network
-    /// and returns a proxy to it.
-    fn apply(&self, function: Function<Data>) -> Self {
-        let id = self.tape.record(function);
+    /// Records a computed node produced by `function` over the positional
+    /// `operands` on the same network and returns a proxy to it.
+    fn apply(&self, function: Function<Data>, operands: &[ValueId]) -> Self {
+        let id = self.tape.record(function, operands);
         Self::bind(self.tape, id)
     }
 
@@ -107,7 +113,7 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     /// It backs the payload-literal operator sugar: every literal
     /// appearance records its own leaf.
     pub(crate) fn literal(&self, data: Data) -> Self {
-        Self::bind(self.tape, self.tape.record(Function::leaf(data)))
+        Self::bind(self.tape, self.tape.record(Function::leaf(data), &[]))
     }
 
     /// Panics if `other` belongs to a different network.
@@ -123,19 +129,19 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     /// Records the hyperbolic tangent of this value on the same network
     /// and returns a proxy to it.
     pub fn tanh(self) -> Self {
-        self.apply(Function::tanh(self.id))
+        self.apply(Function::tanh(), &[self.id])
     }
 
     /// Records the exponential of this value on the same network and
     /// returns a proxy to it.
     pub fn exp(self) -> Self {
-        self.apply(Function::exp(self.id))
+        self.apply(Function::exp(), &[self.id])
     }
 
     /// Records the natural logarithm of this value on the same network
     /// and returns a proxy to it.
     pub fn ln(self) -> Self {
-        self.apply(Function::ln(self.id))
+        self.apply(Function::ln(), &[self.id])
     }
 }
 
@@ -148,7 +154,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// not rank 2, or their inner dimensions differ.
     pub fn matmul(self, rhs: Self) -> Self {
         self.assert_same_network(&rhs);
-        self.apply(Function::matmul(self.id, rhs.id))
+        self.apply(Function::matmul(), &[self.id, rhs.id])
     }
 
     /// Records the transposition of this value on the same network and
@@ -157,13 +163,13 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// # Panics
     /// Panics if this value's rank exceeds 2.
     pub fn transposed(self) -> Self {
-        self.apply(Function::transpose(self.id))
+        self.apply(Function::transpose(), &[self.id])
     }
 
     /// Records the sum of every value in this payload on the same network
     /// and returns a proxy to it.
     pub fn sum(self) -> Self {
-        self.apply(Function::sum(self.id))
+        self.apply(Function::sum(), &[self.id])
     }
 
     /// Records the sum of this value along `axis` on the same network
@@ -172,7 +178,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// # Panics
     /// Panics if `axis` is out of rank.
     pub fn sum_along(self, axis: usize) -> Self {
-        self.apply(Function::sum_along(self.id, axis))
+        self.apply(Function::sum_along(axis), &[self.id])
     }
 
     /// Records the explicit broadcast of this single-value payload across
@@ -183,7 +189,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// shape does not contain exactly one element.
     pub fn broadcast_like(self, reference: Self) -> Self {
         self.assert_same_network(&reference);
-        self.apply(Function::broadcast(self.id, reference.id))
+        self.apply(Function::broadcast(), &[self.id, reference.id])
     }
 
     /// Records the explicit repetition of this value along `axis` of
@@ -196,7 +202,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// `reference`'s rank, or the remaining shapes differ.
     pub fn broadcast_along(self, axis: usize, reference: Self) -> Self {
         self.assert_same_network(&reference);
-        self.apply(Function::broadcast_along(self.id, reference.id, axis))
+        self.apply(Function::broadcast_along(axis), &[self.id, reference.id])
     }
 
     /// Records a reshape of this value to `shape` on the same network and
@@ -206,7 +212,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// # Panics
     /// Panics if `shape`'s volume differs from this value's.
     pub fn reshape(self, shape: impl IntoIterator<Item = usize>) -> Self {
-        self.apply(Function::reshape(self.id, Shape::new(shape)))
+        self.apply(Function::reshape(Shape::new(shape)), &[self.id])
     }
 
     /// Records a permutation of this value's axes by `order` on the same
@@ -216,7 +222,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// # Panics
     /// Panics if `order` is not a permutation of `0..rank`.
     pub fn permuted(self, order: impl IntoIterator<Item = usize>) -> Self {
-        self.apply(Function::permute(self.id, order))
+        self.apply(Function::permute(order), &[self.id])
     }
 
     /// Records this value with a new extent-1 axis inserted at `axis`: a
@@ -252,7 +258,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// # Panics
     /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
     pub fn narrow(self, axis: usize, start: usize, len: usize) -> Self {
-        self.apply(Function::narrow(self.id, axis, start, len))
+        self.apply(Function::narrow(axis, start, len), &[self.id])
     }
 
     /// Records the row gather of this value (the table) by `selection`, a
@@ -269,7 +275,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// rank 2, or its vocabulary does not match this value's first axis.
     pub fn gather(self, selection: Self) -> Self {
         self.assert_same_network(&selection);
-        self.apply(Function::gather(self.id, selection.id))
+        self.apply(Function::gather(), &[self.id, selection.id])
     }
 }
 
@@ -298,7 +304,7 @@ impl<'network, Data: Differentiable> Add for Value<'network, Data> {
 
     fn add(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::add(self.id, rhs.id))
+        self.apply(Function::add(), &[self.id, rhs.id])
     }
 }
 
@@ -307,7 +313,7 @@ impl<'network, Data: Differentiable> Sub for Value<'network, Data> {
 
     fn sub(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::sub(self.id, rhs.id))
+        self.apply(Function::sub(), &[self.id, rhs.id])
     }
 }
 
@@ -316,7 +322,7 @@ impl<'network, Data: Differentiable> Mul for Value<'network, Data> {
 
     fn mul(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::mul(self.id, rhs.id))
+        self.apply(Function::mul(), &[self.id, rhs.id])
     }
 }
 
@@ -325,7 +331,7 @@ impl<'network, Data: Differentiable> Div for Value<'network, Data> {
 
     fn div(self, rhs: Self) -> Self::Output {
         self.assert_same_network(&rhs);
-        self.apply(Function::div(self.id, rhs.id))
+        self.apply(Function::div(), &[self.id, rhs.id])
     }
 }
 
@@ -333,7 +339,7 @@ impl<'network, Data: Differentiable> Neg for Value<'network, Data> {
     type Output = Value<'network, Data>;
 
     fn neg(self) -> Self::Output {
-        self.apply(Function::neg(self.id))
+        self.apply(Function::neg(), &[self.id])
     }
 }
 

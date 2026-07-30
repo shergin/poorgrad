@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use crate::engine::ValueId;
 use crate::{Shape, Tensorial};
 
-use super::Operation;
+use super::{Operation, unary};
 
 /// A permutation of a value's axes: axis `i` of the result takes axis
 /// `order[i]` of the operand.
@@ -12,20 +12,14 @@ use super::Operation;
 /// inverse permutation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Permute {
-    pub(crate) operand: ValueId,
     pub(crate) order: SmallVec<[usize; 4]>,
 }
 
 impl Permute {
-    /// Calls `visitor` with each operand link.
-    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
-        visitor(self.operand);
-    }
-
     /// Infers the result shape: the operand's axes reordered by `order`,
     /// which must be a permutation of the operand's axes.
-    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
-        let operand = shape_of(self.operand);
+    pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
+        let operand = unary(operands);
         assert_eq!(
             self.order.len(),
             operand.rank(),
@@ -57,12 +51,19 @@ impl Permute {
 }
 
 impl<Data: Tensorial> Operation<Data> for Permute {
-    fn forward(&self, values: &[Data]) -> Data {
-        values[self.operand.index()].permuted(&self.order)
+    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+        values[unary(operands).index()].permuted(&self.order)
     }
 
-    fn backward(&self, _values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
-        let operand = self.operand.index();
+    fn backward(
+        &self,
+        operands: &[ValueId],
+        _values: &[Data],
+        _output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
+        let operand = unary(operands).index();
         gradients[operand] = gradients[operand].clone() + gradient.permuted(&self.inverse());
     }
 }

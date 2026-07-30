@@ -1,35 +1,25 @@
 use crate::engine::ValueId;
 use crate::{Shape, Tensorial};
 
-use super::Operation;
+use super::{Operation, binary};
 
-/// An embedding-style row gather: `output[i] = table[indices[i]]`, where
-/// `indices` is a one-hot `[count, vocab]` selection whose vocabulary is the
-/// table's first axis.
+/// An embedding-style row gather with operands `[table, selection]`:
+/// `output[i] = table[selection[i]]`, where the selection is a one-hot
+/// `[count, vocab]` payload whose vocabulary is the table's first axis.
 ///
-/// The gradient flows only to the table, `dtable[indices[i]] += grad[i]` (a
-/// scatter-add that accumulates repeated rows). The selection is data, not a
-/// differentiable value, so it has no gradient term at all: the
+/// The gradient flows only to the table, `dtable[selection[i]] += grad[i]`
+/// (a scatter-add that accumulates repeated rows). The selection is data,
+/// not a differentiable value, so it has no gradient term at all: the
 /// non-differentiability of the indices is a structural property of this
 /// operation rather than a runtime flag.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Gather {
-    pub(crate) table: ValueId,
-    pub(crate) indices: ValueId,
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Gather;
 
 impl Gather {
-    /// Calls `visitor` with each operand link.
-    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
-        visitor(self.table);
-        visitor(self.indices);
-    }
-
     /// Infers the result shape `[count, ...table.shape[1..]]`, requiring the
     /// selection to be rank 2 and its vocabulary to match the table's rows.
-    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
-        let table = shape_of(self.table);
-        let selection = shape_of(self.indices);
+    pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
+        let (table, selection) = binary(operands);
         assert_eq!(
             selection.rank(),
             2,
@@ -51,14 +41,23 @@ impl Gather {
 }
 
 impl<Data: Tensorial> Operation<Data> for Gather {
-    fn forward(&self, values: &[Data]) -> Data {
-        values[self.table.index()].gather(&values[self.indices.index()])
+    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+        let (&table, &selection) = binary(operands);
+        values[table.index()].gather(&values[selection.index()])
     }
 
-    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
-        let table = self.table.index();
+    fn backward(
+        &self,
+        operands: &[ValueId],
+        values: &[Data],
+        _output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
+        let (&table, &selection) = binary(operands);
+        let table = table.index();
         let rows = values[table].shape().axes()[0];
-        let selection = &values[self.indices.index()];
-        gradients[table] = gradients[table].clone() + gradient.scatter(selection, rows);
+        gradients[table] =
+            gradients[table].clone() + gradient.scatter(&values[selection.index()], rows);
     }
 }

@@ -1,7 +1,7 @@
 use crate::engine::ValueId;
 use crate::{Shape, Tensorial};
 
-use super::Operation;
+use super::{Operation, unary};
 
 /// The sum of a payload along one named axis.
 ///
@@ -10,30 +10,31 @@ use super::Operation;
 /// back along the reduced axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SumAlong {
-    pub(crate) operand: ValueId,
     pub(crate) axis: usize,
 }
 
 impl SumAlong {
-    /// Calls `visitor` with each operand link.
-    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
-        visitor(self.operand);
-    }
-
     /// Infers the shape of the result: the operand's shape with the
     /// axis removed.
-    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
-        shape_of(self.operand).without_axis(self.axis)
+    pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
+        unary(operands).without_axis(self.axis)
     }
 }
 
 impl<Data: Tensorial> Operation<Data> for SumAlong {
-    fn forward(&self, values: &[Data]) -> Data {
-        values[self.operand.index()].sum_along(self.axis)
+    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+        values[unary(operands).index()].sum_along(self.axis)
     }
 
-    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
-        let operand = self.operand.index();
+    fn backward(
+        &self,
+        operands: &[ValueId],
+        values: &[Data],
+        _output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
+        let operand = unary(operands).index();
         let contribution = gradient.broadcast_along(self.axis, &values[operand]);
         gradients[operand] = gradients[operand].clone() + contribution;
     }

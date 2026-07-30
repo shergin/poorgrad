@@ -1,7 +1,7 @@
 use crate::engine::ValueId;
 use crate::{Shape, Tensorial};
 
-use super::Operation;
+use super::{Operation, unary};
 
 /// The sum of every value in a payload, reduced to a single value.
 ///
@@ -9,29 +9,29 @@ use super::Operation;
 /// the incoming single-value gradient spread back across the operand's
 /// shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Sum {
-    pub(crate) operand: ValueId,
-}
+pub(crate) struct Sum;
 
 impl Sum {
-    /// Calls `visitor` with each operand link.
-    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
-        visitor(self.operand);
-    }
-
     /// Infers the shape of the result: a rank-0 single value.
-    pub(crate) fn inferred_shape(&self, _shape_of: impl Fn(ValueId) -> Shape) -> Shape {
+    pub(crate) fn infer_shape(&self, _operands: &[Shape]) -> Shape {
         Shape::scalar()
     }
 }
 
 impl<Data: Tensorial> Operation<Data> for Sum {
-    fn forward(&self, values: &[Data]) -> Data {
-        values[self.operand.index()].sum()
+    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+        values[unary(operands).index()].sum()
     }
 
-    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
-        let operand = self.operand.index();
+    fn backward(
+        &self,
+        operands: &[ValueId],
+        values: &[Data],
+        _output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
+        let operand = unary(operands).index();
         gradients[operand] = gradients[operand].clone() + gradient.broadcast_like(&values[operand]);
     }
 }

@@ -59,8 +59,9 @@ a loss: `w <- w - learning_rate * dLoss/dw`. One step is
 
 **Computation graph.** The directed acyclic graph whose nodes are values and
 whose edges link operations to their operands. In poorgrad the graph is
-implicit in the tape: each recorded `Function` names its operands by
-position, and allocation order is a topological order.
+implicit in the tape: each recorded node lists its operand links, in the
+operation's positional order, in the tape's operands column, and
+allocation order is a topological order.
 
 **Tape (Wengert list, "gradient tape").** The append-only record of every
 operation in execution order — the recipe, not the result: it holds no
@@ -73,8 +74,10 @@ parameter store: the one piece of state that changes across generations.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In poorgrad a node is a
-[`Function<Data>`](src/engine/function/function.rs) stored on the tape
-beside its inferred `Shape`; neither changes once recorded.
+[`Function<Data>`](src/engine/function/function.rs) (the operation and its
+parameters) stored on the tape beside its operand links (the
+[`Operands`](src/engine/tape/operands.rs) column) and its inferred `Shape`;
+none of them change once recorded.
 
 **Shape.** The extent of a payload along every axis; a scalar is rank 0.
 Shapes are inferred for every node when its expression is recorded — the
@@ -83,19 +86,23 @@ so shape mismatches panic at the offending expression, before anything
 runs. In the record-once model this recovers most of the benefit of
 type-level shapes at no type-system cost. Shapes are lineage-invariant —
 `updated` validates every replacement payload against the recorded
-shape — and stored as a separate cold column beside the hot function column
-(data-oriented layout: runs replay functions, never shapes). In poorgrad:
+shape — and stored as a separate cold column beside the hot function and
+operands columns (data-oriented layout: runs replay functions and operand
+links, never shapes). In poorgrad:
 [`Shape`](src/payload/shape.rs), reachable via `Value::shape` and
 `Differentiable::shape`.
 
 **Operation.** A differentiable primitive: how to compute a payload from
 operand values (`forward`) and how to route the incoming gradient back to
-the operands (`backward`). In poorgrad: the
-[`Operation`](src/engine/function/operation.rs) trait, implemented by each
-computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`, `Tanh`,
-`Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `SumAlong`, `Broadcast`,
-`BroadcastAlong` under [`src/engine/function/`](src/engine/function/)) and
-dispatched with a plain `match`.
+the operands (`backward`). Operands reach every method as a positional
+slice of links read from the tape's operands column, so a variant owns
+only its parameters (an axis, a target shape), not its edges. In poorgrad:
+the [`Operation`](src/engine/function/operation.rs) trait, implemented by
+each computed `Function` variant (`Add`, `Sub`, `Mul`, `Div`, `Neg`,
+`Tanh`, `Exp`, `Ln`, `MatMul`, `Transpose`, `Sum`, `SumAlong`,
+`Broadcast`, `BroadcastAlong`, `Reshape`, `Permute`, `Narrow`, `Gather`
+under [`src/engine/function/`](src/engine/function/)) and dispatched with
+a plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
 the enum's dispatch handles them directly instead of through the trait.
 Arithmetic variants need only `Differentiable`; the transcendental and

@@ -14,5 +14,5 @@ pub use symbol::Symbol;
 pub use value::Value;
 
 pub(crate) use function::Function;
-pub(crate) use tape::{Branch, Lineage, Segment, SlotId, Tape, chains_agree};
+pub(crate) use tape::{Branch, Lineage, Operands, Segment, SlotId, Tape, chains_agree};
 pub(crate) use value::ValueId;

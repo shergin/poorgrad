@@ -12,7 +12,8 @@ fn operator_sugar_allocates_on_the_same_network() {
     let x = v1 + v2;
 
     assert_eq!(network.len(), 3);
-    assert_eq!(x.function(), Function::add(v1.id(), v2.id()));
+    assert_eq!(x.function(), Function::add());
+    assert_eq!(x.operands(), vec![v1.id(), v2.id()]);
     assert_eq!(x.payload(), None);
 }
 
@@ -28,8 +29,10 @@ fn copy_values_are_reusable_across_expressions() {
     let negated = -z;
 
     assert_eq!(network.len(), 6);
-    assert_eq!(z.function(), Function::add(x.id(), y.id()));
-    assert_eq!(negated.function(), Function::neg(z.id()));
+    assert_eq!(z.function(), Function::add());
+    assert_eq!(z.operands(), vec![x.id(), y.id()]);
+    assert_eq!(negated.function(), Function::neg());
+    assert_eq!(negated.operands(), vec![z.id()]);
 }
 
 #[test]

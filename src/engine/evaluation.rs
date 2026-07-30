@@ -6,7 +6,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Field, Function, Gradients, Segment, Tape, Value};
+use super::{Field, Function, Gradients, Operands, Segment, Tape, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -24,6 +24,7 @@ assert_impl_all!(Evaluation<'static, f64>: Send, Sync);
 pub struct Evaluation<'network, Data> {
     tape: &'network Tape<Data>,
     nodes: CowVec<Function<Data>>,
+    operands: CowVec<Operands>,
     chain: Arc<Vec<Segment>>,
     values: Field<Data>,
 }
@@ -32,13 +33,16 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     pub(crate) fn new(
         tape: &'network Tape<Data>,
         nodes: CowVec<Function<Data>>,
+        operands: CowVec<Operands>,
         chain: Arc<Vec<Segment>>,
         values: Vec<Data>,
     ) -> Self {
         debug_assert_eq!(nodes.len(), values.len());
+        debug_assert_eq!(nodes.len(), operands.len());
         Self {
             tape,
             nodes,
+            operands,
             values: Field::new(tape.lineage(), Arc::clone(&chain), values),
             chain,
         }
@@ -121,9 +125,16 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
                 continue;
             }
             let function = self.nodes.get(index).expect("snapshot cannot shrink");
-            function.visit_operands(|operand| ancestors[operand.index()] = true);
+            let operands = self
+                .operands
+                .get(index)
+                .expect("snapshot cannot shrink")
+                .as_slice();
+            for &operand in operands {
+                ancestors[operand.index()] = true;
+            }
             let gradient = gradients[index].clone();
-            function.backward(values, &values[index], &gradient, &mut gradients);
+            function.backward(operands, values, &values[index], &gradient, &mut gradients);
         }
         Field::new(self.tape.lineage(), Arc::clone(&self.chain), gradients)
     }

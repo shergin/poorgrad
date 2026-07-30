@@ -1,7 +1,7 @@
 use crate::engine::ValueId;
 use crate::{Elementary, Shape};
 
-use super::Operation;
+use super::{Operation, unary};
 
 /// The natural logarithm of a value.
 ///
@@ -10,29 +10,29 @@ use super::Operation;
 /// payload's logarithm and division semantics outside the positive
 /// domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Ln {
-    pub(crate) operand: ValueId,
-}
+pub(crate) struct Ln;
 
 impl Ln {
-    /// Calls `visitor` with each operand link.
-    pub(crate) fn visit_operands(&self, mut visitor: impl FnMut(ValueId)) {
-        visitor(self.operand);
-    }
-
     /// Infers the shape of the result: the operand's shape.
-    pub(crate) fn inferred_shape(&self, shape_of: impl Fn(ValueId) -> Shape) -> Shape {
-        shape_of(self.operand)
+    pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
+        unary(operands).clone()
     }
 }
 
 impl<Data: Elementary> Operation<Data> for Ln {
-    fn forward(&self, values: &[Data]) -> Data {
-        values[self.operand.index()].ln()
+    fn forward(&self, operands: &[ValueId], values: &[Data]) -> Data {
+        values[unary(operands).index()].ln()
     }
 
-    fn backward(&self, values: &[Data], _output: &Data, gradient: &Data, gradients: &mut [Data]) {
-        let operand = self.operand.index();
+    fn backward(
+        &self,
+        operands: &[ValueId],
+        values: &[Data],
+        _output: &Data,
+        gradient: &Data,
+        gradients: &mut [Data],
+    ) {
+        let operand = unary(operands).index();
         gradients[operand] =
             gradients[operand].clone() + gradient.clone() / values[operand].clone();
     }

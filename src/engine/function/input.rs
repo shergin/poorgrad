@@ -1,4 +1,4 @@
-use crate::engine::{SlotId, ValueId};
+use crate::engine::SlotId;
 
 /// A declared per-run input: a leaf whose payload is supplied when a
 /// run starts, falling back to a recorded default.
@@ -10,8 +10,3 @@ use crate::engine::{SlotId, ValueId};
 /// gradients routed back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Input(pub(crate) SlotId);
-
-impl Input {
-    /// Calls `visitor` with each operand link; an input has none.
-    pub(crate) fn visit_operands(&self, _visitor: impl FnMut(ValueId)) {}
-}

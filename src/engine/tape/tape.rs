@@ -4,25 +4,28 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use cow_vec::CowVec;
 
+use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
 use crate::engine::{Function, ValueId};
 use crate::{Differentiable, Shape};
 
-use super::{Branch, Lineage, ParameterStore, Segment, SlotId, Tip, chains_agree};
+use super::{Branch, Lineage, Operands, ParameterStore, Segment, SlotId, Tip, chains_agree};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
 assert_impl_all!(Tape<f64>: Send, Sync);
 
-/// An atomically taken snapshot of one tape: the recorded nodes, the
-/// generation's parameter payloads, input defaults, and branch chain.
+/// An atomically taken snapshot of one tape: the recorded nodes with
+/// their operand links, the generation's parameter payloads, input
+/// defaults, and branch chain.
 ///
-/// All three parts share their backing storage with the tape, so taking
+/// All parts share their backing storage with the tape, so taking
 /// a snapshot is O(1); replaying it never requires the tape lock.
 #[derive(Debug)]
 pub(crate) struct Snapshot<Data> {
     pub(crate) functions: CowVec<Function<Data>>,
+    pub(crate) operands: CowVec<Operands>,
     pub(crate) parameters: Arc<ParameterStore<Data>>,
     pub(crate) inputs: Arc<Vec<Data>>,
     pub(crate) chain: Arc<Vec<Segment>>,
@@ -31,14 +34,17 @@ pub(crate) struct Snapshot<Data> {
 /// The tape's position-indexed columns and the generation's parameter
 /// store, guarded together by one lock.
 ///
-/// The layout is data-oriented: functions are the hot column replayed by
-/// every run, shapes the cold column read at record time. Shapes are
-/// lineage-invariant — `updated` replaces the parameter store but never
-/// touches columns, so one shape column serves every generation of a
-/// family. The columns always have equal lengths.
+/// The layout is data-oriented: functions and operands are the hot
+/// columns replayed by every run — what each node computes and which
+/// earlier nodes it reads — while shapes are the cold column read at
+/// record time. All columns are lineage-invariant — `updated` replaces
+/// the parameter store but never touches columns, so one set of columns
+/// serves every generation of a family. The columns always have equal
+/// lengths.
 #[derive(Debug)]
 struct TapeInner<Data> {
     functions: CowVec<Function<Data>>,
+    operands: CowVec<Operands>,
     shapes: CowVec<Shape>,
     parameters: Arc<ParameterStore<Data>>,
     // The default payloads of declared inputs, indexed by slot. Kept
@@ -117,6 +123,7 @@ impl<Data: Differentiable> Tape<Data> {
         Self {
             inner: Mutex::new(TapeInner {
                 functions: CowVec::new(),
+                operands: CowVec::new(),
                 shapes: CowVec::new(),
                 parameters: Arc::new(ParameterStore::new()),
                 inputs: Arc::new(Vec::new()),
@@ -135,35 +142,42 @@ impl<Data: Differentiable> Tape<Data> {
         self.lineage
     }
 
-    /// Records `function` and returns its handle.
+    /// Records `function` with its positional `operands` and returns its
+    /// handle.
     ///
     /// It infers and stores the result's shape on the way in, so shape
     /// mismatches panic at the expression that records them, before
     /// anything runs.
     ///
     /// # Panics
-    /// Panics if `function` references an operand that is not recorded on
+    /// Panics if `operands` references a node that is not recorded on
     /// this tape, or if the operands' shapes are incompatible.
-    pub(crate) fn record(&self, function: Function<Data>) -> ValueId {
+    pub(crate) fn record(&self, function: Function<Data>, operands: &[ValueId]) -> ValueId {
         let mut inner = self.lock();
-        function.visit_operands(|operand| {
+        for operand in operands {
             assert!(
                 operand.index() < inner.functions.len(),
                 "operand is out of bounds for its tape"
             );
-        });
+        }
         let shape = {
             let shapes = &inner.shapes;
-            function.inferred_shape(|id| {
-                shapes
-                    .get(id.index())
-                    .expect("operand shape is recorded")
-                    .clone()
-            })
+            let operand_shapes: SmallVec<[Shape; 2]> = operands
+                .iter()
+                .map(|operand| {
+                    shapes
+                        .get(operand.index())
+                        .expect("operand shape is recorded")
+                        .clone()
+                })
+                .collect();
+            function.infer_shape(&operand_shapes)
         };
         inner.claim_tip();
         inner.functions.push(function);
+        inner.operands.push(Operands::from_slice(operands));
         inner.shapes.push(shape);
+        debug_assert_eq!(inner.functions.len(), inner.operands.len());
         debug_assert_eq!(inner.functions.len(), inner.shapes.len());
         ValueId(inner.functions.len() - 1)
     }
@@ -183,7 +197,9 @@ impl<Data: Differentiable> Tape<Data> {
         let store = Arc::make_mut(&mut inner.parameters);
         let slot = SlotId::new(store.payloads.len());
         inner.functions.push(Function::parameter(slot));
+        inner.operands.push(Operands::none());
         inner.shapes.push(shape);
+        debug_assert_eq!(inner.functions.len(), inner.operands.len());
         debug_assert_eq!(inner.functions.len(), inner.shapes.len());
         let id = ValueId(inner.functions.len() - 1);
         store.payloads.push(data);
@@ -204,7 +220,9 @@ impl<Data: Differentiable> Tape<Data> {
         let defaults = Arc::make_mut(&mut inner.inputs);
         let slot = SlotId::new(defaults.len());
         inner.functions.push(Function::input(slot));
+        inner.operands.push(Operands::none());
         inner.shapes.push(shape);
+        debug_assert_eq!(inner.functions.len(), inner.operands.len());
         debug_assert_eq!(inner.functions.len(), inner.shapes.len());
         defaults.push(initial);
         ValueId(inner.functions.len() - 1)
@@ -302,6 +320,19 @@ impl<Data: Differentiable> Tape<Data> {
             .clone()
     }
 
+    /// Returns a clone of the operand links recorded for `id`.
+    ///
+    /// # Panics
+    /// Panics if `id` is not recorded on this tape.
+    #[cfg(test)]
+    pub(crate) fn operands_of(&self, id: ValueId) -> Operands {
+        self.lock()
+            .operands
+            .get(id.index())
+            .expect("`ValueId` is out of bounds for its tape")
+            .clone()
+    }
+
     /// Runs `reader` over the node behind `id` while holding the tape lock.
     ///
     /// # Panics
@@ -331,6 +362,7 @@ impl<Data: Differentiable> Tape<Data> {
         let inner = self.lock();
         Snapshot {
             functions: inner.functions.clone(),
+            operands: inner.operands.clone(),
             parameters: Arc::clone(&inner.parameters),
             inputs: Arc::clone(&inner.inputs),
             chain: Arc::clone(&inner.chain),
@@ -350,6 +382,7 @@ impl<Data: Differentiable> Tape<Data> {
         Self {
             inner: Mutex::new(TapeInner {
                 functions: inner.functions.clone(),
+                operands: inner.operands.clone(),
                 shapes: inner.shapes.clone(),
                 parameters: Arc::clone(&inner.parameters),
                 inputs: Arc::clone(&inner.inputs),
@@ -379,11 +412,12 @@ impl<Data: Differentiable> Tape<Data> {
         gradients: &[Data],
         update: impl Fn(&Data, &Data) -> Data,
     ) -> Self {
-        let (functions, shapes, parameters, inputs, chain, tip) = {
+        let (functions, operands, shapes, parameters, inputs, chain, tip) = {
             let mut inner = self.lock();
             let tip = inner.share_tip();
             (
                 inner.functions.clone(),
+                inner.operands.clone(),
                 inner.shapes.clone(),
                 Arc::clone(&inner.parameters),
                 Arc::clone(&inner.inputs),
@@ -410,6 +444,7 @@ impl<Data: Differentiable> Tape<Data> {
         Self {
             inner: Mutex::new(TapeInner {
                 functions,
+                operands,
                 shapes,
                 parameters: Arc::new(ParameterStore {
                     payloads,

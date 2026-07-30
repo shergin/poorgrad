@@ -1,4 +1,4 @@
-use crate::engine::{SlotId, ValueId};
+use crate::engine::SlotId;
 
 /// A learnable parameter: a leaf whose payload `Network::updated`
 /// replaces on each training step.
@@ -10,8 +10,3 @@ use crate::engine::{SlotId, ValueId};
 /// routed back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Parameter(pub(crate) SlotId);
-
-impl Parameter {
-    /// Calls `visitor` with each operand link; a parameter has none.
-    pub(crate) fn visit_operands(&self, _visitor: impl FnMut(ValueId)) {}
-}

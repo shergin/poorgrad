@@ -40,7 +40,7 @@ impl<Data: Differentiable> Network<Data> {
     /// Constants are fixed at recording time; see `parameter` for
     /// trainable leaves and `input` for leaves fed per run.
     pub fn leaf(&self, data: Data) -> Value<'_, Data> {
-        let id = self.tape.record(Function::leaf(data));
+        let id = self.tape.record(Function::leaf(data), &[]);
         Value::bind(&self.tape, id)
     }
 
@@ -213,11 +213,22 @@ impl<Data: Tensorial> Network<Data> {
             Arc::new(overlaid)
         };
         let mut values = Vec::with_capacity(snapshot.functions.len());
-        for function in snapshot.functions.iter() {
-            let value = function.forward(&values, snapshot.parameters.payloads(), &inputs);
+        for (function, operands) in snapshot.functions.iter().zip(snapshot.operands.iter()) {
+            let value = function.forward(
+                operands.as_slice(),
+                &values,
+                snapshot.parameters.payloads(),
+                &inputs,
+            );
             values.push(value);
         }
-        Evaluation::new(&self.tape, snapshot.functions, snapshot.chain, values)
+        Evaluation::new(
+            &self.tape,
+            snapshot.functions,
+            snapshot.operands,
+            snapshot.chain,
+            values,
+        )
     }
 }
 
