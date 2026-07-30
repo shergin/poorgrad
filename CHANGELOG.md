@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog], and this project adheres to
   representation (a shared dense buffer or a non-allocating constant), so
   `transposed` and the broadcasts are O(1) views instead of copies and the
   `backward` gradient seed no longer allocates a zeroed buffer per node.
+- Add the view operations `Value::reshape` and `Value::permuted` (with the
+  `reshape`-based conveniences `squeezed` and `unsqueezed`), each a
+  differentiable graph node whose gradient routes back by the inverse view.
+  `permuted` generalizes `transposed` to any rank.
 
 ### Changed
 

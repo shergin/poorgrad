@@ -146,6 +146,36 @@ impl Layout {
             offset: self.offset,
         }
     }
+
+    /// Returns a contiguous layout for `shape` over the same buffer region,
+    /// preserving the offset, or `None` when this layout is not contiguous
+    /// and the reshape must therefore copy.
+    ///
+    /// The caller guarantees `shape` has the same volume.
+    pub(crate) fn reshaped(&self, shape: Shape) -> Option<Layout> {
+        if !self.is_contiguous() {
+            return None;
+        }
+        let strides = Self::contiguous_strides(&shape);
+        Some(Layout {
+            shape,
+            strides,
+            offset: self.offset,
+        })
+    }
+
+    /// Returns the layout with its axes reordered by `order`: axis `i` of
+    /// the result takes axis `order[i]` of `self`.
+    ///
+    /// The caller guarantees `order` is a permutation of `0..rank`.
+    pub(crate) fn permuted(&self, order: &[usize]) -> Layout {
+        let axes = self.shape.axes();
+        Layout {
+            shape: Shape::new(order.iter().map(|&axis| axes[axis])),
+            strides: order.iter().map(|&axis| self.strides[axis]).collect(),
+            offset: self.offset,
+        }
+    }
 }
 
 #[cfg(test)]

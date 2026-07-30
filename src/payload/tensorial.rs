@@ -1,4 +1,4 @@
-use super::Elementary;
+use super::{Elementary, Shape};
 
 /// Matrix, reduction, transpose, and explicit broadcasting operations for
 /// graph payloads.
@@ -41,6 +41,15 @@ pub trait Tensorial: Elementary {
     /// shape; `self`'s shape must equal `reference`'s with that axis
     /// removed.
     fn broadcast_along(&self, axis: usize, reference: &Self) -> Self;
+
+    /// Returns `self` reinterpreted with `shape`, preserving logical
+    /// row-major order; the volume must not change.
+    fn reshape(&self, shape: Shape) -> Self;
+
+    /// Returns `self` with its axes reordered so that axis `i` of the
+    /// result takes axis `order[i]` of `self`; `order` must be a
+    /// permutation of `0..rank`.
+    fn permuted(&self, order: &[usize]) -> Self;
 }
 
 impl Tensorial for f32 {
@@ -67,6 +76,14 @@ impl Tensorial for f32 {
     fn broadcast_along(&self, _axis: usize, _reference: &Self) -> Self {
         *self
     }
+
+    fn reshape(&self, _shape: Shape) -> Self {
+        *self
+    }
+
+    fn permuted(&self, _order: &[usize]) -> Self {
+        *self
+    }
 }
 
 impl Tensorial for f64 {
@@ -91,6 +108,14 @@ impl Tensorial for f64 {
     }
 
     fn broadcast_along(&self, _axis: usize, _reference: &Self) -> Self {
+        *self
+    }
+
+    fn reshape(&self, _shape: Shape) -> Self {
+        *self
+    }
+
+    fn permuted(&self, _order: &[usize]) -> Self {
         *self
     }
 }

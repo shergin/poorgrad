@@ -69,3 +69,25 @@ fn extent_one_axes_stay_contiguous() {
     let layout = Layout::contiguous(Shape::new([1, 3]));
     assert!(layout.is_contiguous());
 }
+
+#[test]
+fn reshape_of_a_contiguous_layout_recomputes_strides() {
+    let reshaped = Layout::contiguous(Shape::new([2, 3]))
+        .reshaped(Shape::new([3, 2]))
+        .expect("a contiguous layout reshapes without a copy");
+    assert_eq!(reshaped.shape(), &Shape::new([3, 2]));
+    assert_eq!(reshaped.strides(), &[2, 1]);
+}
+
+#[test]
+fn reshape_of_a_strided_layout_requires_a_copy() {
+    let transposed = Layout::contiguous(Shape::new([2, 3])).transposed();
+    assert!(transposed.reshaped(Shape::new([6])).is_none());
+}
+
+#[test]
+fn permute_reorders_axes_and_strides() {
+    let permuted = Layout::contiguous(Shape::new([2, 3, 4])).permuted(&[2, 0, 1]);
+    assert_eq!(permuted.shape(), &Shape::new([4, 2, 3]));
+    assert_eq!(permuted.strides(), &[1, 12, 4]);
+}

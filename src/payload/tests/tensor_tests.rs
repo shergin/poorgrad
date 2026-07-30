@@ -398,3 +398,118 @@ fn recording_rejects_broadcast_of_multi_element_sources() {
     let reference = network.leaf(Tensor::new([3], vec![0.0_f64; 3]));
     source.broadcast_like(reference);
 }
+
+#[test]
+fn reshape_reinterprets_elements_in_logical_order() {
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let flat = matrix.reshape(Shape::new([6]));
+    assert_eq!(flat.shape(), Shape::new([6]));
+    assert_eq!(flat.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+    let reshaped = matrix.reshape(Shape::new([3, 2]));
+    assert_eq!(reshaped.shape(), Shape::new([3, 2]));
+    assert_eq!(reshaped.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn reshape_of_a_contiguous_tensor_shares_storage() {
+    let matrix = Tensor::new([2, 3], vec![1.0_f64; 6]);
+    let reshaped = matrix.reshape(Shape::new([6]));
+    assert_eq!(
+        matrix.as_slice().unwrap().as_ptr(),
+        reshaped.as_slice().unwrap().as_ptr()
+    );
+}
+
+#[test]
+fn reshape_of_a_strided_view_materializes_in_order() {
+    // A transpose is non-contiguous, so reshaping it copies into a fresh
+    // contiguous buffer holding the elements in logical order.
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let reshaped = matrix.transposed().reshape(Shape::new([6]));
+    assert_eq!(reshaped.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+}
+
+#[test]
+#[should_panic(expected = "changes the number of elements")]
+fn reshape_rejects_volume_changes() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).reshape(Shape::new([2, 2]));
+}
+
+#[test]
+fn permute_reorders_axes() {
+    let tensor = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let permuted = tensor.permuted(&[1, 0]);
+    assert_eq!(permuted.shape(), Shape::new([3, 2]));
+    // For a rank-2 tensor a permutation of the axes is a transpose.
+    assert_eq!(permuted.to_vec(), tensor.transposed().to_vec());
+}
+
+#[test]
+fn permute_is_rank_general() {
+    let tensor = Tensor::new([2, 1, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let permuted = tensor.permuted(&[2, 0, 1]);
+    assert_eq!(permuted.shape(), Shape::new([3, 2, 1]));
+}
+
+#[test]
+#[should_panic(expected = "repeats axis")]
+fn permute_rejects_non_permutations() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).permuted(&[0, 0]);
+}
+
+#[test]
+fn reshape_routes_gradients_back() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let weight = network.leaf(Tensor::new([6], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
+
+    // Weighting each element of the flattened view by a distinct factor makes
+    // the gradient the weights reshaped back to `x`'s shape.
+    let loss = (x.reshape([6]) * weight).sum();
+    let gradients = network.forward().backward(loss);
+    assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
+    assert_eq!(
+        gradients.of(x).to_vec(),
+        vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
+    );
+}
+
+#[test]
+fn permute_routes_gradients_back() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let weight = network.leaf(Tensor::new([3, 2], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
+
+    // `x.permuted([1, 0])` transposes, so weight `(i, j)` multiplies
+    // `x(j, i)`; the gradient is the weights permuted back to `x`'s shape.
+    let loss = (x.permuted([1, 0]) * weight).sum();
+    let gradients = network.forward().backward(loss);
+    assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
+    assert_eq!(
+        gradients.of(x).to_vec(),
+        vec![10.0, 30.0, 50.0, 20.0, 40.0, 60.0]
+    );
+}
+
+#[test]
+fn squeeze_and_unsqueeze_adjust_extent_one_axes() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let unsqueezed = x.unsqueezed(0);
+    let squeezed = unsqueezed.squeezed(0);
+    assert_eq!(unsqueezed.shape(), Shape::new([1, 3]));
+    assert_eq!(squeezed.shape(), Shape::new([3]));
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(unsqueezed).to_vec(), vec![1.0, 2.0, 3.0]);
+    assert_eq!(evaluation.of(squeezed).to_vec(), vec![1.0, 2.0, 3.0]);
+}
+
+#[test]
+#[should_panic(expected = "changes the number of elements")]
+fn recording_rejects_volume_changing_reshape() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
+    x.reshape([4]);
+}

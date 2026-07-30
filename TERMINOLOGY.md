@@ -268,18 +268,22 @@ is a property of the strides, computed on demand, not a stored flag.
 multiplication, transposition, reductions, and explicit broadcasts —
 with scalars implementing it degenerately (a scalar is a rank-0 tensor;
 the degenerate impls satisfy the bound of running a graph, while
-recording tensor-native expressions demands proper ranks). `matmul` and
-`transposed` stop at rank 2; the axis-wise pair is rank-general; there
-is no reshape or batched matmul yet. Summation and broadcasting are
-adjoint in two matched pairs: `sum` with `broadcast_like` (the whole
-shape) and `sum_along` with `broadcast_along` (one named axis), each
-the other's gradient rule. Broadcasting is explicit by design: a single
+recording tensor-native expressions demands proper ranks). `matmul`
+stops at rank 2, `transposed` at rank 2 with `permuted` its rank-general
+generalization; the axis-wise pair is rank-general; `reshape` reinterprets
+the elements in logical order; there is no batched matmul yet. Summation
+and broadcasting are adjoint in two matched pairs: `sum` with
+`broadcast_like` (the whole shape) and `sum_along` with `broadcast_along`
+(one named axis), each the other's gradient rule. The view operations are
+self-adjoint pairs too: `reshape` and `permuted` route their gradient
+back by the inverse view. Broadcasting is explicit by design: a single
 value spread across a named reference's shape, or a payload repeated
 along one named axis of a reference — the axis is always written, and
 no operation aligns shapes implicitly. In poorgrad: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transposed`, `sum`, `sum_along`, `broadcast_like`,
-and `broadcast_along`.
+`broadcast_along`, `reshape`, `permuted`, and the `reshape`-based
+`squeezed` and `unsqueezed`.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

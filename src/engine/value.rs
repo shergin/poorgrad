@@ -198,6 +198,51 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.assert_same_network(&reference);
         self.apply(Function::broadcast_along(self.id, reference.id, axis))
     }
+
+    /// Records a reshape of this value to `shape` on the same network and
+    /// returns a proxy to it; the elements keep their logical row-major
+    /// order.
+    ///
+    /// # Panics
+    /// Panics if `shape`'s volume differs from this value's.
+    pub fn reshape(self, shape: impl IntoIterator<Item = usize>) -> Self {
+        self.apply(Function::reshape(self.id, Shape::new(shape)))
+    }
+
+    /// Records a permutation of this value's axes by `order` on the same
+    /// network and returns a proxy to it; axis `i` of the result takes
+    /// axis `order[i]` of this value.
+    ///
+    /// # Panics
+    /// Panics if `order` is not a permutation of `0..rank`.
+    pub fn permuted(self, order: impl IntoIterator<Item = usize>) -> Self {
+        self.apply(Function::permute(self.id, order))
+    }
+
+    /// Records this value with a new extent-1 axis inserted at `axis`: a
+    /// reshape that leaves the elements unchanged.
+    ///
+    /// # Panics
+    /// Panics if `axis` exceeds this value's rank.
+    pub fn unsqueezed(self, axis: usize) -> Self {
+        let mut axes: Vec<usize> = self.shape().axes().to_vec();
+        assert!(axis <= axes.len(), "unsqueeze axis {axis} is out of rank");
+        axes.insert(axis, 1);
+        self.reshape(axes)
+    }
+
+    /// Records this value with the extent-1 axis at `axis` removed: a
+    /// reshape that leaves the elements unchanged.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank or that axis is not extent 1.
+    pub fn squeezed(self, axis: usize) -> Self {
+        let mut axes: Vec<usize> = self.shape().axes().to_vec();
+        assert!(axis < axes.len(), "squeeze axis {axis} is out of rank");
+        assert_eq!(axes[axis], 1, "squeeze requires an extent-1 axis");
+        axes.remove(axis);
+        self.reshape(axes)
+    }
 }
 
 // Manual implementations avoid the `Data: Clone`/`Data: Copy` bounds a

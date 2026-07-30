@@ -520,6 +520,73 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             },
         }
     }
+
+    /// Returns `self` reinterpreted with `shape` in logical row-major
+    /// order.
+    ///
+    /// A contiguous dense tensor and a constant reshape into an O(1) view
+    /// over the same buffer; a strided view is first materialized.
+    ///
+    /// # Panics
+    /// Panics if `shape`'s volume differs from `self`'s.
+    fn reshape(&self, shape: Shape) -> Self {
+        assert_eq!(
+            self.logical_shape().volume(),
+            shape.volume(),
+            "reshape from {} to {shape} changes the number of elements",
+            self.logical_shape()
+        );
+        match &self.storage {
+            Storage::Constant { value, .. } => Self::constant(shape, value.clone()),
+            Storage::Dense { data, layout } => match layout.reshaped(shape.clone()) {
+                Some(reshaped) => Self {
+                    storage: Storage::Dense {
+                        data: Arc::clone(data),
+                        layout: reshaped,
+                    },
+                },
+                None => Self::dense(shape, self.to_vec()),
+            },
+        }
+    }
+
+    /// Returns `self` with its axes reordered by `order` as a view over the
+    /// same buffer.
+    ///
+    /// # Panics
+    /// Panics if `order` is not a permutation of `0..rank`.
+    fn permuted(&self, order: &[usize]) -> Self {
+        let shape = self.logical_shape();
+        assert_eq!(
+            order.len(),
+            shape.rank(),
+            "permute order must cover every axis of {shape}"
+        );
+        let mut seen = vec![false; shape.rank()];
+        for &axis in order {
+            assert!(
+                axis < shape.rank(),
+                "permute axis {axis} is out of rank for {shape}"
+            );
+            assert!(
+                !std::mem::replace(&mut seen[axis], true),
+                "permute order repeats axis {axis}"
+            );
+        }
+        match &self.storage {
+            Storage::Constant { value, .. } => {
+                let axes = shape.axes();
+                let permuted = Shape::new(order.iter().map(|&axis| axes[axis]));
+                Self::constant(permuted, value.clone())
+            }
+            Storage::Dense { data, layout } => Self {
+                storage: Storage::Dense {
+                    data: Arc::clone(data),
+                    layout: layout.permuted(order),
+                },
+            },
+        }
+    }
 }
 
 #[cfg(test)]

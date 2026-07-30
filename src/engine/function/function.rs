@@ -5,7 +5,7 @@ use static_assertions::assert_impl_all;
 
 use super::{
     Add, Broadcast, BroadcastAlong, Div, Exp, Input, Leaf, Ln, MatMul, Mul, Neg, Operation,
-    Parameter, Sub, Sum, SumAlong, Tanh, Transpose,
+    Parameter, Permute, Reshape, Sub, Sum, SumAlong, Tanh, Transpose,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -38,6 +38,8 @@ pub(crate) enum Function<Data> {
     SumAlong(SumAlong),
     Broadcast(Broadcast),
     BroadcastAlong(BroadcastAlong),
+    Reshape(Reshape),
+    Permute(Permute),
 }
 
 impl<Data> Function<Data> {
@@ -131,6 +133,19 @@ impl<Data> Function<Data> {
         })
     }
 
+    /// Creates the reshape of `operand` to `shape`.
+    pub(crate) fn reshape(operand: ValueId, shape: Shape) -> Self {
+        Function::Reshape(Reshape { operand, shape })
+    }
+
+    /// Creates the permutation of `operand`'s axes by `order`.
+    pub(crate) fn permute(operand: ValueId, order: impl IntoIterator<Item = usize>) -> Self {
+        Function::Permute(Permute {
+            operand,
+            order: order.into_iter().collect(),
+        })
+    }
+
     /// Calls `visitor` with each operand link.
     pub(crate) fn visit_operands(&self, visitor: impl FnMut(ValueId)) {
         match self {
@@ -151,6 +166,8 @@ impl<Data> Function<Data> {
             Function::SumAlong(sum_along) => sum_along.visit_operands(visitor),
             Function::Broadcast(broadcast) => broadcast.visit_operands(visitor),
             Function::BroadcastAlong(broadcast_along) => broadcast_along.visit_operands(visitor),
+            Function::Reshape(reshape) => reshape.visit_operands(visitor),
+            Function::Permute(permute) => permute.visit_operands(visitor),
         }
     }
 
@@ -185,6 +202,8 @@ impl<Data> Function<Data> {
             Function::SumAlong(sum_along) => sum_along.inferred_shape(shape_of),
             Function::Broadcast(broadcast) => broadcast.inferred_shape(shape_of),
             Function::BroadcastAlong(broadcast_along) => broadcast_along.inferred_shape(shape_of),
+            Function::Reshape(reshape) => reshape.inferred_shape(shape_of),
+            Function::Permute(permute) => permute.inferred_shape(shape_of),
         }
     }
 }
@@ -221,6 +240,8 @@ impl<Data: Tensorial> Function<Data> {
             Function::SumAlong(sum_along) => sum_along.forward(values),
             Function::Broadcast(broadcast) => broadcast.forward(values),
             Function::BroadcastAlong(broadcast_along) => broadcast_along.forward(values),
+            Function::Reshape(reshape) => reshape.forward(values),
+            Function::Permute(permute) => permute.forward(values),
         }
     }
 
@@ -258,6 +279,8 @@ impl<Data: Tensorial> Function<Data> {
             Function::BroadcastAlong(broadcast_along) => {
                 broadcast_along.backward(values, output, gradient, gradients)
             }
+            Function::Reshape(reshape) => reshape.backward(values, output, gradient, gradients),
+            Function::Permute(permute) => permute.backward(values, output, gradient, gradients),
         }
     }
 }
