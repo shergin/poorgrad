@@ -164,6 +164,10 @@ crate root keeps the public API flat. From tape to training:
   composed formula over the fused, numerically stable `Value::log_softmax`:
   the mean negative log-likelihood of one-hot (or soft) targets, fed per
   run like any other input.
+- [`init`](src/neural/init.rs) — deterministic, explicitly seeded
+  initializer factories (`uniform`, `normal`, and the fan-aware `xavier`
+  and `kaiming`) producing the shape-to-payload closures `Layer` and `Mlp`
+  take, with no `rand` dependency: seeded runs stay bit-identical forever.
 
 ## The name
 

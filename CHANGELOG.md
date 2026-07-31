@@ -40,6 +40,12 @@ The format is based on [Keep a Changelog], and this project adheres to
   the softmax pair composed stably on top of the fused log-softmax core —
   collected in a dedicated composition tier beside the single-node opcode
   methods.
+- Add the `init` module: deterministic initializer factories (`uniform`,
+  `normal`, and the fan-aware `xavier` and `kaiming`, which scale rank-2
+  weights from the requested shape and zero rank-1 biases) matching the
+  shape-to-payload closures `Layer` and `Mlp` take. Every factory is
+  seeded explicitly and owns its generator state, so initialization is
+  reproducible without a `rand` dependency.
 
 ### Changed
 

@@ -8,29 +8,13 @@
 //!
 //! Run with: `cargo run --example mlp_xor`
 
-use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial};
-
-/// Returns a deterministic initializer: an xorshift generator filling
-/// each requested shape with small values, so the run is reproducible
-/// while hidden-unit symmetry still breaks.
-fn initializer() -> impl FnMut(&Shape) -> Tensor<f64> {
-    let mut state: u64 = 0x9E3779B97F4A7C15;
-    move |shape| {
-        let elements: Vec<f64> = (0..shape.volume())
-            .map(|_| {
-                state ^= state << 13;
-                state ^= state >> 7;
-                state ^= state << 17;
-                (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
-            })
-            .collect();
-        Tensor::new(shape.axes().iter().copied(), elements)
-    }
-}
+use poorgrad::{Mlp, Network, Tensor, Tensorial, init};
 
 fn main() {
     let network = Network::new();
-    let mlp = Mlp::new(&network, &[2, 4, 1], initializer());
+    // A deterministic seeded initializer keeps the run reproducible
+    // while hidden-unit symmetry still breaks.
+    let mlp = Mlp::new(&network, &[2, 4, 1], init::uniform(7, 0.5));
 
     // Declared inputs: the minibatch arrives per run, so the defaults
     // only fix the shapes — two samples of two features, two targets.

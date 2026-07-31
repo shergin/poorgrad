@@ -415,6 +415,21 @@ free functions rather than `Value` methods, because their operands play
 distinct roles and a method would arbitrarily privilege one of them. In
 poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss module.
 
+**Initializer.** The shape-to-payload closure a caller hands to a
+building block at construction: initialization is caller-owned, and
+`Layer` and `Mlp` record whatever they are given. The `init` module
+manufactures deterministic initializers — `uniform` and `normal` fill
+any shape, while the fan-aware `xavier` and `kaiming` read the fan-in
+off the requested rank-2 shape and zero rank-1 shapes, a bias
+identifying itself structurally by its rank. Every factory takes an
+explicit seed and each closure owns its splitmix64 generator state: no
+global generator, no clock, bit-identical runs forever — which is why
+the crate carries its own few-line generator instead of a `rand`
+dependency, whose standard generator is unstable across versions. In
+poorgrad: [`init`](src/neural/init.rs), the crate's one public module,
+qualified because `uniform` and `normal` are meaningless names without
+it.
+
 ## Further reading
 
 - R. E. Wengert, "A simple automatic derivative evaluation program" (1964)
