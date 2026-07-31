@@ -91,7 +91,11 @@ type-level shapes at no type-system cost. Shapes are lineage-invariant —
 `update` validates every replacement payload against the recorded
 shape — and stored as a separate cold column beside the hot function and
 operands columns (data-oriented layout: runs replay functions and operand
-links, never shapes). In poorgrad:
+links, never shapes). Construction boundaries (`Tensor::new`,
+`Tensor::filled`, `Value::reshape`) accept `impl Into<Shape>` — axis
+literals, vectors, slices, and shapes or their references all convert —
+so the nominal type is never decomposed at the rim; `Shape::new` remains
+the iterator-based base constructor. In poorgrad:
 [`Shape`](src/payload/shape.rs), reachable via `Value::shape` and
 `Differentiable::shape`.
 

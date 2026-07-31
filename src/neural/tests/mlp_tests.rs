@@ -16,7 +16,7 @@ fn deterministic_initializer() -> impl FnMut(&Shape) -> Tensor<f64> {
                 (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
             })
             .collect();
-        Tensor::new(shape.axes().iter().copied(), elements)
+        Tensor::new(shape, elements)
     }
 }
 

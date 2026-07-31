@@ -78,7 +78,7 @@ fn literal_sugar_gradients_match_finite_differences() {
 fn nudge(tensor: &Tensor<f64>, position: usize, delta: f64) -> Tensor<f64> {
     let mut elements = tensor.to_vec();
     elements[position] += delta;
-    Tensor::new(tensor.shape().axes().iter().copied(), elements)
+    Tensor::new(tensor.shape(), elements)
 }
 
 /// Checks the dense-layer expression per element: `matmul`, the

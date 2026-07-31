@@ -49,6 +49,10 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Accept `impl Into<Shape>` in `Tensor::new`, `Tensor::filled`, and
+  `Value::reshape`: axis literals keep working unchanged, and a `Shape`
+  or its reference now passes directly instead of being decomposed into
+  an axis iterator. Other iterator sources go through `Shape::new`.
 - Use plain verbs consistently for operations: rename `Field::scaled` to
   `Field::scale`, `Network::updated` to `Network::update`,
   `Tensorial::{transposed, permuted, narrowed, padded}` to

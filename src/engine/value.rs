@@ -256,8 +256,8 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     ///
     /// # Panics
     /// Panics if `shape`'s volume differs from this value's.
-    pub fn reshape(self, shape: impl IntoIterator<Item = usize>) -> Self {
-        self.apply(Function::reshape(Shape::new(shape)), &[self.id])
+    pub fn reshape(self, shape: impl Into<Shape>) -> Self {
+        self.apply(Function::reshape(shape.into()), &[self.id])
     }
 
     /// Records a permutation of this value's axes by `order` on the same

@@ -152,8 +152,8 @@ impl<Element: Differentiable> Tensor<Element> {
     /// are unsupported because reductions initialize their accumulator from
     /// an existing element; [`Differentiable`] provides shape-preserving
     /// identities rather than a nullary element constructor.
-    pub fn new(shape: impl IntoIterator<Item = usize>, elements: impl Into<Vec<Element>>) -> Self {
-        let shape = Shape::new(shape);
+    pub fn new(shape: impl Into<Shape>, elements: impl Into<Vec<Element>>) -> Self {
+        let shape = shape.into();
         let elements = elements.into();
         assert_eq!(
             shape.volume(),
@@ -173,8 +173,8 @@ impl<Element: Differentiable> Tensor<Element> {
     /// # Panics
     /// Panics if the shape's volume overflows `usize` or the shape holds no
     /// elements, as documented on [`Tensor::new`].
-    pub fn filled(shape: impl IntoIterator<Item = usize>, element: Element) -> Self {
-        let shape = Shape::new(shape);
+    pub fn filled(shape: impl Into<Shape>, element: Element) -> Self {
+        let shape = shape.into();
         assert!(shape.volume() > 0, "tensors must hold at least one element");
         Self::constant(shape, element)
     }

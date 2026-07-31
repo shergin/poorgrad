@@ -66,6 +66,35 @@ impl Shape {
     }
 }
 
+/// The conversions behind the `impl Into<Shape>` construction boundaries
+/// (`Tensor::new`, `Tensor::filled`, `Value::reshape`): axis literals,
+/// vectors, and slices convert, and a `Shape` or its reference passes
+/// through, so the nominal type is never decomposed at the rim.
+/// [`Shape::new`] remains the base constructor for other iterator sources.
+impl<const RANK: usize> From<[usize; RANK]> for Shape {
+    fn from(axes: [usize; RANK]) -> Self {
+        Shape::new(axes)
+    }
+}
+
+impl From<Vec<usize>> for Shape {
+    fn from(axes: Vec<usize>) -> Self {
+        Shape::new(axes)
+    }
+}
+
+impl From<&[usize]> for Shape {
+    fn from(axes: &[usize]) -> Self {
+        Shape::new(axes.iter().copied())
+    }
+}
+
+impl From<&Shape> for Shape {
+    fn from(shape: &Shape) -> Self {
+        shape.clone()
+    }
+}
+
 impl fmt::Display for Shape {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "[")?;

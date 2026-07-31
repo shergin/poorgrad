@@ -44,7 +44,7 @@ fn standard_normal(state: &mut u64) -> f64 {
 /// Builds a tensor of `shape` with every element drawn from `draw`.
 fn drawn(shape: &Shape, state: &mut u64, mut draw: impl FnMut(&mut u64) -> f64) -> Tensor<f64> {
     let elements: Vec<f64> = (0..shape.volume()).map(|_| draw(state)).collect();
-    Tensor::new(shape.axes().iter().copied(), elements)
+    Tensor::new(shape, elements)
 }
 
 /// Returns an initializer filling every requested shape with values
@@ -81,7 +81,7 @@ pub fn normal(seed: u64, deviation: f64) -> impl FnMut(&Shape) -> Tensor<f64> {
 pub fn xavier(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
     let mut state = seed;
     move |shape| match shape.rank() {
-        1 => Tensor::filled(shape.axes().iter().copied(), 0.0),
+        1 => Tensor::filled(shape, 0.0),
         2 => {
             let fan_total = (shape.axes()[0] + shape.axes()[1]) as f64;
             let bound = (6.0 / fan_total).sqrt();
@@ -105,7 +105,7 @@ pub fn xavier(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
 pub fn kaiming(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
     let mut state = seed;
     move |shape| match shape.rank() {
-        1 => Tensor::filled(shape.axes().iter().copied(), 0.0),
+        1 => Tensor::filled(shape, 0.0),
         2 => {
             let deviation = (2.0 / shape.axes()[0] as f64).sqrt();
             drawn(shape, &mut state, |state| {
