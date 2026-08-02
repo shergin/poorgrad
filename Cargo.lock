@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "poorgrad"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "cow_vec",
  "criterion",

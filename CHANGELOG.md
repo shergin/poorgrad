@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
-## [Unreleased]
+## [0.5.4] - 2026-08-02
 
 ### Fixed
 
@@ -338,7 +338,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/shergin/poorgrad/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/shergin/poorgrad/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/shergin/poorgrad/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/shergin/poorgrad/compare/v0.5.0...v0.5.1
