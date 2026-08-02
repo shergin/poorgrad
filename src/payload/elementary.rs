@@ -3,6 +3,23 @@ use crate::backend;
 use super::Differentiable;
 use super::gemm::GemmTask;
 
+/// One whole-buffer elementwise transcendental: the unit of the
+/// seam's elementwise sibling, mirroring [`GemmTask`] for the
+/// operations whose scalar form is a libm call the compiler cannot
+/// vectorize.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapOperation {
+    /// `e` raised to each element.
+    Exp,
+    /// The natural logarithm of each element.
+    Ln,
+    /// The square root of each element.
+    Sqrt,
+    /// The hyperbolic tangent of each element.
+    Tanh,
+}
+
 /// Elementary numeric functions supported by graph payloads.
 ///
 /// This trait extends [`Differentiable`] without making transcendental
@@ -60,6 +77,21 @@ pub trait Elementary: Differentiable {
         let _ = task;
         None
     }
+
+    /// Offers a whole-buffer elementwise transcendental to the
+    /// compiled backend chain: the seam's elementwise sibling.
+    ///
+    /// It answers `None` — compute element by element — unless the
+    /// element type has a backend entry point; `f32` and `f64`
+    /// forward to the chain in `backend`. Answering `Some` asserts
+    /// `operation` applied to every element in order.
+    fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>>
+    where
+        Self: Sized,
+    {
+        let _ = (operation, elements);
+        None
+    }
 }
 
 impl Elementary for f32 {
@@ -94,6 +126,10 @@ impl Elementary for f32 {
     fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
         backend::gemm_f32(task)
     }
+
+    fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
+        backend::map_f32(operation, elements)
+    }
 }
 
 impl Elementary for f64 {
@@ -127,5 +163,9 @@ impl Elementary for f64 {
 
     fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
         backend::gemm_f64(task)
+    }
+
+    fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
+        backend::map_f64(operation, elements)
     }
 }

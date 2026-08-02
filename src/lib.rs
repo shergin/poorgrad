@@ -55,4 +55,4 @@ mod payload;
 pub use backend::{Backend, BackendUnavailable};
 pub use engine::{Evaluation, Field, Gradients, Network, Symbol, Value};
 pub use neural::{Activation, Layer, Mlp, Neuron, cross_entropy, init};
-pub use payload::{Differentiable, Elementary, GemmTask, Shape, Tensor, Tensorial};
+pub use payload::{Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial};

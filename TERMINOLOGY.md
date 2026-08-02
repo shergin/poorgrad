@@ -377,15 +377,17 @@ copy — plus the three extents, validated at construction and
 read-only thereafter.
 
 **Seam.** The point where payload math may hand a job to hardware
-without the engine knowing: the provided `Elementary::gemm` method
-answers `None` (compute on the built-in paths) unless the element
-type forwards to the backend chain, as `f32` and `f64` do. The seam
-lives in the payload tier, so `Operation` rules stay backend-blind
-(the columns-as-IR rule) and custom payload implementations keep
-the default. In poorgrad:
-[`Elementary::gemm`](src/payload/elementary.rs), consulted first by
-`Tensor`'s `matmul`, ahead of the slice-path kernels and the
-logical-access fallback.
+without the engine knowing: a provided `Elementary` method answers
+`None` (compute on the built-in paths) unless the element type
+forwards to the backend chain, as `f32` and `f64` do. The seam has
+two hooks — `Elementary::gemm` for one dense product, consulted
+first by `Tensor`'s `matmul`, and `Elementary::map` for one
+whole-buffer transcendental (a `MapOperation`: `exp`, `ln`, `sqrt`,
+`tanh`), consulted by the tensor's elementwise operations for
+contiguous dense buffers. Both live in the payload tier, so
+`Operation` rules stay backend-blind (the columns-as-IR rule) and
+custom payload implementations keep the defaults. In poorgrad:
+[`Elementary`](src/payload/elementary.rs).
 
 **Backend.** A provider of GEMM kernels compiled into the crate
 behind a cargo feature and tried in declaration order by the chain
@@ -396,9 +398,12 @@ compile-time: enabling a feature is the activation, and no runtime
 switch exists, so within one binary two identical runs can never
 disagree. The chain has two residents, tried in order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
-dense `f32` and `f64` tasks above a small flop threshold through
+dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
-Silicon), declining stride patterns BLAS cannot express.
+Silicon), declining stride patterns BLAS cannot express, and maps
+whole-buffer transcendentals through vForce
+(`vvtanhf`/`vvexpf`/`vvlogf`/`vvsqrtf` and their `f64` twins) — the
+vectorized form of the loops that scalar libm calls keep serial.
 `Backend::Metal` (the `metal` feature) runs large `f32` tasks on
 the GPU through hand-written simdgroup-matrix kernels compiled from
 source at first use — Metal has no `f64` — serving what BLAS

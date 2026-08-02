@@ -1,8 +1,10 @@
 use std::ops::{Add, Mul};
 
-use crate::{Differentiable, GemmTask, Network, Shape, Tensor, init};
+use crate::{
+    Differentiable, Elementary, GemmTask, MapOperation, Network, Shape, Tensor, Tensorial, init,
+};
 
-use super::{executed_f32, executed_f64, gemm_f32};
+use super::{executed_f32, executed_f64, gemm_f32, map_f32, map_f64};
 
 /// Computes the product of two row-major matrices in the logical
 /// path's accumulation order: the reference every case compares to,
@@ -193,6 +195,91 @@ fn repeated_products_answer_bitwise_identically() {
     let first_bits: Vec<u64> = first.iter().map(|value| value.to_bits()).collect();
     let second_bits: Vec<u64> = second.iter().map(|value| value.to_bits()).collect();
     assert_eq!(first_bits, second_bits);
+}
+
+/// One accuracy case of the vForce grid: the operation, its valid
+/// inputs, and libm's scalar answer.
+type MapCaseF64<'inputs> = (MapOperation, &'inputs [f64], fn(f64) -> f64);
+type MapCaseF32<'inputs> = (MapOperation, &'inputs [f32], fn(f32) -> f32);
+
+#[test]
+fn vforce_maps_match_libm_within_ulps() {
+    let inputs_f64: Vec<f64> = (0..4096)
+        .map(|index| ((index * 7) % 23 - 11) as f64 / 4.0)
+        .collect();
+    let positives_f64: Vec<f64> = inputs_f64.iter().map(|value| value.abs() + 0.25).collect();
+    let inputs_f32: Vec<f32> = inputs_f64.iter().map(|&value| value as f32).collect();
+    let positives_f32: Vec<f32> = positives_f64.iter().map(|&value| value as f32).collect();
+
+    let cases_f64: [MapCaseF64<'_>; 4] = [
+        (MapOperation::Exp, &inputs_f64, f64::exp),
+        (MapOperation::Ln, &positives_f64, f64::ln),
+        (MapOperation::Sqrt, &positives_f64, f64::sqrt),
+        (MapOperation::Tanh, &inputs_f64, f64::tanh),
+    ];
+    for (operation, elements, scalar) in cases_f64 {
+        let mapped = map_f64(operation, elements).expect("above the threshold");
+        for (actual, element) in mapped.iter().zip(elements) {
+            let expected = scalar(*element);
+            assert!(
+                (actual - expected).abs() <= 4.0 * f64::EPSILON * (1.0 + expected.abs()),
+                "{operation:?}({element}) = {actual}, libm answers {expected}"
+            );
+        }
+    }
+    let cases_f32: [MapCaseF32<'_>; 4] = [
+        (MapOperation::Exp, &inputs_f32, f32::exp),
+        (MapOperation::Ln, &positives_f32, f32::ln),
+        (MapOperation::Sqrt, &positives_f32, f32::sqrt),
+        (MapOperation::Tanh, &inputs_f32, f32::tanh),
+    ];
+    for (operation, elements, scalar) in cases_f32 {
+        let mapped = map_f32(operation, elements).expect("above the threshold");
+        for (actual, element) in mapped.iter().zip(elements) {
+            let expected = scalar(*element);
+            assert!(
+                (actual - expected).abs() <= 4.0 * f32::EPSILON * (1.0 + expected.abs()),
+                "{operation:?}({element}) = {actual}, libm answers {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn small_maps_decline_to_the_scalar_path() {
+    let elements = [1.0_f32; 16];
+    assert_eq!(map_f32(MapOperation::Tanh, &elements), None);
+    let elements = [1.0_f64; 16];
+    assert_eq!(map_f64(MapOperation::Exp, &elements), None);
+}
+
+#[test]
+fn tensor_maps_route_contiguous_buffers_and_fall_back_on_views() {
+    let elements: Vec<f32> = (0..2048)
+        .map(|index| (index % 37) as f32 / 9.0 - 2.0)
+        .collect();
+    let tensor = Tensor::new([32, 64], elements.clone());
+    let mapped = tensor.tanh().to_vec();
+    for (actual, element) in mapped.iter().zip(&elements) {
+        let expected = element.tanh();
+        assert!((actual - expected).abs() <= 4.0 * f32::EPSILON * (1.0 + expected.abs()));
+    }
+
+    // A transposed view is not contiguous, so it takes the scalar
+    // path: bitwise-identical to libm, proving the fallback.
+    let transposed = tensor.transpose();
+    let scalar: Vec<u32> = transposed
+        .to_vec()
+        .iter()
+        .map(|element| element.tanh().to_bits())
+        .collect();
+    let through_map: Vec<u32> = transposed
+        .tanh()
+        .to_vec()
+        .iter()
+        .map(|element| element.to_bits())
+        .collect();
+    assert_eq!(scalar, through_map);
 }
 
 #[test]

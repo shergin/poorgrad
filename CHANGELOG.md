@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- Add the elementwise acceleration seam: `Elementary::map` offers a
+  whole-buffer transcendental (`MapOperation`: `exp`, `ln`, `sqrt`,
+  `tanh`) to the backend chain, and the tensor's elementwise
+  operations consult it for contiguous dense buffers before the
+  scalar path. The `accelerate` feature answers through vForce's
+  vectorized transcendentals; measured on an M1 Pro, a wide
+  training step dropped from 145 ms to 112 ms — the scalar `tanh`
+  wall — with strided views and small buffers keeping the scalar
+  path bit-for-bit.
+
 ### Changed
 
 - Specialize the metal backend's pipelines per shape: the tiled

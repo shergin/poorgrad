@@ -8,7 +8,7 @@ mod tensor;
 mod tensorial;
 
 pub use differentiable::Differentiable;
-pub use elementary::Elementary;
+pub use elementary::{Elementary, MapOperation};
 pub use gemm::GemmTask;
 pub use shape::Shape;
 pub use tensor::Tensor;

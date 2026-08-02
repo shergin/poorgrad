@@ -22,7 +22,7 @@ mod metal;
 
 pub use backend::{Backend, BackendUnavailable};
 
-use crate::GemmTask;
+use crate::{GemmTask, MapOperation};
 
 /// It offers an `f32` task to every compiled backend, hardware-greediest
 /// first, answering `None` when none accepts.
@@ -51,5 +51,27 @@ pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
         return Some(product);
     }
     let _ = task;
+    None
+}
+
+/// It offers an `f32` elementwise map to every compiled backend,
+/// answering `None` when none accepts.
+pub(crate) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    if let Some(mapped) = accelerate::map_f32(operation, elements) {
+        return Some(mapped);
+    }
+    let _ = (operation, elements);
+    None
+}
+
+/// It offers an `f64` elementwise map to every compiled backend,
+/// answering `None` when none accepts.
+pub(crate) fn map_f64(operation: MapOperation, elements: &[f64]) -> Option<Vec<f64>> {
+    #[cfg(all(feature = "accelerate", target_os = "macos"))]
+    if let Some(mapped) = accelerate::map_f64(operation, elements) {
+        return Some(mapped);
+    }
+    let _ = (operation, elements);
     None
 }

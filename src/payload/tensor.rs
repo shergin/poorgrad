@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
+use super::elementary::MapOperation;
 use super::gemm;
 use super::layout::{Layout, Strides};
 use super::storage::Storage;
@@ -479,21 +480,36 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
     }
 }
 
+impl<Element: Elementary> Tensor<Element> {
+    /// Applies one elementwise transcendental: the backend seam
+    /// first for a contiguous dense buffer, the scalar `fallback`
+    /// everywhere else (strided views, constants, declined maps).
+    fn mapped(&self, operation: MapOperation, fallback: impl Fn(&Element) -> Element) -> Self {
+        let seam = self
+            .as_slice()
+            .and_then(|elements| Element::map(operation, elements));
+        match seam {
+            Some(mapped) => Self::dense(self.logical_shape().clone(), mapped),
+            None => self.map(fallback),
+        }
+    }
+}
+
 impl<Element: Elementary> Elementary for Tensor<Element> {
     fn exp(&self) -> Self {
-        self.map(|element| element.exp())
+        self.mapped(MapOperation::Exp, |element| element.exp())
     }
 
     fn ln(&self) -> Self {
-        self.map(|element| element.ln())
+        self.mapped(MapOperation::Ln, |element| element.ln())
     }
 
     fn sqrt(&self) -> Self {
-        self.map(|element| element.sqrt())
+        self.mapped(MapOperation::Sqrt, |element| element.sqrt())
     }
 
     fn tanh(&self) -> Self {
-        self.map(|element| element.tanh())
+        self.mapped(MapOperation::Tanh, |element| element.tanh())
     }
 
     fn powf(&self, exponent: Self) -> Self {
