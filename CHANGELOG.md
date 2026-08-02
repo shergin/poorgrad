@@ -26,6 +26,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   that does not compile, a missing kernel, a rejected pipeline — is
   now a hard test failure instead of a silent skip (audit finding
   PG-006).
+- `cargo test` no longer executes the Criterion benchmarks: the
+  bench targets set `test = false` and CI names its test targets
+  instead of `--all-targets` (which implies `--benches` and forces
+  them regardless), with doctests run explicitly (audit finding
+  PG-007).
 
 ### Added
 

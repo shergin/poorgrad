@@ -1,6 +1,9 @@
-# Continuous integration: the same three gates used locally before
-# every commit — formatting, lints as errors across all targets, and
-# the full test suite (which also compiles the benchmarks).
+# Continuous integration: the same gates used locally before every
+# commit — formatting, lints as errors across all targets (which also
+# compile the benchmarks), and the test suite including doctests. The
+# test steps name their targets: `--all-targets` implies `--benches`,
+# which would execute every Criterion binary in test mode regardless
+# of the targets' `test = false`.
 name: CI
 
 on:
@@ -22,7 +25,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all-targets
+      - run: cargo test --lib --tests --examples
+      # Named targets omit doctests, so they get their own run.
+      - run: cargo test --doc
       # Backend features compile to safe stubs off macOS; this keeps
       # the stubs honest.
       - run: cargo clippy --all-targets --all-features -- -D warnings
@@ -41,4 +46,5 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets --features accelerate,metal -- -D warnings
-      - run: cargo test --all-targets --features accelerate,metal
+      - run: cargo test --lib --tests --examples --features accelerate,metal
+      - run: cargo test --doc --features accelerate,metal

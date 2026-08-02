@@ -12,7 +12,12 @@ categories = ["science", "mathematics"]
 
 # The default libtest bench harness would intercept criterion's CLI
 # flags (such as `--save-baseline`), so benchmarks run only through the
-# explicit `[[bench]]` targets below.
+# explicit `[[bench]]` targets below. Each also sets `test = false`:
+# plain `cargo test` would otherwise execute every Criterion binary in
+# its test mode, turning the test gate into an uncontrolled performance
+# workload. An explicit `--benches` (or `--all-targets`) still forces
+# them in, so CI names its test targets instead; clippy's
+# `--all-targets` remains the benchmarks' compile gate.
 [lib]
 bench = false
 
@@ -80,27 +85,34 @@ path = "examples/makemore/embedding_map.rs"
 [[bench]]
 name = "record"
 harness = false
+test = false
 
 [[bench]]
 name = "run"
 harness = false
+test = false
 
 [[bench]]
 name = "train"
 harness = false
+test = false
 
 [[bench]]
 name = "scale"
 harness = false
+test = false
 
 [[bench]]
 name = "gemm"
 harness = false
+test = false
 
 [[bench]]
 name = "elementwise"
 harness = false
+test = false
 
 [[bench]]
 name = "memory"
 harness = false
+test = false
