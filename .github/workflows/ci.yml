@@ -29,10 +29,11 @@ jobs:
 
   # The backend features are real only on macOS; this job runs the
   # accelerate and metal grids, determinism, and end-to-end training
-  # tests on Apple hardware (the hosted runners' paravirtualized GPU
-  # runs real compute, per tinygrad's CI).
+  # tests on Apple hardware. The macos-26 image exposes the
+  # paravirtualized GPU (macos-14 reported no Metal device); the GPU
+  # tests skip cleanly wherever the device is missing.
   check-macos:
-    runs-on: macos-14
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
