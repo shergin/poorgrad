@@ -51,10 +51,18 @@ kernel void gemm_naive_f32(
 // notes/gemm-acceleration.md.
 constant constexpr uint BM = 64;
 constant constexpr uint BN = 64;
-constant constexpr uint BK = 16;
+// BK = 8 keeps the staging footprint near 5 KB (six resident
+// threadgroups per core); measured worth a few percent over
+// BK = 16, and wider 64 x 128 tiles with 8 simdgroups measured the
+// same — the geometry lever is exhausted here, per the ledger in
+// notes/gemm-acceleration.md.
+constant constexpr uint BK = 8;
 constant constexpr uint A_PAD = BK + 4;
 constant constexpr uint B_PAD = BN + 4;
 constant constexpr uint THREADS = 128;
+// The epilogue reuses the staging area this many output rows at a
+// time; EPILOGUE_ROWS * B_PAD must fit in SHARED_LEN.
+constant constexpr uint EPILOGUE_ROWS = 16;
 
 // The staging area holds A and B tiles during the K loop and is
 // reused as a half-tile output buffer by the epilogue, so the whole
@@ -137,28 +145,31 @@ static inline void gemm_tiled_body(
     }
 
     // Epilogue: the K loop is done, so the staging area is free to
-    // hold half the output tile at a time; each half is stored with
-    // the sanctioned intrinsic and streamed out coalesced and
+    // hold a band of the output tile at a time; each band is stored
+    // with the sanctioned intrinsic and streamed out coalesced and
     // guarded, so edges stay exact, no thread_elements layout
     // assumption is made, and no scattered device store exists (the
     // capture showed those thrashing the TLB).
-    for (uint half_index = 0; half_index < 2; half_index++) {
+    for (uint pass = 0; pass < BM / EPILOGUE_ROWS; pass++) {
+        const uint pass_row = pass * EPILOGUE_ROWS;
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        if (quadrant_row == half_index * 32) {
-            for (uint i = 0; i < 4; i++) {
-                for (uint j = 0; j < 4; j++) {
-                    simdgroup_store(
-                        accumulator[i][j],
-                        shared_tile + (i * 8) * B_PAD + quadrant_column + j * 8,
-                        B_PAD);
-                }
+        for (uint i = 0; i < 4; i++) {
+            const uint local_row = quadrant_row + i * 8;
+            if (local_row < pass_row || local_row >= pass_row + EPILOGUE_ROWS) {
+                continue;
+            }
+            for (uint j = 0; j < 4; j++) {
+                simdgroup_store(
+                    accumulator[i][j],
+                    shared_tile + (local_row - pass_row) * B_PAD + quadrant_column + j * 8,
+                    B_PAD);
             }
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
-        for (uint index = lane; index < 32 * BN; index += THREADS) {
+        for (uint index = lane; index < EPILOGUE_ROWS * BN; index += THREADS) {
             const uint row = index / BN;
             const uint column = index % BN;
-            const uint global_row = tile_row + half_index * 32 + row;
+            const uint global_row = tile_row + pass_row + row;
             const uint global_column = tile_column + column;
             if (global_row < m && global_column < n) {
                 product[global_row * n + global_column] = shared_tile[row * B_PAD + column];
