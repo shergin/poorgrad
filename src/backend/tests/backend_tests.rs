@@ -2,7 +2,22 @@ use super::{Backend, BackendUnavailable};
 
 #[test]
 fn all_lists_every_backend_in_chain_order() {
-    assert_eq!(Backend::ALL, &[Backend::Accelerate, Backend::Metal]);
+    assert_eq!(
+        Backend::ALL,
+        &[Backend::Accelerate, Backend::Metal, Backend::Simd]
+    );
+}
+
+#[test]
+fn simd_status_reports_the_build() {
+    // The simd backend has no platform arm and nothing to
+    // initialize: compiled means ready, on every OS.
+    let status = Backend::Simd.status();
+    if cfg!(feature = "simd") {
+        assert_eq!(status, Ok(()));
+    } else {
+        assert_eq!(status, Err(BackendUnavailable::NotCompiled));
+    }
 }
 
 #[test]

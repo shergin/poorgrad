@@ -65,15 +65,18 @@ choice:
 
 ## Acceleration
 
-Opt-in cargo features route dense math to the hardware a Mac
-already owns: `accelerate` (the AMX/SME matrix units through
-`cblas`, vForce for whole-buffer transcendentals) and `metal` (the
-crate's own simdgroup GPU kernels). Enabling a feature is the whole
+Opt-in cargo features route dense math to the hardware you already
+own: `accelerate` (the AMX/SME matrix units through `cblas`, vForce
+for whole-buffer transcendentals) and `metal` (the crate's own
+simdgroup GPU kernels) on a Mac, and `simd` (tuned CPU microkernels
+with runtime AVX-512/AVX2/NEON dispatch, measured 96 GFLOP/s `f32`)
+on Linux and everything else. Enabling a feature is the whole
 activation — the same training source spans a factor of four
 thousand, from the 0.4 GFLOP/s naive definition to AMX's measured
 1.6 TFLOP/s `f32`, with zero source changes:
 
 ```sh
+cargo run --release --features simd --example throughput
 cargo run --release --features accelerate,metal --example throughput
 ```
 

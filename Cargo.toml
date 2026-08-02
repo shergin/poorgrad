@@ -29,6 +29,7 @@ codegen-units = 1
 
 [dependencies]
 cow_vec = "1.4"
+matrixmultiply = { version = "0.3.11", optional = true }
 smallvec = "1.15.2"
 static_assertions = "1.1"
 
@@ -47,6 +48,12 @@ accelerate = []
 # GPU through hand-written simdgroup-matrix kernels, compiled from
 # source at first use. macOS only; a safe stub elsewhere.
 metal = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-metal"]
+
+# Routes dense `f32`/`f64` matrix products above a small threshold to
+# the `matrixmultiply` crate's hand-tuned microkernels (runtime
+# AVX-512F/AVX2+FMA/NEON dispatch, single-threaded). Every platform;
+# the portable acceleration rung for Linux and everyone else.
+simd = ["dep:matrixmultiply"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }

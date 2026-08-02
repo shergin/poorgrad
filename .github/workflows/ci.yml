@@ -28,15 +28,20 @@ jobs:
       - run: cargo test --lib --tests --examples
       # Named targets omit doctests, so they get their own run.
       - run: cargo test --doc
-      # Backend features compile to safe stubs off macOS; this keeps
-      # the stubs honest.
+      # The simd backend is real on Linux — the one backend this
+      # runner can execute instead of merely compiling as a stub.
+      - run: cargo test --lib --tests --examples --features simd
+      - run: cargo test --doc --features simd
+      # The Apple backend features compile to safe stubs off macOS;
+      # this keeps the stubs honest.
       - run: cargo clippy --all-targets --all-features -- -D warnings
 
-  # The backend features are real only on macOS; this job runs the
-  # accelerate and metal grids, determinism, and end-to-end training
-  # tests on Apple hardware. The macos-26 image exposes the
-  # paravirtualized GPU (macos-14 reported no Metal device); the GPU
-  # tests skip cleanly wherever the device is missing.
+  # The Apple backends are real only on macOS; this job runs the
+  # accelerate and metal grids, determinism, end-to-end training,
+  # and the triple-feature chain order on Apple hardware. The
+  # macos-26 image exposes the paravirtualized GPU (macos-14
+  # reported no Metal device); the GPU tests skip cleanly wherever
+  # the device is missing.
   check-macos:
     runs-on: macos-26
     steps:
@@ -45,6 +50,6 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets --features accelerate,metal -- -D warnings
-      - run: cargo test --lib --tests --examples --features accelerate,metal
-      - run: cargo test --doc --features accelerate,metal
+      - run: cargo clippy --all-targets --features accelerate,metal,simd -- -D warnings
+      - run: cargo test --lib --tests --examples --features accelerate,metal,simd
+      - run: cargo test --doc --features accelerate,metal,simd

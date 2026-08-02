@@ -1,0 +1,247 @@
+use std::ops::{Add, Mul};
+
+use crate::{Differentiable, GemmTask, Network, Shape, Tensor, init};
+
+use super::{executed_f32, executed_f64, gemm_f32, strides_for};
+
+/// Computes the product of two row-major matrices in the logical
+/// path's accumulation order: the reference every case compares to,
+/// within a tolerance, since the kernel packs and sums in its own
+/// order.
+fn reference<Element: Copy + Add<Output = Element> + Mul<Output = Element>>(
+    a: &[Element],
+    b: &[Element],
+    m: usize,
+    k: usize,
+    n: usize,
+) -> Vec<Element> {
+    let mut elements = Vec::with_capacity(m * n);
+    for row in 0..m {
+        for column in 0..n {
+            let mut total = a[row * k] * b[column];
+            for step in 1..k {
+                total = total + a[row * k + step] * b[step * n + column];
+            }
+            elements.push(total);
+        }
+    }
+    elements
+}
+
+/// Returns distinct, sign-varied row-major values for a matrix.
+fn varied(rows: usize, columns: usize, seed: i64) -> Vec<f64> {
+    (0..(rows * columns) as i64)
+        .map(|index| ((index * 7 + seed * 13) % 23 - 11) as f64 / 4.0)
+        .collect()
+}
+
+/// A buffer holding a logical matrix under one stride form.
+struct Form {
+    buffer: Vec<f64>,
+    strides: [usize; 2],
+}
+
+/// One stride-form builder of the grid.
+type FormBuilder = fn(&[f64], usize, usize) -> Form;
+
+/// Returns the logical matrix stored contiguously.
+fn contiguous(logical: &[f64], _rows: usize, columns: usize) -> Form {
+    Form {
+        buffer: logical.to_vec(),
+        strides: [columns, 1],
+    }
+}
+
+/// Returns the logical matrix stored as its transpose, read back
+/// through a transposed view's strides.
+fn transposed(logical: &[f64], rows: usize, columns: usize) -> Form {
+    let mut buffer = vec![0.0; rows * columns];
+    for row in 0..rows {
+        for column in 0..columns {
+            buffer[column * rows + row] = logical[row * columns + column];
+        }
+    }
+    Form {
+        buffer,
+        strides: [1, rows],
+    }
+}
+
+/// Returns the logical matrix stored with three padding elements per
+/// row: a narrowed window's wide leading dimension.
+fn narrowed(logical: &[f64], rows: usize, columns: usize) -> Form {
+    let padded = columns + 3;
+    let mut buffer = vec![0.0; rows * padded];
+    for row in 0..rows {
+        buffer[row * padded..row * padded + columns]
+            .copy_from_slice(&logical[row * columns..(row + 1) * columns]);
+    }
+    Form {
+        buffer,
+        strides: [padded, 1],
+    }
+}
+
+/// Asserts elementwise closeness under the k-scaled tolerance of the
+/// design note (the kernel reorders sums; it must not change them).
+fn assert_close_f64(actual: &[f64], expected: &[f64], k: usize) {
+    let tolerance = 8.0 * f64::EPSILON * (k as f64).sqrt();
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= tolerance * (1.0 + expected.abs()),
+            "{actual} differs from {expected} beyond tolerance (k = {k})"
+        );
+    }
+}
+
+/// The `f32` twin of [`assert_close_f64`].
+fn assert_close_f32(actual: &[f32], expected: &[f32], k: usize) {
+    let tolerance = 8.0 * f32::EPSILON * (k as f32).sqrt();
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= tolerance * (1.0 + expected.abs()),
+            "{actual} differs from {expected} beyond tolerance (k = {k})"
+        );
+    }
+}
+
+/// The shape grid: squares, rectangles, primes, and GEMV shapes.
+const SHAPES: [(usize, usize, usize); 9] = [
+    (1, 1, 1),
+    (2, 3, 4),
+    (5, 8, 13),
+    (16, 16, 16),
+    (63, 64, 65),
+    (100, 127, 3),
+    (128, 100, 64),
+    (1, 64, 128),
+    (64, 128, 1),
+];
+
+#[test]
+fn every_stride_form_matches_the_reference_f64() {
+    let forms: [FormBuilder; 3] = [contiguous, transposed, narrowed];
+    for (m, k, n) in SHAPES {
+        let left = varied(m, k, 1);
+        let right = varied(k, n, 2);
+        let expected = reference(&left, &right, m, k, n);
+        for left_form in forms {
+            for right_form in forms {
+                let a = left_form(&left, m, k);
+                let b = right_form(&right, k, n);
+                let task = GemmTask::new(&a.buffer, a.strides, &b.buffer, b.strides, m, k, n);
+                let product = executed_f64(&task).expect("the mapping accepts this form");
+                assert_close_f64(&product, &expected, k);
+            }
+        }
+    }
+}
+
+#[test]
+fn every_stride_form_matches_the_reference_f32() {
+    for (m, k, n) in SHAPES {
+        let left: Vec<f32> = varied(m, k, 3).iter().map(|&value| value as f32).collect();
+        let right: Vec<f32> = varied(k, n, 4).iter().map(|&value| value as f32).collect();
+        let expected = reference(&left, &right, m, k, n);
+        let task = GemmTask::new(&left, [k, 1], &right, [n, 1], m, k, n);
+        let product = executed_f32(&task).expect("the mapping accepts contiguous operands");
+        assert_close_f32(&product, &expected, k);
+
+        let mut transposed_right = vec![0.0_f32; k * n];
+        for row in 0..k {
+            for column in 0..n {
+                transposed_right[column * k + row] = right[row * n + column];
+            }
+        }
+        let task = GemmTask::new(&left, [k, 1], &transposed_right, [1, k], m, k, n);
+        let product = executed_f32(&task).expect("the mapping accepts a transposed operand");
+        assert_close_f32(&product, &expected, k);
+    }
+}
+
+#[test]
+fn broadcast_strides_decline_to_the_built_in_paths() {
+    let row = varied(1, 8, 1);
+    let right = varied(8, 4, 2);
+    // A stride-0 row axis declines conservatively, mirroring the
+    // cblas arm; relaxing it is a recorded experiment, not a bet.
+    let task = GemmTask::new(&row, [0, 1], &right, [4, 1], 3, 8, 4);
+    assert_eq!(executed_f64(&task), None);
+}
+
+#[test]
+fn the_threshold_declines_small_tasks() {
+    let left = varied(2, 2, 1);
+    let right = varied(2, 2, 2);
+    let task = GemmTask::new(&left, [2, 1], &right, [2, 1], 2, 2, 2);
+    let left32: Vec<f32> = left.iter().map(|&value| value as f32).collect();
+    let right32: Vec<f32> = right.iter().map(|&value| value as f32).collect();
+    let task32 = GemmTask::new(&left32, [2, 1], &right32, [2, 1], 2, 2, 2);
+    assert_eq!(super::gemm_f64(&task), None);
+    assert_eq!(gemm_f32(&task32), None);
+}
+
+#[test]
+fn unaddressable_offsets_decline_without_allocating() {
+    // The pure eligibility arithmetic, exercised directly: a furthest
+    // element offset beyond `isize` declines before any pointer math
+    // could see it, and no giant operand needs to exist to prove it.
+    assert_eq!(strides_for([0, 1], 4, 4), None);
+    assert_eq!(strides_for([1, 0], 4, 4), None);
+    assert_eq!(strides_for([usize::MAX / 2, 1], 3, 4), None);
+    assert_eq!(strides_for([1, usize::MAX / 2], 4, 3), None);
+    assert_eq!(strides_for([4, 1], 4, 4), Some([4, 1]));
+    assert_eq!(strides_for([1, 4], 4, 4), Some([1, 4]));
+}
+
+#[test]
+fn repeated_products_answer_bitwise_identically() {
+    // The kernel is single-threaded with fixed blocking per version
+    // and detected instruction set; per the house rule its run-to-run
+    // determinism is verified, not assumed. The observed answer is
+    // recorded in notes/simd-backend.md.
+    let size = 1024;
+    let left = varied(size, size, 5);
+    let right = varied(size, size, 6);
+    let task = GemmTask::new(&left, [size, 1], &right, [size, 1], size, size, size);
+    let first = executed_f64(&task).expect("a plain square product");
+    let second = executed_f64(&task).expect("a plain square product");
+    let first_bits: Vec<u64> = first.iter().map(|value| value.to_bits()).collect();
+    let second_bits: Vec<u64> = second.iter().map(|value| value.to_bits()).collect();
+    assert_eq!(first_bits, second_bits);
+}
+
+#[test]
+fn training_runs_through_the_backend_end_to_end() {
+    // A batch-64 regression whose products sit above the threshold,
+    // so forward and backward (transposed views included) route
+    // through the kernel against the real tape — on any platform,
+    // which is the point of this backend.
+    let network = Network::new();
+    let inputs = network.input(Tensor::filled([64, 8], 0.5_f64));
+    let targets = network.input(Tensor::filled([64, 1], 1.0_f64));
+    let mut initializer = init::uniform(11, 0.3);
+    let weights = network.parameter(initializer(&Shape::new([8, 64])));
+    let output_weights = network.parameter(initializer(&Shape::new([64, 1])));
+    let hidden = inputs.matmul(weights).tanh();
+    let prediction = hidden.matmul(output_weights);
+    let error = prediction - targets;
+    let loss = (error * error).sum();
+    let loss_symbol = loss.symbol();
+
+    let mut network = network;
+    let mut last_loss = f64::INFINITY;
+    for _ in 0..50 {
+        let loss_value = network.resolve(loss_symbol);
+        let evaluation = network.forward();
+        last_loss = evaluation.of(loss_value).to_vec()[0];
+        let gradients = evaluation.backward(loss_value);
+        network = network.update(&gradients, |weight, gradient| {
+            weight.clone() - Tensor::filled(gradient.shape(), 0.001) * gradient.clone()
+        });
+    }
+    assert!(
+        last_loss < 1.0,
+        "training through the backend did not converge: {last_loss}"
+    );
+}

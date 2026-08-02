@@ -396,7 +396,7 @@ task (wrong size, wrong platform, unavailable device), and the
 built-in paths answer when the whole chain declines. The chain is
 compile-time: enabling a feature is the activation, and no runtime
 switch exists, so within one binary two identical runs can never
-disagree. The chain has two residents, tried in order.
+disagree. The chain has three residents, tried in order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
 dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
@@ -409,8 +409,13 @@ the GPU through hand-written simdgroup-matrix kernels compiled from
 source at first use — Metal has no `f64` — serving what BLAS
 declines and everything large in metal-only builds; a failed setup
 or runtime error poisons it into declining forever, degrading to
-slow rather than wrong. Whatever the whole chain declines lands on
-the built-in paths. [`Backend::status`] answers for
+slow rather than wrong. `Backend::Simd` (the `simd` feature) closes
+the chain: the `matrixmultiply` crate's tuned, single-threaded CPU
+microkernels with runtime instruction-set dispatch (AVX-512F,
+AVX2+FMA, AVX, NEON) for both `f32` and `f64` — the portable rung,
+real on every platform where the Apple backends are macOS-only, and
+mop-up behind them on macOS. Whatever the whole chain declines
+lands on the built-in paths. [`Backend::status`] answers for
 every defined backend in every build — `NotCompiled` is an ordinary
 result, not a compile error — and the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend

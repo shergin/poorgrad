@@ -14,8 +14,16 @@ matrix numbers at 512- to 2048-square:
 | build | matrix products | `exp` `ln` `sqrt` `tanh` | runs on |
 |---|---|---|---|
 | default | 26 GFLOP/s `f32`, 13 `f64` | scalar | everywhere |
+| `--features simd` | 96 GFLOP/s `f32`, 47 `f64` | scalar | everywhere |
 | `--features accelerate` | 1.6 TFLOP/s `f32`, 550 GFLOP/s `f64` | vectorized | macOS; a safe stub elsewhere |
 | `--features metal` | 1.4 TFLOP/s `f32` at large sizes; no `f64` | scalar | macOS; a safe stub elsewhere |
+
+The `simd` row is that backend's NEON kernels on the same machine;
+its AVX-512/AVX2 kernels on x86 Linux are expected to be of the
+same order but are not measured here — `cargo bench` reruns the
+numbers on yours. Where the slice path pays 8x for a transposed
+operand, the `simd` kernels pack first and run every stride form at
+full speed.
 
 The naive definition — every element read through the strided
 logical access — measures 0.4 GFLOP/s and remains the correctness
@@ -27,6 +35,7 @@ changes.
 
 ```sh
 cargo run --release --example throughput
+cargo run --release --features simd --example throughput
 cargo run --release --features accelerate --example throughput
 cargo run --release --features accelerate,metal --example throughput
 ```
@@ -69,6 +78,17 @@ broadcast operand) decline down the chain. Whole-buffer `exp`,
 `ln`, `sqrt`, and `tanh` over contiguous tensors run through
 vForce's vectorized transcendentals.
 
+**The `simd` feature** is the portable rung: the `matrixmultiply`
+crate's hand-tuned, single-threaded CPU microkernels, selecting
+AVX-512F, AVX2+FMA, AVX, or NEON at run time. It accelerates dense
+`f32` and `f64` products above a small threshold on every platform
+— this is the acceleration story for Linux — and its strided API
+takes transposed and narrowed views directly, so the forms that
+cost the slice path most are exactly where it gains most. Stride-0
+broadcast operands decline down the chain. On macOS it sits behind
+the Apple backends as mop-up; elementwise transcendentals stay
+scalar in this build.
+
 **The `metal` feature** runs large `f32` products (Metal has no
 `f64`) on the GPU through the crate's own simdgroup-matrix kernels —
 no MPS, no vendor library — compiled from source at first use, with
@@ -85,7 +105,8 @@ library degrades to slow, never to wrong.
 ## Routing
 
 Backends form a compile-time chain tried in declaration order —
-`Accelerate`, then `Metal` — and each may decline any task: below
+`Accelerate`, then `Metal`, then `Simd` — and each may decline any
+task: below
 its threshold, outside its stride mapping, beyond its integer
 range, or with its device gone. Whatever the whole chain declines
 lands on the built-in paths, so every task computes correctly in
@@ -103,7 +124,9 @@ test suite verifies the hardware paths down to the bit (repeated
 products compare bitwise). What a backend build forfeits is
 bit-identity *with the built-in paths*: hardware sums and rounds in
 its own order (AMX partitions sums, vForce rounds differently than
-libm), the same way any BLAS differs from a textbook loop. One
+libm, the simd kernels pack and re-associate — though
+single-threaded, so nothing varies between runs), the same way any
+BLAS differs from a textbook loop. One
 cargo caveat: features unify across a dependency graph, so any
 dependency enabling `poorgrad/accelerate` enables it for the whole
 binary.
@@ -115,9 +138,10 @@ backend build drops `forbid` but keeps a crate-wide
 `#![deny(unsafe_code)]`, with exactly one scoped `allow` per
 backend module — `unsafe` outside them stays a compile error, and
 what is inside is the FFI boundary itself: cblas and vForce calls
-with their safety arguments written out, and the Metal encode path.
-`accelerate` adds no crates; `metal` adds the `objc2` binding
-family on macOS targets only.
+with their safety arguments written out, the Metal encode path, and
+the two `matrixmultiply` call sites. `accelerate` adds no crates;
+`metal` adds the `objc2` binding family on macOS targets only;
+`simd` adds `matrixmultiply` and its single helper crate.
 
 ## The seam, for payload authors
 

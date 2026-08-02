@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Added
+
+- The `simd` feature: a portable CPU acceleration backend over the
+  `matrixmultiply` crate's tuned, single-threaded microkernels with
+  runtime instruction-set dispatch (AVX-512F, AVX2+FMA, AVX, NEON).
+  It accelerates dense `f32` and `f64` products on every platform —
+  the acceleration story for Linux — and sits last in the chain on
+  macOS. `Backend::Simd` joins the diagnostics enum, and the ubuntu
+  CI job now executes the backend grid it used to only compile.
+
 ## [0.5.4] - 2026-08-02
 
 ### Fixed

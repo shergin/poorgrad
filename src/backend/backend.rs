@@ -31,11 +31,17 @@ pub enum Backend {
     /// use. Behind the `metal` feature, macOS only; serves what
     /// BLAS declines, and everything large in metal-only builds.
     Metal,
+    /// The `matrixmultiply` crate's tuned CPU microkernels with
+    /// runtime instruction-set dispatch (AVX-512F, AVX2+FMA, AVX,
+    /// NEON), single-threaded. Behind the `simd` feature, every
+    /// platform — the portable rung for Linux and everyone else,
+    /// and mop-up behind the Apple backends on macOS.
+    Simd,
 }
 
 impl Backend {
     /// Every backend this crate version defines, in chain order.
-    pub const ALL: &'static [Backend] = &[Backend::Accelerate, Backend::Metal];
+    pub const ALL: &'static [Backend] = &[Backend::Accelerate, Backend::Metal, Backend::Simd];
 
     /// Reports whether this backend would accept work in this build
     /// on this machine, forcing its lazy setup if it has one.
@@ -71,6 +77,15 @@ impl Backend {
                 }
                 // Accelerate is a link-time dependency with nothing
                 // to initialize and nothing to lose at run time.
+                Ok(())
+            }
+            Backend::Simd => {
+                if !cfg!(feature = "simd") {
+                    return Err(BackendUnavailable::NotCompiled);
+                }
+                // Pure CPU code with runtime instruction-set
+                // dispatch: no platform arm, no device, nothing to
+                // initialize and nothing to lose at run time.
                 Ok(())
             }
         }

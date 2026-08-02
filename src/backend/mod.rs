@@ -19,6 +19,11 @@ mod backend;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[allow(unsafe_code)]
 mod metal;
+// The one arm with no `target_os`: the simd backend is real on
+// every platform.
+#[cfg(feature = "simd")]
+#[allow(unsafe_code)]
+mod simd;
 
 pub use backend::{Backend, BackendUnavailable};
 
@@ -39,6 +44,10 @@ pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
     if let Some(product) = metal::gemm_f32(task) {
         return Some(product);
     }
+    #[cfg(feature = "simd")]
+    if let Some(product) = simd::gemm_f32(task) {
+        return Some(product);
+    }
     let _ = task;
     None
 }
@@ -48,6 +57,10 @@ pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
 pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if let Some(product) = accelerate::gemm_f64(task) {
+        return Some(product);
+    }
+    #[cfg(feature = "simd")]
+    if let Some(product) = simd::gemm_f64(task) {
         return Some(product);
     }
     let _ = task;
