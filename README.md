@@ -190,7 +190,7 @@ the GPU itself through the crate's own simdgroup kernels (no MPS, no
 vendor library, `f32` only — Metal has no `f64`); stated as
 measured, AMX still beats that kernel, so Accelerate leads the chain
 where both are compiled and Metal serves the stride patterns BLAS
-declines — and metal-only builds, at about twenty times the built-in
+declines — and metal-only builds, at about fifty times the built-in
 path.
 
 ## The name
