@@ -86,6 +86,25 @@ fn gemm(criterion: &mut Criterion) {
         bencher.iter(|| contexts.matmul(&weights));
     });
 
+    // The sizes where a GPU can pay for its dispatch: the `metal`
+    // feature's territory, and the accelerate-versus-metal crossover.
+    for size in [1024usize, 2048] {
+        let flops = (2 * size * size * size) as u64;
+        let left = filled_f32(size, size, 1);
+        let right = filled_f32(size, size, 2);
+        group.throughput(Throughput::Elements(flops));
+        group.bench_function(format!("f32/square-{size}"), |bencher| {
+            bencher.iter(|| left.matmul(&right));
+        });
+    }
+    let size = 1024usize;
+    let left = filled_f64(size, size, 1);
+    let right = filled_f64(size, size, 2);
+    group.throughput(Throughput::Elements((2 * size * size * size) as u64));
+    group.bench_function("f64/square-1024", |bencher| {
+        bencher.iter(|| left.matmul(&right));
+    });
+
     group.finish();
 }
 

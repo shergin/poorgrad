@@ -16,6 +16,9 @@
 mod accelerate;
 #[allow(clippy::module_inception)]
 mod backend;
+#[cfg(all(feature = "metal", target_os = "macos"))]
+#[allow(unsafe_code)]
+mod metal;
 
 pub use backend::{Backend, BackendUnavailable};
 
@@ -24,8 +27,16 @@ use crate::GemmTask;
 /// It offers an `f32` task to every compiled backend, hardware-greediest
 /// first, answering `None` when none accepts.
 pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
+    // Accelerate leads: the measured crossover has AMX ahead of the
+    // current Metal kernel at every size, so Metal serves what BLAS
+    // declines (stride patterns like broadcasts) and metal-only
+    // builds. The order flips back if the kernel ever earns it.
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if let Some(product) = accelerate::gemm_f32(task) {
+        return Some(product);
+    }
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if let Some(product) = metal::gemm_f32(task) {
         return Some(product);
     }
     let _ = task;

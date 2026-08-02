@@ -9,6 +9,24 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- Add the `metal` feature: large dense `f32` products (Metal has no
+  `f64`) run on the GPU through hand-written simdgroup-matrix
+  kernels — no MPS, no vendor library — compiled from source at
+  first use, with shared-mode buffers from a size-classed pool on
+  unified memory. The kernels read operands through the task's
+  strides, so transposed, narrowed, and broadcast views pass through
+  without copies. Accelerate leads the chain where both features are
+  compiled (it measured ahead at every size), so Metal serves the
+  stride patterns BLAS declines and everything large in metal-only
+  builds — about twenty times the built-in slice path. A failed
+  setup or runtime error poisons the backend into declining forever,
+  degrading to slow, never to wrong; `Backend::Metal.status()`
+  reports readiness, doubling as warmup for the one-time kernel
+  compilation.
+- Add the `throughput` example: the acceleration ladder measured on
+  a wide dense model — the raw 2048-square product and whole
+  training steps — with the dimensions shrinking eightfold when no
+  backend is compiled in so the run still terminates.
 - Add `init::Sample` and make the initializer factories
   element-generic: `uniform`, `normal`, `xavier`, and `kaiming` now
   produce `Tensor<Element>` for any element implementing `Sample`,

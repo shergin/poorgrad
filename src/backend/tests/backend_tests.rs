@@ -2,7 +2,24 @@ use super::{Backend, BackendUnavailable};
 
 #[test]
 fn all_lists_every_backend_in_chain_order() {
-    assert_eq!(Backend::ALL, &[Backend::Accelerate]);
+    assert_eq!(Backend::ALL, &[Backend::Accelerate, Backend::Metal]);
+}
+
+#[test]
+fn metal_status_reports_the_build() {
+    let status = Backend::Metal.status();
+    if cfg!(all(feature = "metal", target_os = "macos")) {
+        // The lazy setup either succeeds or reports its reason; on
+        // real Apple hardware it succeeds.
+        assert!(matches!(
+            status,
+            Ok(()) | Err(BackendUnavailable::Initialization(_))
+        ));
+    } else if cfg!(feature = "metal") {
+        assert_eq!(status, Err(BackendUnavailable::PlatformUnsupported));
+    } else {
+        assert_eq!(status, Err(BackendUnavailable::NotCompiled));
+    }
 }
 
 #[test]

@@ -41,7 +41,10 @@
 // The default build forbids `unsafe` outright. A backend feature
 // drops `forbid` but keeps the crate-wide `deny`, so `unsafe`
 // outside a scope-allowed backend module stays a compile error.
-#![cfg_attr(not(feature = "accelerate"), forbid(unsafe_code))]
+#![cfg_attr(
+    not(any(feature = "accelerate", feature = "metal")),
+    forbid(unsafe_code)
+)]
 #![deny(unsafe_code)]
 
 mod backend;

@@ -23,13 +23,19 @@ pub enum Backend {
     /// Apple's Accelerate framework: `cblas_sgemm`/`cblas_dgemm`,
     /// executing on the AMX/SME matrix units on Apple Silicon and
     /// AVX kernels on Intel Macs. Behind the `accelerate` feature,
-    /// macOS only.
+    /// macOS only. Leads the chain: it measured ahead of the Metal
+    /// kernel at every size.
     Accelerate,
+    /// Hand-written simdgroup-matrix GPU kernels for large `f32`
+    /// products (Metal has no `f64`), compiled from source at first
+    /// use. Behind the `metal` feature, macOS only; serves what
+    /// BLAS declines, and everything large in metal-only builds.
+    Metal,
 }
 
 impl Backend {
     /// Every backend this crate version defines, in chain order.
-    pub const ALL: &'static [Backend] = &[Backend::Accelerate];
+    pub const ALL: &'static [Backend] = &[Backend::Accelerate, Backend::Metal];
 
     /// Reports whether this backend would accept work in this build
     /// on this machine, forcing its lazy setup if it has one.
@@ -40,6 +46,22 @@ impl Backend {
     /// `Backend::Accelerate.status().expect(..)`.
     pub fn status(self) -> Result<(), BackendUnavailable> {
         match self {
+            Backend::Metal => {
+                if !cfg!(feature = "metal") {
+                    return Err(BackendUnavailable::NotCompiled);
+                }
+                if !cfg!(target_os = "macos") {
+                    return Err(BackendUnavailable::PlatformUnsupported);
+                }
+                #[cfg(all(feature = "metal", target_os = "macos"))]
+                {
+                    super::metal::status()
+                }
+                #[cfg(not(all(feature = "metal", target_os = "macos")))]
+                {
+                    unreachable!("the cfg! guards above cover this build")
+                }
+            }
             Backend::Accelerate => {
                 if !cfg!(feature = "accelerate") {
                     return Err(BackendUnavailable::NotCompiled);

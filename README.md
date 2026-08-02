@@ -182,7 +182,13 @@ along. The opt-in `accelerate` feature routes dense `f32`/`f64`
 matrix products above a small threshold to Apple's Accelerate
 framework — the AMX/SME matrix units on Apple Silicon, AVX kernels
 on Intel Macs — through the same `Elementary::gemm` seam everything
-else uses. One flag, zero source changes.
+else uses. One flag, zero source changes. The `metal` feature adds
+the GPU itself through the crate's own simdgroup kernels (no MPS, no
+vendor library, `f32` only — Metal has no `f64`); stated as
+measured, AMX still beats that kernel, so Accelerate leads the chain
+where both are compiled and Metal serves the stride patterns BLAS
+declines — and metal-only builds, at about twenty times the built-in
+path.
 
 ## The name
 
