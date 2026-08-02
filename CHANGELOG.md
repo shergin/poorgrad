@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- `backward` no longer runs the derivative rules of operands used
+  only as shape or index data (a broadcast's reference, a gather's
+  selection): a `None` cotangent no longer marks its operand as an
+  ancestor, so a singular expression behind such a reference cannot
+  leak `NaN` into unrelated gradients (audit finding PG-001).
+
 ### Added
 
 - Add dense-payload twins of the `tensor-regression` run benches:

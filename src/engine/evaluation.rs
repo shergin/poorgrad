@@ -83,7 +83,8 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     /// the ancestors of `output` execute their derivative rules: every
     /// other value's gradient is exactly zero, and expressions the target
     /// does not depend on — including singular ones such as a division by
-    /// zero — cannot disturb the result. The network is not even locked,
+    /// zero, even when the target uses them purely as a shape or index
+    /// reference — cannot disturb the result. The network is not even locked,
     /// so any number of threads can differentiate one shared evaluation
     /// for their own targets at once. Values recorded after this
     /// evaluation ran are absent from the result, exactly as they are
@@ -131,9 +132,6 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
                 .get(index)
                 .expect("snapshot cannot shrink")
                 .as_slice();
-            for &link in links {
-                ancestors[link.index()] = true;
-            }
             let operands: SmallVec<[&Data; 2]> =
                 links.iter().map(|link| &values[link.index()]).collect();
             let gradient = gradients[index].clone();
@@ -141,10 +139,17 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             debug_assert_eq!(cotangents.len(), links.len());
             // Accumulation is the multivariate chain rule: when a value
             // feeds several consumers, its gradient is the sum of the
-            // cotangents arriving along every path.
+            // cotangents arriving along every path. Only a `Some`
+            // cotangent marks its operand as an ancestor: `None` declares
+            // the operand data rather than a differentiable dependency
+            // (a broadcast's reference, a gather's selection), so its
+            // producers stay outside the scan — a singular expression
+            // behind a shape-only edge must not leak NaN into genuine
+            // gradients. `Some(zero)` is still an edge and still marks.
             for (&link, cotangent) in links.iter().zip(cotangents) {
                 if let Some(contribution) = cotangent {
                     let slot = link.index();
+                    ancestors[slot] = true;
                     gradients[slot] = gradients[slot].clone() + contribution;
                 }
             }

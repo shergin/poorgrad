@@ -345,6 +345,40 @@ fn backward_ignores_singular_paths_through_shared_leaves() {
 }
 
 #[test]
+fn backward_skips_singular_producers_of_broadcast_references() {
+    let network = Network::new();
+    let input = network.leaf(0.0_f64);
+    let singular_reference = input / input;
+    let source = network.leaf(2.0);
+    let output = source.broadcast_like(singular_reference);
+
+    let evaluation = network.forward();
+    assert_eq!(*evaluation.of(output), 2.0);
+
+    // The reference contributes only its shape, so the target has no
+    // differentiable dependence on `input`: its gradient is exactly
+    // zero, never the NaN of the singular quotient's derivative rule.
+    let gradients = evaluation.backward(output);
+    assert_eq!(*gradients.of(input), 0.0);
+    assert_eq!(*gradients.of(singular_reference), 0.0);
+    assert_eq!(*gradients.of(source), 1.0);
+}
+
+#[test]
+fn backward_skips_singular_producers_of_axis_references() {
+    let network = Network::new();
+    let input = network.leaf(Tensor::new([2, 2], [0.0_f64, 1.0, 2.0, 3.0]));
+    let singular_reference = input / input;
+    let source = network.leaf(Tensor::new([2], [5.0_f64, 7.0]));
+    let output = source.broadcast_along(0, singular_reference).sum();
+
+    let gradients = network.forward().backward(output);
+    assert_eq!(gradients.of(input).to_vec(), [0.0; 4]);
+    assert_eq!(gradients.of(singular_reference).to_vec(), [0.0; 4]);
+    assert_eq!(gradients.of(source).to_vec(), [2.0, 2.0]);
+}
+
+#[test]
 fn backward_skips_nodes_recorded_after_the_target() {
     let network = Network::new();
     let input = network.leaf(2.0_f64);
