@@ -290,7 +290,8 @@ term and its mapping to the Rust types — is collected in
   measured on a wide dense model: raw 2048-square products and whole
   training steps, with the dimensions shrinking eightfold when no
   backend is compiled in:
-  `cargo run --release --features accelerate,metal --example throughput`.
+  `cargo run --release --features accelerate,metal --example throughput`
+  (or `--features simd` off macOS).
 
 ## License
 

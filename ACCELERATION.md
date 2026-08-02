@@ -95,7 +95,7 @@ no MPS, no vendor library — compiled from source at first use, with
 one pipeline specialized per recurring shape (record-once training
 replays a handful) and shared-mode buffers from a pool on unified
 memory. Stated as measured: the AMX units currently beat this
-kernel at every size, so where both features are compiled
+kernel at every size, so where both Apple features are compiled
 Accelerate leads and Metal serves what BLAS declines; in metal-only
 builds it runs everything large at about fifty times the built-in
 path. A failed setup or a runtime error poisons the backend into
