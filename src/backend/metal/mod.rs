@@ -70,7 +70,7 @@ pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
         return None;
     }
     let context = context().ok()?;
-    match gemm::executed(context, task, gemm::Kernel::Tiled) {
+    match gemm::executed(context, task, gemm::Kernel::Specialized) {
         Ok(product) => Some(product),
         Err(reason) => {
             // A numerics library degrades to slow, never to wrong:

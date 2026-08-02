@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Changed
+
+- Specialize the metal backend's pipelines per shape: the tiled
+  kernel's dimensions and strides bake as Metal function constants,
+  one cached pipeline per recurring shape (record-once training
+  replays a handful), with the generic params-driven pipeline as
+  the fallback past the cache cap. Measured on an M1 Pro: 534 to
+  612 GFLOP/s at 2048-square, a stable +15%; results within a
+  shape stay bitwise-reproducible as before.
+
 ## [0.5.0] - 2026-08-02
 
 ### Added
@@ -230,6 +242,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/shergin/poorgrad/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/shergin/poorgrad/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/shergin/poorgrad/compare/v0.3.0...v0.3.1

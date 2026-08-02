@@ -68,7 +68,7 @@ fn both_kernels_match_the_reference_across_the_grid() {
         let right = varied(k, n, 2);
         let expected = reference(&left, &right, m, k, n);
         let task = GemmTask::new(&left, [k, 1], &right, [n, 1], m, k, n);
-        for kernel in [Kernel::Naive, Kernel::Tiled] {
+        for kernel in [Kernel::Naive, Kernel::Tiled, Kernel::Specialized] {
             let product = executed(context, &task, kernel).expect("the dispatch succeeds");
             assert_close(&product, &expected, k);
         }
@@ -85,7 +85,7 @@ fn transposed_views_match_the_reference() {
 
     let left_transposed = transposed(&left, m, k);
     let right_transposed = transposed(&right, k, n);
-    for kernel in [Kernel::Naive, Kernel::Tiled] {
+    for kernel in [Kernel::Naive, Kernel::Tiled, Kernel::Specialized] {
         let task = GemmTask::new(&left_transposed, [1, m], &right, [n, 1], m, k, n);
         assert_close(
             &executed(context, &task, kernel).expect("a transposed left operand"),
@@ -130,7 +130,7 @@ fn the_chain_routes_large_products_here() {
     let direct = executed(
         context().expect("this machine has a Metal device"),
         &task,
-        Kernel::Tiled,
+        Kernel::Specialized,
     )
     .expect("the dispatch succeeds");
     let chain_bits: Vec<u32> = through_chain.iter().map(|value| value.to_bits()).collect();

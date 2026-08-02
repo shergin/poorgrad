@@ -23,14 +23,19 @@ struct GemmParams {
     b_column_stride: u32,
 }
 
-/// Which kernel to dispatch; production always tiles, the naive
-/// kernel is the correctness anchor the tests compare against.
+/// Which kernel to dispatch; production runs the shape-specialized
+/// pipeline (falling back to the generic tiled one past the cache
+/// cap), while the other two anchor the tests.
 #[derive(Clone, Copy)]
 pub(super) enum Kernel {
-    /// The tests' correctness anchor; production always tiles.
+    /// The tests' correctness anchor.
     #[cfg_attr(not(test), allow(dead_code))]
     Naive,
+    /// The generic params-driven pipeline; production's fallback and
+    /// the tests' second anchor.
+    #[cfg_attr(not(test), allow(dead_code))]
     Tiled,
+    Specialized,
 }
 
 /// It runs one task on the GPU: pooled shared buffers in, one
@@ -81,9 +86,25 @@ pub(super) fn executed(
     let encoder = command_buffer
         .computeCommandEncoder()
         .ok_or_else(|| "no compute encoder".to_string())?;
+    let specialized;
     encoder.setComputePipelineState(match kernel {
         Kernel::Naive => &context.naive,
         Kernel::Tiled => &context.tiled,
+        Kernel::Specialized => match context.specialized([
+            params.m,
+            params.n,
+            params.k,
+            params.a_row_stride,
+            params.a_column_stride,
+            params.b_row_stride,
+            params.b_column_stride,
+        ]) {
+            Some(pipeline) => {
+                specialized = pipeline;
+                &specialized
+            }
+            None => &context.tiled,
+        },
     });
     // SAFETY: buffer indices match the kernel signature, the buffers
     // outlive the encoder, and the params block is a plain `repr(C)`
@@ -100,6 +121,18 @@ pub(super) fn executed(
         );
     }
     let (groups, threads) = match kernel {
+        Kernel::Tiled | Kernel::Specialized => (
+            MTLSize {
+                width: n.div_ceil(64),
+                height: m.div_ceil(64),
+                depth: 1,
+            },
+            MTLSize {
+                width: 128,
+                height: 1,
+                depth: 1,
+            },
+        ),
         Kernel::Naive => (
             MTLSize {
                 width: n.div_ceil(16),
@@ -109,18 +142,6 @@ pub(super) fn executed(
             MTLSize {
                 width: 16,
                 height: 16,
-                depth: 1,
-            },
-        ),
-        Kernel::Tiled => (
-            MTLSize {
-                width: n.div_ceil(64),
-                height: m.div_ceil(64),
-                depth: 1,
-            },
-            MTLSize {
-                width: 128,
-                height: 1,
                 depth: 1,
             },
         ),

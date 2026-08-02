@@ -1,12 +1,28 @@
+use std::collections::HashMap;
+use std::ffi::c_void;
+use std::ptr::NonNull;
+use std::sync::Mutex;
+
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_foundation::NSString;
 use objc2_metal::{
     MTLCommandQueue, MTLCompileOptions, MTLComputePipelineState, MTLCreateSystemDefaultDevice,
-    MTLDevice, MTLLibrary,
+    MTLDataType, MTLDevice, MTLFunctionConstantValues, MTLLibrary,
 };
 
 use super::pool::Pool;
+
+/// How many shape-specialized pipelines the cache holds; new shapes
+/// past the cap run the generic tiled pipeline instead, so a
+/// pathological stream of distinct shapes degrades to generic speed
+/// rather than compiling forever.
+const SPECIALIZED_CAPACITY: usize = 32;
+
+/// The seven baked values of one specialized pipeline, in the
+/// shader's function-constant order: `m`, `n`, `k`, then the two
+/// stride pairs.
+pub(super) type ShapeKey = [u32; 7];
 
 /// The backend's one-time state: the device and queue, the two
 /// compiled pipelines, and the buffer pool.
@@ -18,6 +34,8 @@ pub(super) struct Context {
     pub(super) queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub(super) naive: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pub(super) tiled: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    library: Retained<ProtocolObject<dyn MTLLibrary>>,
+    specialized: Mutex<HashMap<ShapeKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) pool: Pool,
 }
 
@@ -58,8 +76,69 @@ impl Context {
             queue,
             naive,
             tiled,
+            library,
+            specialized: Mutex::new(HashMap::new()),
             pool: Pool::new(),
         })
+    }
+
+    /// Returns the pipeline specialized to `key`, building and
+    /// caching it on the first sight of the shape; `None` — run the
+    /// generic pipeline — past the cache cap or on a build failure.
+    pub(super) fn specialized(
+        &self,
+        key: ShapeKey,
+    ) -> Option<Retained<ProtocolObject<dyn MTLComputePipelineState>>> {
+        {
+            let cache = self
+                .specialized
+                .lock()
+                .expect("the pipeline cache is poisoned");
+            if let Some(pipeline) = cache.get(&key) {
+                return Some(pipeline.clone());
+            }
+            if cache.len() >= SPECIALIZED_CAPACITY {
+                return None;
+            }
+        }
+        // Built outside the lock: specialization costs milliseconds,
+        // and a racing duplicate build is benign — last one parks.
+        let pipeline = self.build_specialized(key).ok()?;
+        let mut cache = self
+            .specialized
+            .lock()
+            .expect("the pipeline cache is poisoned");
+        Some(cache.entry(key).or_insert(pipeline).clone())
+    }
+
+    /// Builds one pipeline with the shape baked as function constants.
+    fn build_specialized(
+        &self,
+        key: ShapeKey,
+    ) -> Result<Retained<ProtocolObject<dyn MTLComputePipelineState>>, String> {
+        let constants = MTLFunctionConstantValues::new();
+        for (index, value) in key.iter().enumerate() {
+            // SAFETY: the pointer addresses a live `u32` for the
+            // duration of the call, matching the declared `UInt`
+            // type; the value is copied out by the call.
+            unsafe {
+                constants.setConstantValue_type_atIndex(
+                    NonNull::from(value).cast::<c_void>(),
+                    MTLDataType::UInt,
+                    index,
+                );
+            }
+        }
+        let function = self
+            .library
+            .newFunctionWithName_constantValues_error(
+                &NSString::from_str("gemm_specialized_f32"),
+                &constants,
+            )
+            .map_err(|error| error.localizedDescription().to_string())?;
+        self.device
+            .newComputePipelineStateWithFunction_error(&function)
+            .map_err(|error| error.localizedDescription().to_string())
     }
 }
 
