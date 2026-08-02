@@ -14,6 +14,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   selection): a `None` cotangent no longer marks its operand as an
   ancestor, so a singular expression behind such a reference cannot
   leak `NaN` into unrelated gradients (audit finding PG-001).
+- `narrow` rejects zero-length windows at both the recording and
+  payload boundaries instead of manufacturing the empty tensors the
+  payload forbids by construction (audit finding PG-002).
+- `narrow` and `pad` compute their window ends with checked
+  arithmetic, so an overflowing `start + len` fails identically in
+  debug and release builds instead of wrapping past the range check
+  in release (audit finding PG-005).
 
 ### Added
 

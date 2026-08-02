@@ -582,6 +582,38 @@ fn narrow_rejects_windows_past_the_axis() {
 }
 
 #[test]
+#[should_panic(expected = "at least one element")]
+fn narrow_rejects_empty_windows() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).narrow(1, 0, 0);
+}
+
+#[test]
+#[should_panic(expected = "at least one element")]
+fn narrow_rejects_empty_windows_at_the_axis_end() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).narrow(0, 2, 0);
+}
+
+#[test]
+#[should_panic(expected = "at least one element")]
+fn narrow_rejects_empty_windows_at_recording() {
+    let network = Network::new();
+    let matrix = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
+    matrix.narrow(1, 0, 0);
+}
+
+#[test]
+#[should_panic(expected = "overflows")]
+fn narrow_rejects_overflowing_windows() {
+    Tensor::new([2, 3], vec![1.0_f64; 6]).narrow(1, usize::MAX, 2);
+}
+
+#[test]
+#[should_panic(expected = "overflows")]
+fn pad_rejects_overflowing_windows() {
+    Tensor::new([1], [5.0_f64]).pad(0, usize::MAX, 2);
+}
+
+#[test]
 fn pad_places_a_window_into_zeros() {
     let window = Tensor::new([2, 2], [2.0_f64, 3.0, 5.0, 6.0]);
     let padded = window.pad(1, 1, 3);

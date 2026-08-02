@@ -834,18 +834,22 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// view over the same buffer.
     ///
     /// # Panics
-    /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
+    /// Panics if `axis` is out of rank, `len` is zero (tensors cannot be
+    /// empty), or `start + len` overflows or exceeds the axis extent.
     fn narrow(&self, axis: usize, start: usize, len: usize) -> Self {
         let shape = self.logical_shape();
         assert!(
             axis < shape.rank(),
             "narrow axis {axis} is out of rank for {shape}"
         );
+        assert!(len > 0, "narrow window must hold at least one element");
         let extent = shape.axes()[axis];
+        let end = start
+            .checked_add(len)
+            .expect("narrow window end overflows `usize`");
         assert!(
-            start + len <= extent,
-            "narrow window {start}..{} exceeds axis {axis} extent {extent}",
-            start + len
+            end <= extent,
+            "narrow window {start}..{end} exceeds axis {axis} extent {extent}"
         );
         match &self.storage {
             Storage::Constant { value, .. } => {
@@ -872,7 +876,8 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// whose `axis` has extent `full_extent`, with zeros elsewhere.
     ///
     /// # Panics
-    /// Panics if `axis` is out of rank or the window exceeds `full_extent`.
+    /// Panics if `axis` is out of rank or the window overflows or exceeds
+    /// `full_extent`.
     fn pad(&self, axis: usize, start: usize, full_extent: usize) -> Self {
         let shape = self.logical_shape();
         assert!(
@@ -881,10 +886,12 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         );
         let axes = shape.axes();
         let len = axes[axis];
+        let end = start
+            .checked_add(len)
+            .expect("pad window end overflows `usize`");
         assert!(
-            start + len <= full_extent,
-            "pad window {start}..{} exceeds the full extent {full_extent}",
-            start + len
+            end <= full_extent,
+            "pad window {start}..{end} exceeds the full extent {full_extent}"
         );
         let outer: usize = axes[..axis].iter().product();
         let inner: usize = axes[axis + 1..].iter().product();
@@ -894,7 +901,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for position in 0..full_extent {
                 for inner_index in 0..inner {
-                    if position >= start && position < start + len {
+                    if position >= start && position < end {
                         let source = (outer_index * len + (position - start)) * inner + inner_index;
                         elements.push(self.get(source).clone());
                     } else {

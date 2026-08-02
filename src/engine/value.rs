@@ -301,7 +301,8 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// as zeros.
     ///
     /// # Panics
-    /// Panics if `axis` is out of rank or `start + len` exceeds its extent.
+    /// Panics if `axis` is out of rank, `len` is zero (tensors cannot be
+    /// empty), or `start + len` overflows or exceeds the axis extent.
     pub fn narrow(self, axis: usize, start: usize, len: usize) -> Self {
         self.apply(Function::narrow(axis, start, len), &[self.id])
     }

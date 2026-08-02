@@ -23,7 +23,7 @@ impl Narrow {
     }
 
     /// Infers the result shape: the operand's shape with `axis` restricted
-    /// to `len`, requiring the window to lie within that axis.
+    /// to `len`, requiring a non-empty window lying within that axis.
     pub(crate) fn infer_shape(&self, operands: &[Shape]) -> Shape {
         let operand = unary(operands);
         assert!(
@@ -31,12 +31,19 @@ impl Narrow {
             "narrow axis {} is out of rank for {operand}",
             self.axis
         );
+        // A zero-length window would produce an empty tensor, which the
+        // payload rules out by construction; rejecting it here keeps the
+        // failure at recording time.
+        assert!(self.len > 0, "narrow window must hold at least one element");
         let extent = operand.axes()[self.axis];
+        let end = self
+            .start
+            .checked_add(self.len)
+            .expect("narrow window end overflows `usize`");
         assert!(
-            self.start + self.len <= extent,
-            "narrow window {}..{} exceeds axis {} extent {extent}",
+            end <= extent,
+            "narrow window {}..{end} exceeds axis {} extent {extent}",
             self.start,
-            self.start + self.len,
             self.axis
         );
         Shape::new(

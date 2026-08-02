@@ -61,7 +61,9 @@ pub trait Tensorial: Elementary {
     fn permute(&self, order: &[usize]) -> Self;
 
     /// Returns the window of `len` elements from `start` along `axis`:
-    /// `self` with that axis restricted to `start .. start + len`.
+    /// `self` with that axis restricted to `start .. start + len`. The
+    /// window must hold at least one element, because tensors are never
+    /// empty.
     fn narrow(&self, axis: usize, start: usize, len: usize) -> Self;
 
     /// Returns `self` placed into a zero payload whose `axis` has extent
