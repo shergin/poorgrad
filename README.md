@@ -53,6 +53,44 @@ choice:
   default, on purpose: the engine is the point — and the claims are
   measured, not asserted: `cargo bench` runs the suite.
 
+## Acceleration
+
+What is supported, and what it measures on an Apple M1 Pro (the
+numbers come from `cargo bench` and the `throughput` example; both
+rerun on your machine):
+
+| build | matrix products | `exp` `ln` `sqrt` `tanh` | runs on |
+|---|---|---|---|
+| default | 26 GFLOP/s `f32`, 13 `f64`: safe, autovectorized slice loops | scalar | everywhere; `#![forbid(unsafe_code)]` |
+| `--features accelerate` | 1.6 TFLOP/s `f32`, 550 GFLOP/s `f64`: the AMX/SME matrix units through `cblas` | vectorized through vForce | macOS; a safe stub elsewhere |
+| `--features metal` | 1.4 TFLOP/s `f32` at large sizes: the crate's own simdgroup GPU kernels (Metal has no `f64`) | scalar | macOS; a safe stub elsewhere |
+
+The claim, in one line: the same training source spans a factor of
+four thousand — from the 0.4 GFLOP/s naive definition (still the
+fallback for exotic layouts) to AMX's 1.6 TFLOP/s — with zero source
+changes, because enabling a feature is the whole activation:
+
+```sh
+cargo run --release --features accelerate,metal --example throughput
+```
+
+Why it is built this way: backends are compiled-in chain arms behind
+one payload-level seam (`Elementary::gemm` for products,
+`Elementary::map` for transcendentals), tried in a fixed order with
+per-task thresholds — Accelerate leads because it measured ahead of
+the Metal kernel at every size, Metal serves the stride patterns
+BLAS declines plus metal-only builds, and small work stays on the
+built-in paths, where call latency wins. There is no runtime switch
+and no autodetection, so within one binary two identical runs can
+never disagree; `Backend::ALL` and `Backend::Metal.status()` answer
+in every build (`NotCompiled` is an ordinary answer), letting a
+program that requires acceleration refuse to run slow. The trade,
+stated plainly: hardware sums and rounds in its own order, so
+bit-identity with the built-in paths is forfeited feature by
+feature — and cargo features unify across a dependency graph — while
+`unsafe` stays confined to the backend modules under a crate-wide
+`deny(unsafe_code)`.
+
 ## A taste
 
 ```rust
@@ -175,24 +213,6 @@ crate root keeps the public API flat. From tape to training:
   and `kaiming`) producing the shape-to-payload closures `Layer` and `Mlp`
   take, with no `rand` dependency: seeded runs stay bit-identical forever.
 
-## Acceleration
-
-The GPU poor on Apple Silicon have owned a matrix coprocessor all
-along. The opt-in `accelerate` feature routes dense `f32`/`f64`
-matrix products above a small threshold to Apple's Accelerate
-framework — the AMX/SME matrix units on Apple Silicon, AVX kernels
-on Intel Macs — through the same `Elementary::gemm` seam everything
-else uses, and runs whole-buffer `exp`, `ln`, `sqrt`, and `tanh`
-through vForce's vectorized transcendentals via the seam's
-elementwise sibling, `Elementary::map`. One flag, zero source
-changes. The `metal` feature adds
-the GPU itself through the crate's own simdgroup kernels (no MPS, no
-vendor library, `f32` only — Metal has no `f64`); stated as
-measured, AMX still beats that kernel, so Accelerate leads the chain
-where both are compiled and Metal serves the stride patterns BLAS
-declines — and metal-only builds, at about fifty times the built-in
-path.
-
 ## The name
 
 A poor man's autograd: no GPU required, none wanted — and the poor, it
@@ -245,6 +265,11 @@ term and its mapping to the Rust types — is collected in
   and after training by a hand-rolled labeled scatter chart: watch the
   vowels drift into their own cluster:
   `cargo run --release --example makemore_embedding_map`.
+- [`throughput`](examples/throughput.rs) — the acceleration ladder
+  measured on a wide dense model: raw 2048-square products and whole
+  training steps, with the dimensions shrinking eightfold when no
+  backend is compiled in:
+  `cargo run --release --features accelerate,metal --example throughput`.
 
 ## License
 
