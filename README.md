@@ -55,41 +55,20 @@ choice:
 
 ## Acceleration
 
-What is supported, and what it measures on an Apple M1 Pro (the
-numbers come from `cargo bench` and the `throughput` example; both
-rerun on your machine):
-
-| build | matrix products | `exp` `ln` `sqrt` `tanh` | runs on |
-|---|---|---|---|
-| default | 26 GFLOP/s `f32`, 13 `f64`: safe, autovectorized slice loops | scalar | everywhere; `#![forbid(unsafe_code)]` |
-| `--features accelerate` | 1.6 TFLOP/s `f32`, 550 GFLOP/s `f64`: the AMX/SME matrix units through `cblas` | vectorized through vForce | macOS; a safe stub elsewhere |
-| `--features metal` | 1.4 TFLOP/s `f32` at large sizes: the crate's own simdgroup GPU kernels (Metal has no `f64`) | scalar | macOS; a safe stub elsewhere |
-
-The claim, in one line: the same training source spans a factor of
-four thousand — from the 0.4 GFLOP/s naive definition (still the
-fallback for exotic layouts) to AMX's 1.6 TFLOP/s — with zero source
-changes, because enabling a feature is the whole activation:
+Opt-in cargo features route dense math to the hardware a Mac
+already owns: `accelerate` (the AMX/SME matrix units through
+`cblas`, vForce for whole-buffer transcendentals) and `metal` (the
+crate's own simdgroup GPU kernels). Enabling a feature is the whole
+activation — the same training source spans a factor of four
+thousand, from the 0.4 GFLOP/s naive definition to AMX's measured
+1.6 TFLOP/s `f32`, with zero source changes:
 
 ```sh
 cargo run --release --features accelerate,metal --example throughput
 ```
 
-Why it is built this way: backends are compiled-in chain arms behind
-one payload-level seam (`Elementary::gemm` for products,
-`Elementary::map` for transcendentals), tried in a fixed order with
-per-task thresholds — Accelerate leads because it measured ahead of
-the Metal kernel at every size, Metal serves the stride patterns
-BLAS declines plus metal-only builds, and small work stays on the
-built-in paths, where call latency wins. There is no runtime switch
-and no autodetection, so within one binary two identical runs can
-never disagree; `Backend::ALL` and `Backend::Metal.status()` answer
-in every build (`NotCompiled` is an ordinary answer), letting a
-program that requires acceleration refuse to run slow. The trade,
-stated plainly: hardware sums and rounds in its own order, so
-bit-identity with the built-in paths is forfeited feature by
-feature — and cargo features unify across a dependency graph — while
-`unsafe` stays confined to the backend modules under a crate-wide
-`deny(unsafe_code)`.
+What each build supports, how routing and determinism work, and
+every measured number: [ACCELERATION.md](ACCELERATION.md).
 
 ## A taste
 

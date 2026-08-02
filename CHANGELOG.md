@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Documentation
+
+- Add ACCELERATION.md: what each build supports, how routing and
+  determinism work, the safety layering, the seam for payload
+  authors, and every measured number; the README's acceleration
+  section moves up beside the design bet and shrinks to the claim,
+  the one command, and a pointer.
+
+### Fixed
+
+- Skip the metal GPU tests on machines without a Metal device (the
+  virtualized CI runners), reporting the skip instead of failing:
+  the backend already declines cleanly there, and the tests now
+  honor the same contract.
+
 ## [0.5.1] - 2026-08-02
 
 ### Added
@@ -259,6 +276,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.5.1...HEAD
 [0.5.1]: https://github.com/shergin/poorgrad/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/shergin/poorgrad/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/shergin/poorgrad/compare/v0.3.1...v0.4.0
