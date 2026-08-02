@@ -56,8 +56,9 @@ choice:
   bit-identical to the logical definition — with a documented seam
   (`Elementary::gemm` over a `GemmTask`) through which an element
   type can route dense products to its own kernel;
-  no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
-  it a promise rather than a claim (the arena's `unsafe` core is
+  no `unsafe` in the default build, with `#![forbid(unsafe_code)]`
+  keeping it a promise rather than a claim (the optional backends
+  open only their own scoped modules; the arena's `unsafe` core is
   `cow_vec`'s, encapsulated behind its tested interface). CPU-only by
   default, on purpose: the engine is the point — and the claims are
   measured, not asserted: `cargo bench` runs the suite.
@@ -188,9 +189,9 @@ crate root keeps the public API flat. From tape to training:
   immutable runtime shape over a shared element buffer read through a
   strided layout, so `transpose` and the broadcasts are O(1) views rather
   than copies (tensors are immutable, so aliasing a buffer is always safe).
-  Its storage is an extensible representation — a dense `Arc`-shared buffer
-  or a non-allocating constant today, with room for more — and elements are
-  read with `iter`, `as_slice`, or `to_vec`. A `Network<Tensor<f64>>` uses
+  Its storage is an extensible representation — a dense `Arc`-shared buffer,
+  a non-allocating constant, or a compact one-hot selection today, with room
+  for more — and elements are read with `iter`, `as_slice`, or `to_vec`. A `Network<Tensor<f64>>` uses
   the same graph, evaluation, differentiation, and update APIs as a scalar
   network. The
   [`Tensorial`](src/payload/tensorial.rs) trait provides `matmul`,
@@ -207,9 +208,10 @@ crate root keeps the public API flat. From tape to training:
   Wengert list) shared by a network and all of its proxies, and the engine's
   single synchronization point.
 - [`Function`](src/engine/function/mod.rs) — internal: a statically sized
-  enum of the differentiable operations, each variant owning its operand
-  links and parameters and implementing the `Operation` trait (forward math
-  and gradient routing per operation, dispatched with a plain `match`).
+  enum of the differentiable operations, each variant owning its parameters
+  and implementing the `Operation` trait (forward math and gradient routing
+  per operation, dispatched with a plain `match`); operand links live in
+  the tape's parallel operand column.
 - [`Neuron`](src/neural/neuron.rs) — a scalar-granularity affine unit with
   weights, a bias, and an `Activation`. Its parameters are allocated on the
   network and retained as symbols across compatible generations.

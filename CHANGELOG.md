@@ -31,6 +31,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   instead of `--all-targets` (which implies `--benches` and forces
   them regardless), with doctests run explicitly (audit finding
   PG-007).
+- Documentation drift: the README's unsafe-code claim now names the
+  default build, the `Tensor` storage list includes the one-hot
+  selection, operand links are attributed to the tape's operand
+  column, and the accelerate module no longer claims to be the only
+  unsafe code in every build.
 
 ### Added
 

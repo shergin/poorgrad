@@ -9,8 +9,9 @@
 //! express (a stride-0 broadcast, dimensions beyond `i32`) and tasks
 //! below the profitability threshold decline to the built-in paths.
 //!
-//! This is the crate's only `unsafe` code; the module is
-//! scope-allowed under the crate-wide `deny(unsafe_code)`.
+//! This is the crate's only `unsafe` code in an accelerate-only
+//! build (the `metal` feature carries its own); each backend module
+//! is scope-allowed under the crate-wide `deny(unsafe_code)`.
 
 use crate::{GemmTask, MapOperation};
 
