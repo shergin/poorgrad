@@ -1,4 +1,4 @@
-use crate::Shape;
+use crate::{Shape, Tensor};
 
 use super::{kaiming, normal, uniform, xavier};
 
@@ -17,13 +17,19 @@ fn moments(values: &[f64]) -> (f64, f64) {
 #[test]
 fn same_seed_reproduces_and_seeds_differ() {
     let shape = Shape::new([4, 4]);
-    assert_eq!(uniform(7, 1.0)(&shape), uniform(7, 1.0)(&shape));
-    assert_ne!(uniform(7, 1.0)(&shape), uniform(8, 1.0)(&shape));
+    assert_eq!(
+        uniform::<f64>(7, 1.0)(&shape),
+        uniform::<f64>(7, 1.0)(&shape)
+    );
+    assert_ne!(
+        uniform::<f64>(7, 1.0)(&shape),
+        uniform::<f64>(8, 1.0)(&shape)
+    );
 }
 
 #[test]
 fn uniform_fills_within_the_scale() {
-    let tensor = uniform(7, 0.25)(&Shape::new([1000]));
+    let tensor = uniform::<f64>(7, 0.25)(&Shape::new([1000]));
     let values = tensor.to_vec();
     assert!(values.iter().all(|value| value.abs() <= 0.25));
     // The fill spreads across the range rather than collapsing.
@@ -33,7 +39,7 @@ fn uniform_fills_within_the_scale() {
 
 #[test]
 fn normal_matches_its_moments() {
-    let tensor = normal(7, 2.0)(&Shape::new([10000]));
+    let tensor = normal::<f64>(7, 2.0)(&Shape::new([10000]));
     let (mean, deviation) = moments(&tensor.to_vec());
     assert!(mean.abs() < 0.1);
     assert!((deviation - 2.0).abs() < 0.1);
@@ -41,7 +47,7 @@ fn normal_matches_its_moments() {
 
 #[test]
 fn xavier_bounds_weights_by_both_fans_and_zeroes_biases() {
-    let mut initializer = xavier(7);
+    let mut initializer = xavier::<f64>(7);
     // For 300 inputs and 300 outputs the bound is `sqrt(6 / 600) = 0.1`.
     let weights = initializer(&Shape::new([300, 300]));
     assert!(weights.to_vec().iter().all(|value| value.abs() <= 0.1));
@@ -53,7 +59,7 @@ fn xavier_bounds_weights_by_both_fans_and_zeroes_biases() {
 
 #[test]
 fn kaiming_scales_weights_by_fan_in_and_zeroes_biases() {
-    let mut initializer = kaiming(7);
+    let mut initializer = kaiming::<f64>(7);
     // For 200 inputs the deviation is `sqrt(2 / 200) = 0.1`.
     let weights = initializer(&Shape::new([200, 50]));
     let (mean, deviation) = moments(&weights.to_vec());
@@ -67,5 +73,61 @@ fn kaiming_scales_weights_by_fan_in_and_zeroes_biases() {
 #[test]
 #[should_panic(expected = "expects rank-2 weights or rank-1 biases")]
 fn fan_aware_initializers_reject_other_ranks() {
-    xavier(7)(&Shape::new([2, 3, 4]));
+    xavier::<f64>(7)(&Shape::new([2, 3, 4]));
+}
+
+#[test]
+fn seeded_streams_are_pinned_forever() {
+    // Bits captured from the concrete-f64 implementation before the
+    // factories went generic (2026-08-02). The `f64` path must stay
+    // bit-identical to them forever, and the `f32` path is the same
+    // stream rounded once per element.
+    let goldens: [(&[u64; 4], Tensor<f64>, Tensor<f32>); 4] = [
+        (
+            &[
+                0xbfcc341e1ba6cdf8,
+                0xbfeeecf0ca02f0e8,
+                0x3fe9a610202eac4a,
+                0x3fc53aeb70673e28,
+            ],
+            uniform::<f64>(7, 1.0)(&Shape::new([4])),
+            uniform::<f32>(7, 1.0)(&Shape::new([4])),
+        ),
+        (
+            &[
+                0x3fffa194ec47d228,
+                0xc00dd3fde5949e97,
+                0x3f800ea29c8645d7,
+                0xbff0efc91ba890b4,
+            ],
+            normal::<f64>(7, 2.0)(&Shape::new([4])),
+            normal::<f32>(7, 2.0)(&Shape::new([4])),
+        ),
+        (
+            &[
+                0xbfd14566a85c9c0a,
+                0xbff2f01dbe7ab6a2,
+                0x3fef69c081567c5c,
+                0x3fca0063d7a5b7aa,
+            ],
+            xavier::<f64>(7)(&Shape::new([2, 2])),
+            xavier::<f32>(7)(&Shape::new([2, 2])),
+        ),
+        (
+            &[
+                0x3fefa194ec47d228,
+                0xbffdd3fde5949e97,
+                0x3f700ea29c8645d7,
+                0xbfe0efc91ba890b4,
+            ],
+            kaiming::<f64>(7)(&Shape::new([2, 2])),
+            kaiming::<f32>(7)(&Shape::new([2, 2])),
+        ),
+    ];
+    for (golden, doubles, singles) in goldens {
+        for ((bits, double), single) in golden.iter().zip(doubles.to_vec()).zip(singles.to_vec()) {
+            assert_eq!(double.to_bits(), *bits);
+            assert_eq!(single.to_bits(), (f64::from_bits(*bits) as f32).to_bits());
+        }
+    }
 }

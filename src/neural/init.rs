@@ -14,8 +14,37 @@
 //! a seeded example must not change output when a dependency upgrades,
 //! and `rand`'s standard generator is documented as unstable across its
 //! versions.
+//!
+//! The factories are generic over the element through [`Sample`]: the
+//! whole generator pipeline (splitmix64, Box-Muller, fan scaling) runs
+//! in `f64` and converts once at the end, so the `f64` path is the
+//! identity — seeded outputs stay bit-identical forever — and the
+//! `f32` path is the same stream rounded once per element. The element
+//! is inferred from the network the closure feeds.
 
-use crate::{Shape, Tensor};
+use crate::{Differentiable, Shape, Tensor};
+
+/// An element an initializer can draw: constructible from the
+/// generator's `f64` samples.
+///
+/// `f64`'s implementation is the identity and `f32`'s rounds once;
+/// custom elements may join by converting a sample however suits them.
+pub trait Sample: Differentiable {
+    /// Converts one generator sample to this element, rounding once.
+    fn from_sample(sample: f64) -> Self;
+}
+
+impl Sample for f32 {
+    fn from_sample(sample: f64) -> Self {
+        sample as f32
+    }
+}
+
+impl Sample for f64 {
+    fn from_sample(sample: f64) -> Self {
+        sample
+    }
+}
 
 /// Advances `state` and returns the next splitmix64 output.
 fn splitmix64(state: &mut u64) -> u64 {
@@ -41,22 +70,29 @@ fn standard_normal(state: &mut u64) -> f64 {
     radius * angle.cos()
 }
 
-/// Builds a tensor of `shape` with every element drawn from `draw`.
-fn drawn(shape: &Shape, state: &mut u64, mut draw: impl FnMut(&mut u64) -> f64) -> Tensor<f64> {
-    let elements: Vec<f64> = (0..shape.volume()).map(|_| draw(state)).collect();
+/// Builds a tensor of `shape` with every element drawn from `draw`,
+/// converted from the generator's `f64` once at the end.
+fn drawn<Element: Sample>(
+    shape: &Shape,
+    state: &mut u64,
+    mut draw: impl FnMut(&mut u64) -> f64,
+) -> Tensor<Element> {
+    let elements: Vec<Element> = (0..shape.volume())
+        .map(|_| Element::from_sample(draw(state)))
+        .collect();
     Tensor::new(shape, elements)
 }
 
 /// Returns an initializer filling every requested shape with values
 /// uniformly distributed in `[-scale, scale)`.
-pub fn uniform(seed: u64, scale: f64) -> impl FnMut(&Shape) -> Tensor<f64> {
+pub fn uniform<Element: Sample>(seed: u64, scale: f64) -> impl FnMut(&Shape) -> Tensor<Element> {
     let mut state = seed;
     move |shape| drawn(shape, &mut state, |state| (unit(state) * 2.0 - 1.0) * scale)
 }
 
 /// Returns an initializer filling every requested shape with values
 /// normally distributed around zero with the given standard `deviation`.
-pub fn normal(seed: u64, deviation: f64) -> impl FnMut(&Shape) -> Tensor<f64> {
+pub fn normal<Element: Sample>(seed: u64, deviation: f64) -> impl FnMut(&Shape) -> Tensor<Element> {
     let mut state = seed;
     move |shape| {
         drawn(shape, &mut state, |state| {
@@ -78,10 +114,10 @@ pub fn normal(seed: u64, deviation: f64) -> impl FnMut(&Shape) -> Tensor<f64> {
 /// # See also
 /// - X. Glorot and Y. Bengio, "Understanding the difficulty of training
 ///   deep feedforward neural networks" (2010).
-pub fn xavier(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
+pub fn xavier<Element: Sample>(seed: u64) -> impl FnMut(&Shape) -> Tensor<Element> {
     let mut state = seed;
     move |shape| match shape.rank() {
-        1 => Tensor::filled(shape, 0.0),
+        1 => Tensor::filled(shape, Element::from_sample(0.0)),
         2 => {
             let fan_total = (shape.axes()[0] + shape.axes()[1]) as f64;
             let bound = (6.0 / fan_total).sqrt();
@@ -102,10 +138,10 @@ pub fn xavier(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
 ///
 /// # See also
 /// - K. He et al., "Delving Deep into Rectifiers" (2015).
-pub fn kaiming(seed: u64) -> impl FnMut(&Shape) -> Tensor<f64> {
+pub fn kaiming<Element: Sample>(seed: u64) -> impl FnMut(&Shape) -> Tensor<Element> {
     let mut state = seed;
     move |shape| match shape.rank() {
-        1 => Tensor::filled(shape, 0.0),
+        1 => Tensor::filled(shape, Element::from_sample(0.0)),
         2 => {
             let deviation = (2.0 / shape.axes()[0] as f64).sqrt();
             drawn(shape, &mut state, |state| {

@@ -470,10 +470,15 @@ identifying itself structurally by its rank. Every factory takes an
 explicit seed and each closure owns its splitmix64 generator state: no
 global generator, no clock, bit-identical runs forever — which is why
 the crate carries its own few-line generator instead of a `rand`
-dependency, whose standard generator is unstable across versions. In
-poorgrad: [`init`](src/neural/init.rs), the crate's one public module,
-qualified because `uniform` and `normal` are meaningless names without
-it.
+dependency, whose standard generator is unstable across versions. The
+factories are element-generic through `init::Sample`: the generator
+pipeline runs in `f64` and converts once at the end, so the `f64`
+path is the identity (seeded outputs stay bit-identical forever,
+pinned by a golden-bits test) and the `f32` path is the same stream
+rounded once per element, with the element inferred from the network
+the closure feeds. In poorgrad: [`init`](src/neural/init.rs), the
+crate's one public module, qualified because `uniform` and `normal`
+are meaningless names without it.
 
 ## Further reading
 
