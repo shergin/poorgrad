@@ -6,7 +6,7 @@
 
 **A fully concurrent, thread-safe autograd engine, written the way Rust
 wants it written. CPU-only by default; teraflop-class when you flip a
-flag.**
+flag. Small enough to audit; deterministic enough to ship.**
 
 `poorgrad` begins from
 [Karpathy's `micrograd`](https://github.com/karpathy/micrograd) and then
@@ -14,6 +14,13 @@ takes the road the others don't: no `Rc<RefCell<...>>`, no single-threaded
 assumption, no graph rebuilt on every pass, and a payload generic over
 scalars and tensors alike. Sharing a computation graph across threads is
 not a feature bolted on with locks; it is what the types guarantee.
+
+The discipline is the product: three dependencies,
+`#![forbid(unsafe_code)]` unless you opt into the two audited FFI
+backends, shape errors surfaced when an expression is recorded —
+before anything runs — seeded runs bit-identical forever with
+golden-bit tests holding the line, and a suite on dual-platform CI
+that checks the hardware paths down to the last bit.
 
 ## The bet
 
@@ -69,6 +76,34 @@ cargo run --release --features accelerate,metal --example throughput
 
 What each build supports, how routing and determinism work, and
 every measured number: [ACCELERATION.md](ACCELERATION.md).
+
+## Where it fits
+
+- **Rust services that learn in production.** Train, fine-tune, or
+  calibrate dense models inside the process that serves them —
+  personalization weights, ranking adjustments, anomaly
+  thresholds — without a Python runtime, a framework heavier than
+  the service, or a model file crossing a process boundary.
+- **Serving and training the same network, concurrently.** Runs
+  never lock the graph: one shared network answers inference on
+  every thread while a training loop steps generations in the
+  background, and moving to the next generation is swapping a
+  value — snapshot isolation, for models.
+- **Reproducibility as a requirement, not a hope.** No `rand`, no
+  clocks, seeds all the way down: a model trained in CI is
+  evidence, a rerun experiment is a checksum, and a regression
+  bisect converges, because two identical runs cannot differ.
+- **Scientific and financial fitting in `f64`.** First-class double
+  precision with hardware acceleration behind it — 550 GFLOP/s
+  measured through the `accelerate` feature — for calibration,
+  curve fitting, and gradient-based optimization where `f32`
+  rounding is a liability. Accelerated `f64` is the exception, not
+  the rule, in ML stacks.
+- **Parallel what-ifs on O(1) forks.** Forking a network copies
+  nothing, so training several learning rates or data shards in
+  parallel over shared structure is the
+  [threaded example](examples/gradient_descent.rs), not an
+  architecture project.
 
 ## A taste
 
