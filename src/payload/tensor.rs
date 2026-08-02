@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
+use super::gemm;
 use super::layout::{Layout, Strides};
 use super::storage::Storage;
 use super::{Differentiable, Elementary, Shape, Tensorial};
@@ -12,9 +13,9 @@ use super::{Differentiable, Elementary, Shape, Tensorial};
 assert_impl_all!(Tensor<f64>: Send, Sync);
 
 /// A dense tensor with an immutable, runtime-defined [`Shape`] and a shared
-/// element buffer read through a strided [`layout`](super::layout::Layout).
+/// element buffer read through a strided layout.
 ///
-/// The elements are held behind a [`Storage`] representation: an
+/// The elements are held behind a `Storage` representation: an
 /// `Arc`-shared row-major buffer addressed by strides and an offset, or a
 /// non-allocating constant. Cloning shares the buffer and clones only the
 /// metadata; it does not clone the elements. Because tensors are immutable
@@ -80,6 +81,21 @@ impl<Element> Tensor<Element> {
         match &self.storage {
             Storage::Selection { indices, .. } => indices,
             _ => panic!("gather requires a selection tensor built with `Tensor::selection`"),
+        }
+    }
+
+    /// Returns this payload as a slice-path operand when it is a dense
+    /// rank-2 tensor: the backing buffer with the layout's offset and
+    /// strides. Other storages answer `None` and take the logical path.
+    fn gemm_operand(&self) -> Option<gemm::Operand<'_, Element>> {
+        match &self.storage {
+            Storage::Dense { data, layout } if layout.rank() == 2 => Some(gemm::Operand {
+                data: data.as_slice(),
+                offset: layout.offset(),
+                row_stride: layout.strides()[0],
+                column_stride: layout.strides()[1],
+            }),
+            _ => None,
         }
     }
 
@@ -499,9 +515,11 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
 impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// Returns the matrix product of two rank-2 tensors.
     ///
-    /// Operands are read through logical access, so strided views (a
-    /// transposed operand, most often) multiply without first being
-    /// materialized.
+    /// Dense operands, including strided views (a transposed operand,
+    /// most often), multiply on a slice path that reads their buffers
+    /// through the layout strides directly; other storages read
+    /// through logical access. Both paths accumulate every output
+    /// element in the same order, so their results are bit-identical.
     ///
     /// # Panics
     /// Panics if either operand is not rank 2, the inner dimensions do not
@@ -518,6 +536,11 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             rows > 0 && inner > 0 && columns > 0,
             "matmul requires non-empty dimensions"
         );
+
+        if let (Some(a), Some(b)) = (self.gemm_operand(), rhs.gemm_operand()) {
+            let elements = gemm::multiply(&a, &b, rows, inner, columns);
+            return Self::dense(Shape::new([rows, columns]), elements);
+        }
 
         let mut elements = Vec::with_capacity(rows * columns);
         for row in 0..rows {

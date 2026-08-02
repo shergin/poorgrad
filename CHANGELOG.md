@@ -71,6 +71,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   and after training by a small reusable labeled scatter chart
   (`examples/makemore/chart.rs`) whose marks are the letters
   themselves.
+- Add the `gemm` benchmark group: the dense matmul path measured
+  across sizes, element types, and transposed operands, reported in
+  elements per second — one element per floating-point operation.
 
 ### Changed
 
@@ -92,6 +95,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 - Read tensor elements through `Tensor::iter` (logical row-major order),
   `Tensor::as_slice` (a borrowed slice when contiguous), or `Tensor::to_vec`,
   and compare tensors by logical value across storage representations.
+- Multiply dense matrices on a slice path: `matmul` now reads dense
+  rank-2 operands — including transposed, narrowed, and broadcast
+  views — through their layout strides instead of per-element logical
+  access, in loops shaped for the compiler's auto-vectorizer. The
+  per-element accumulation order is unchanged (seeded from the first
+  term), so results are bit-identical to the logical path, which
+  non-dense storages keep. Measured on an Apple M1 Pro: 26 GFLOP/s
+  `f32` and 13 GFLOP/s `f64` for square products, from 0.41 before.
 
 ### Removed
 

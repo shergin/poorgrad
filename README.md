@@ -41,7 +41,10 @@ choice:
   itself, taken briefly per operation — the arena inside
   [`cow_vec`](https://crates.io/crates/cow_vec) holds the only other,
   and training never touches it; O(1)
-  forks; no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
+  forks; dense matrix products on a slice path shaped for the
+  compiler's auto-vectorizer — tens of GFLOP/s on Apple Silicon,
+  bit-identical to the logical definition;
+  no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
   it a promise rather than a claim (the arena's `unsafe` core is
   `cow_vec`'s, encapsulated behind its tested interface). CPU-only, on
   purpose: the engine is the point — and the claims are measured, not

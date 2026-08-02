@@ -1,5 +1,6 @@
 mod differentiable;
 mod elementary;
+mod gemm;
 mod layout;
 mod shape;
 mod storage;

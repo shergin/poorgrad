@@ -71,5 +71,9 @@ name = "scale"
 harness = false
 
 [[bench]]
+name = "gemm"
+harness = false
+
+[[bench]]
 name = "memory"
 harness = false
