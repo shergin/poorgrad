@@ -31,6 +31,29 @@ static_assertions = "1.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 rayon = "1.12.0"
 
+# The makemore examples live in a subfolder together with their shared
+# corpus module and dataset, so each target is declared explicitly;
+# auto-discovery only finds top-level example files.
+[[example]]
+name = "makemore_bigram"
+path = "examples/makemore/bigram.rs"
+
+[[example]]
+name = "makemore_mlp"
+path = "examples/makemore/mlp.rs"
+
+[[example]]
+name = "makemore_mlp_facade"
+path = "examples/makemore/mlp_facade.rs"
+
+[[example]]
+name = "makemore_mlp_parallel"
+path = "examples/makemore/mlp_parallel.rs"
+
+[[example]]
+name = "makemore_embedding_map"
+path = "examples/makemore/embedding_map.rs"
+
 [[bench]]
 name = "record"
 harness = false

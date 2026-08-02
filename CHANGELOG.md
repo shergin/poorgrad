@@ -46,6 +46,31 @@ The format is based on [Keep a Changelog], and this project adheres to
   shape-to-payload closures `Layer` and `Mlp` take. Every factory is
   seeded explicitly and owns its generator state, so initialization is
   reproducible without a `rand` dependency.
+- Add the `makemore_bigram` example: a character-level bigram language
+  model over names — a `[vocab, vocab]` logit table read by `gather`,
+  scored by `cross_entropy` on per-run one-hot minibatches, and sampled
+  through the composite `softmax`.
+- Add the `makemore_mlp` example: the Bengio-style character-level MLP —
+  a three-character context embedded by `gather`, flattened by `reshape`,
+  and squashed through a hand-rolled tanh hidden layer, with a
+  single-row twin expression of the same parameters recorded for
+  sampling since input shapes are baked in at recording time.
+- Add the `makemore_mlp_facade` example: the same model on the `Mlp`
+  facade, training bit-identically to `makemore_mlp` from matching
+  seeds. The makemore examples live in `examples/makemore/` (declared
+  as explicit example targets) and share their corpus machinery and
+  dataset there.
+- Add the `makemore_mlp_parallel` example: the same model trained data
+  parallel — every step fans shard-shaped forward and backward runs
+  across rayon's threads against the shared network, sums the gradient
+  fields in a deterministic pairwise tree, and averages, computing the
+  full-batch gradient exactly while cutting the wall clock
+  several-fold.
+- Add the `makemore_embedding_map` example: the MLP with a
+  two-dimensional character embedding, rendered in the terminal before
+  and after training by a small reusable labeled scatter chart
+  (`examples/makemore/chart.rs`) whose marks are the letters
+  themselves.
 
 ### Changed
 

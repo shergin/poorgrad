@@ -193,6 +193,33 @@ term and its mapping to the Rust types — is collected in
   granularity: the graph is recorded once, and every training step feeds
   a different minibatch through `forward_with` while the tape never
   grows: `cargo run --example mlp_xor`.
+- [`makemore_bigram`](examples/makemore/bigram.rs) — train a
+  character-level bigram language model on names and sample new ones: a
+  `[vocab, vocab]` logit table read by `gather`, scored by
+  `cross_entropy`, fed one-hot minibatches per run, and sampled through
+  the composite `softmax`: `cargo run --example makemore_bigram`.
+- [`makemore_mlp`](examples/makemore/mlp.rs) — the Bengio-style sequel:
+  a three-character context embedded by `gather`, flattened by
+  `reshape`, and pushed through a tanh hidden layer hand-rolled from
+  raw parameters, with a single-row twin expression of the same
+  parameters recorded for sampling. Beats the bigram's loss:
+  `cargo run --release --example makemore_mlp`.
+- [`makemore_mlp_facade`](examples/makemore/mlp_facade.rs) — the same
+  model with the hand-rolled layers replaced by `Mlp`; matching seeds
+  make it train bit-identically to `makemore_mlp`, demonstrating that
+  the facade is packaging, not different math:
+  `cargo run --release --example makemore_mlp_facade`.
+- [`makemore_mlp_parallel`](examples/makemore/mlp_parallel.rs) — the
+  same model trained data parallel: each step fans its minibatch out as
+  eight shard-sized runs on the shared network and averages the
+  gradient fields, cutting the wall clock several-fold while computing
+  the same batch gradient:
+  `cargo run --release --example makemore_mlp_parallel`.
+- [`makemore_embedding_map`](examples/makemore/embedding_map.rs) — the
+  MLP with a two-dimensional embedding, drawn in the terminal before
+  and after training by a hand-rolled labeled scatter chart: watch the
+  vowels drift into their own cluster:
+  `cargo run --release --example makemore_embedding_map`.
 
 ## License
 
