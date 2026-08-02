@@ -1,4 +1,7 @@
+use crate::backend;
+
 use super::Differentiable;
+use super::gemm::GemmTask;
 
 /// Elementary numeric functions supported by graph payloads.
 ///
@@ -41,6 +44,22 @@ pub trait Elementary: Differentiable {
     /// It carries the derivative of the `maximum` family, marking the
     /// positions where the left side won; ties answer one.
     fn step(&self, threshold: &Self) -> Self;
+
+    /// Offers a matrix-multiplication task to the compiled backend
+    /// chain: the acceleration seam.
+    ///
+    /// It answers `None` — compute on the built-in paths — unless the
+    /// element type has a backend entry point; `f32` and `f64`
+    /// forward to the chain in `backend`. Leave the default unless
+    /// you are routing to a kernel; answering `Some` asserts the
+    /// row-major product of exactly the described task.
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>>
+    where
+        Self: Sized,
+    {
+        let _ = task;
+        None
+    }
 }
 
 impl Elementary for f32 {
@@ -71,6 +90,10 @@ impl Elementary for f32 {
     fn step(&self, threshold: &Self) -> Self {
         if *self >= *threshold { 1.0 } else { 0.0 }
     }
+
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
+        backend::gemm_f32(task)
+    }
 }
 
 impl Elementary for f64 {
@@ -100,5 +123,9 @@ impl Elementary for f64 {
 
     fn step(&self, threshold: &Self) -> Self {
         if *self >= *threshold { 1.0 } else { 0.0 }
+    }
+
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
+        backend::gemm_f64(task)
     }
 }

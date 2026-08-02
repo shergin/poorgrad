@@ -84,17 +84,16 @@ impl<Element> Tensor<Element> {
         }
     }
 
-    /// Returns this payload as a slice-path operand when it is a dense
-    /// rank-2 tensor: the backing buffer with the layout's offset and
-    /// strides. Other storages answer `None` and take the logical path.
-    fn gemm_operand(&self) -> Option<gemm::Operand<'_, Element>> {
+    /// Returns this payload as a gemm operand when it is a dense
+    /// rank-2 tensor: the backing slice from the layout's offset,
+    /// with the layout's strides. Other storages answer `None` and
+    /// take the logical path.
+    fn gemm_operand(&self) -> Option<(&[Element], [usize; 2])> {
         match &self.storage {
-            Storage::Dense { data, layout } if layout.rank() == 2 => Some(gemm::Operand {
-                data: data.as_slice(),
-                offset: layout.offset(),
-                row_stride: layout.strides()[0],
-                column_stride: layout.strides()[1],
-            }),
+            Storage::Dense { data, layout } if layout.rank() == 2 => {
+                let strides = [layout.strides()[0], layout.strides()[1]];
+                Some((&data.as_slice()[layout.offset()..], strides))
+            }
             _ => None,
         }
     }
@@ -537,8 +536,14 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             "matmul requires non-empty dimensions"
         );
 
-        if let (Some(a), Some(b)) = (self.gemm_operand(), rhs.gemm_operand()) {
-            let elements = gemm::multiply(&a, &b, rows, inner, columns);
+        if let (Some((a, a_strides)), Some((b, b_strides))) =
+            (self.gemm_operand(), rhs.gemm_operand())
+        {
+            let task = gemm::GemmTask::new(a, a_strides, b, b_strides, rows, inner, columns);
+            // Tier one is the element's acceleration seam (the
+            // compiled backend chain); tier two the built-in slice
+            // path. A declined task costs one call answering `None`.
+            let elements = Element::gemm(&task).unwrap_or_else(|| gemm::multiply(&task));
             return Self::dense(Shape::new([rows, columns]), elements);
         }
 

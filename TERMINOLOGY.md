@@ -365,6 +365,38 @@ recording, and the loser diverges onto a fresh one, so their later
 symbols never misbind (see Branch). In poorgrad: `Network::clone`, built
 on [`Tape::fork`](src/engine/tape/tape.rs).
 
+## Acceleration
+
+**GEMM.** General matrix-matrix multiplication, the dense core of
+`matmul` and the unit of acceleration: one job multiplying an
+`m x k` operand by a `k x n` operand into a contiguous row-major
+product. In poorgrad: [`GemmTask`](src/payload/gemm.rs), which
+describes the job as two spanning slices read through per-axis
+strides — a transposed or narrowed view is a stride pattern, not a
+copy — plus the three extents, validated at construction and
+read-only thereafter.
+
+**Seam.** The point where payload math may hand a job to hardware
+without the engine knowing: the provided `Elementary::gemm` method
+answers `None` (compute on the built-in paths) unless the element
+type forwards to the backend chain, as `f32` and `f64` do. The seam
+lives in the payload tier, so `Operation` rules stay backend-blind
+(the columns-as-IR rule) and custom payload implementations keep
+the default. In poorgrad:
+[`Elementary::gemm`](src/payload/elementary.rs), consulted first by
+`Tensor`'s `matmul`, ahead of the slice-path kernels and the
+logical-access fallback.
+
+**Backend.** A provider of GEMM kernels compiled into the crate
+behind a cargo feature and tried in declaration order by the chain
+in [`backend`](src/backend/mod.rs); every backend may decline any
+task (wrong size, wrong platform, unavailable device), and the
+built-in paths answer when the whole chain declines. The chain is
+compile-time: enabling a feature is the activation, and no runtime
+switch exists, so within one binary two identical runs can never
+disagree. Today no backend feature exists and every chain entry
+answers `None`.
+
 ## Neural building blocks
 
 **Neuron.** The smallest learnable unit: a weighted sum of inputs plus a

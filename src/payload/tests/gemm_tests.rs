@@ -1,4 +1,8 @@
-use crate::{Differentiable, Tensor, Tensorial};
+use std::ops::{Add, Div, Mul, Neg, Sub};
+
+use crate::{Differentiable, Elementary, Shape, Tensor, Tensorial};
+
+use super::GemmTask;
 
 /// Computes the product over materialized operands in the logical
 /// path's exact accumulation order — ascending inner index, seeded
@@ -132,6 +136,118 @@ fn negative_zero_terms_keep_their_sign() {
     let product = left.matmul(&right);
     assert_eq!(product.to_vec()[0].to_bits(), (-0.0_f64).to_bits());
     assert_matches_reference_f64(&left, &right);
+}
+
+#[test]
+#[should_panic(expected = "does not span")]
+fn task_rejects_a_short_left_operand() {
+    GemmTask::new(&[1.0_f64; 3], [2, 1], &[1.0_f64; 4], [2, 1], 2, 2, 2);
+}
+
+#[test]
+#[should_panic(expected = "does not span")]
+fn task_rejects_a_short_right_operand() {
+    GemmTask::new(&[1.0_f64; 4], [2, 1], &[1.0_f64; 3], [2, 1], 2, 2, 2);
+}
+
+#[test]
+fn task_reports_its_dimensions_and_strides() {
+    let a = [1.0_f64; 6];
+    let b = [1.0_f64; 8];
+    let task = GemmTask::new(&a, [3, 1], &b, [1, 3], 2, 3, 2);
+    assert_eq!((task.m(), task.k(), task.n()), (2, 3, 2));
+    assert_eq!(task.a_strides(), [3, 1]);
+    assert_eq!(task.b_strides(), [1, 3]);
+    assert_eq!(task.a().len(), 6);
+    assert_eq!(task.b().len(), 8);
+}
+
+/// A scalar payload whose `gemm` seam answers a sentinel, proving
+/// that `matmul` consults the element's seam before the built-in
+/// kernels.
+#[derive(Debug, Clone, PartialEq)]
+struct Probe(f64);
+
+impl Add for Probe {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Probe(self.0 + rhs.0)
+    }
+}
+
+impl Sub for Probe {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        Probe(self.0 - rhs.0)
+    }
+}
+
+impl Mul for Probe {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        Probe(self.0 * rhs.0)
+    }
+}
+
+impl Div for Probe {
+    type Output = Self;
+    fn div(self, rhs: Self) -> Self {
+        Probe(self.0 / rhs.0)
+    }
+}
+
+impl Neg for Probe {
+    type Output = Self;
+    fn neg(self) -> Self {
+        Probe(-self.0)
+    }
+}
+
+impl Differentiable for Probe {
+    fn zero_like(&self) -> Self {
+        Probe(0.0)
+    }
+    fn one_like(&self) -> Self {
+        Probe(1.0)
+    }
+    fn shape(&self) -> Shape {
+        Shape::scalar()
+    }
+}
+
+impl Elementary for Probe {
+    fn exp(&self) -> Self {
+        Probe(self.0.exp())
+    }
+    fn ln(&self) -> Self {
+        Probe(self.0.ln())
+    }
+    fn sqrt(&self) -> Self {
+        Probe(self.0.sqrt())
+    }
+    fn tanh(&self) -> Self {
+        Probe(self.0.tanh())
+    }
+    fn powf(&self, exponent: Self) -> Self {
+        Probe(self.0.powf(exponent.0))
+    }
+    fn maximum(&self, other: &Self) -> Self {
+        Probe(self.0.max(other.0))
+    }
+    fn step(&self, threshold: &Self) -> Self {
+        Probe(if self.0 >= threshold.0 { 1.0 } else { 0.0 })
+    }
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
+        Some(vec![Probe(42.0); task.m() * task.n()])
+    }
+}
+
+#[test]
+fn the_element_seam_answers_before_the_built_in_kernels() {
+    let left = Tensor::new([2, 3], vec![Probe(1.0); 6]);
+    let right = Tensor::new([3, 2], vec![Probe(1.0); 6]);
+    let product = left.matmul(&right);
+    assert_eq!(product.to_vec(), vec![Probe(42.0); 4]);
 }
 
 #[test]

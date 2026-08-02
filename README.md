@@ -43,7 +43,9 @@ choice:
   and training never touches it; O(1)
   forks; dense matrix products on a slice path shaped for the
   compiler's auto-vectorizer — tens of GFLOP/s on Apple Silicon,
-  bit-identical to the logical definition;
+  bit-identical to the logical definition — with a documented seam
+  (`Elementary::gemm` over a `GemmTask`) through which an element
+  type can route dense products to its own kernel;
   no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
   it a promise rather than a claim (the arena's `unsafe` core is
   `cow_vec`'s, encapsulated behind its tested interface). CPU-only, on

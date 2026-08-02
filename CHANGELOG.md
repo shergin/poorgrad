@@ -5,6 +5,19 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Added
+
+- Add the acceleration seam: `GemmTask` describes one dense
+  matrix-multiplication job (spanning slices plus per-axis strides,
+  so transposed and narrowed views pass through unmaterialized), and
+  the provided `Elementary::gemm` offers each task to the compiled
+  backend chain before the built-in paths compute. The chain is
+  empty until the first backend feature lands, so behavior and
+  results are unchanged; custom payload implementations keep the
+  default.
+
 ## [0.3.0] - 2026-08-02
 
 ### Added
@@ -155,6 +168,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/shergin/poorgrad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/shergin/poorgrad/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/shergin/poorgrad/releases/tag/v0.1.0

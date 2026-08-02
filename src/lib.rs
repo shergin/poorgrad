@@ -40,10 +40,11 @@
 //! ```
 #![forbid(unsafe_code)]
 
+mod backend;
 mod engine;
 mod neural;
 mod payload;
 
 pub use engine::{Evaluation, Field, Gradients, Network, Symbol, Value};
 pub use neural::{Activation, Layer, Mlp, Neuron, cross_entropy, init};
-pub use payload::{Differentiable, Elementary, Shape, Tensor, Tensorial};
+pub use payload::{Differentiable, Elementary, GemmTask, Shape, Tensor, Tensorial};
