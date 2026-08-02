@@ -265,22 +265,36 @@ impl<Element: Differentiable> Tensor<Element> {
 
     /// Returns a tensor with every element passed through `transform`.
     ///
-    /// A constant maps in place to another constant; a dense tensor
-    /// materializes the transformed elements in logical order.
+    /// A constant maps in place to another constant; a contiguous
+    /// dense buffer maps over its slice directly — bypassing the
+    /// per-element iterator dispatch, which measured well below
+    /// memory speed — and everything else materializes through the
+    /// logical-order iterator. Every lane applies `transform` to the
+    /// same elements in the same order, so the lanes agree bitwise.
     fn map(&self, transform: impl Fn(&Element) -> Element) -> Self {
-        match &self.storage {
-            Storage::Constant { shape, value } => Self::constant(shape.clone(), transform(value)),
-            _ => Self::dense(
-                self.logical_shape().clone(),
-                self.iter().map(transform).collect(),
-            ),
+        if let Storage::Constant { shape, value } = &self.storage {
+            return Self::constant(shape.clone(), transform(value));
         }
+        if let Some(elements) = self.as_slice() {
+            return Self::dense(
+                self.logical_shape().clone(),
+                elements.iter().map(transform).collect(),
+            );
+        }
+        Self::dense(
+            self.logical_shape().clone(),
+            self.iter().map(transform).collect(),
+        )
     }
 
     /// Combines two tensors element by element with `combine`.
     ///
-    /// Two constants combine into a constant; otherwise the result is a
-    /// dense tensor built in logical order.
+    /// Two constants combine into a constant in O(1); contiguous
+    /// dense buffers combine slice to slice, a dense-and-constant
+    /// pair maps the slice against the single value, and everything
+    /// else goes through the logical-order iterators. Every lane
+    /// hands `combine` the same pairs in the same order, so the
+    /// lanes agree bitwise.
     ///
     /// # Panics
     /// Panics if the tensors have different shapes.
@@ -290,18 +304,43 @@ impl<Element: Differentiable> Tensor<Element> {
             other.logical_shape(),
             "tensors have different shapes"
         );
-        match (&self.storage, &other.storage) {
-            (Storage::Constant { value: left, .. }, Storage::Constant { value: right, .. }) => {
-                Self::constant(self.logical_shape().clone(), combine(left, right))
-            }
-            _ => Self::dense(
+        if let (Storage::Constant { value: left, .. }, Storage::Constant { value: right, .. }) =
+            (&self.storage, &other.storage)
+        {
+            return Self::constant(self.logical_shape().clone(), combine(left, right));
+        }
+        if let (Some(left), Some(right)) = (self.as_slice(), other.as_slice()) {
+            return Self::dense(
                 self.logical_shape().clone(),
-                self.iter()
-                    .zip(other.iter())
+                left.iter()
+                    .zip(right)
                     .map(|(left, right)| combine(left, right))
                     .collect(),
-            ),
+            );
         }
+        if let (Some(left), Storage::Constant { value: right, .. }) =
+            (self.as_slice(), &other.storage)
+        {
+            return Self::dense(
+                self.logical_shape().clone(),
+                left.iter().map(|left| combine(left, right)).collect(),
+            );
+        }
+        if let (Storage::Constant { value: left, .. }, Some(right)) =
+            (&self.storage, other.as_slice())
+        {
+            return Self::dense(
+                self.logical_shape().clone(),
+                right.iter().map(|right| combine(left, right)).collect(),
+            );
+        }
+        Self::dense(
+            self.logical_shape().clone(),
+            self.iter()
+                .zip(other.iter())
+                .map(|(left, right)| combine(left, right))
+                .collect(),
+        )
     }
 }
 

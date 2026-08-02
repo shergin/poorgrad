@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Changed
+
+- Give the elementwise paths slice fast lanes: `map` and `zip` over
+  contiguous dense buffers (and dense-with-constant pairs) run
+  straight over slices instead of the per-element iterator
+  dispatch, which measured 40x below memory speed. Dense multiplies
+  went from 235 Melem/s to 5.7 Gelem/s and the gradient seed's
+  constant-plus-dense add to 12.8 Gelem/s on an M1 Pro; a wide
+  accelerated training step dropped from 112 ms to 19 ms. Every
+  lane hands the combiner the same pairs in the same order, so
+  results stay bit-identical across lanes, pinned by a test.
+
 ## [0.5.2] - 2026-08-02
 
 ### Documentation
@@ -276,6 +290,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.5.2...HEAD
 [0.5.2]: https://github.com/shergin/poorgrad/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/shergin/poorgrad/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/shergin/poorgrad/compare/v0.4.0...v0.5.0

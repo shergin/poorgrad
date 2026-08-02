@@ -818,3 +818,36 @@ fn maximum_rejects_mismatched_operands() {
     let right = network.leaf(Tensor::filled([3], 0.0));
     left.maximum(right);
 }
+
+#[test]
+fn elementwise_lanes_agree_bitwise() {
+    // The slice fast lanes must hand the combiner the same pairs in
+    // the same order as the logical-order iterators: a strided view
+    // (the generic lane) of the same logical values answers
+    // identically, bit for bit.
+    let elements: Vec<f64> = (0..64).map(|index| (index as f64 - 31.5) / 7.0).collect();
+    let contiguous = Tensor::new([8, 8], elements.clone());
+    let mut transposed_elements = vec![0.0_f64; 64];
+    for row in 0..8 {
+        for column in 0..8 {
+            transposed_elements[column * 8 + row] = elements[row * 8 + column];
+        }
+    }
+    let view = Tensor::new([8, 8], transposed_elements).transpose();
+
+    let bits = |tensor: &Tensor<f64>| -> Vec<u64> {
+        tensor
+            .to_vec()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect()
+    };
+    let product_fast = contiguous.clone() * contiguous.clone();
+    let product_generic = view.clone() * view.clone();
+    assert_eq!(bits(&product_fast), bits(&product_generic));
+
+    let zero = Tensor::filled([8, 8], 0.0_f64);
+    let seeded_fast = zero.clone() + contiguous.clone();
+    let seeded_generic = zero + view;
+    assert_eq!(bits(&seeded_fast), bits(&seeded_generic));
+}

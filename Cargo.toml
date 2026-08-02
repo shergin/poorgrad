@@ -98,5 +98,9 @@ name = "gemm"
 harness = false
 
 [[bench]]
+name = "elementwise"
+harness = false
+
+[[bench]]
 name = "memory"
 harness = false
