@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 use crate::GemmTask;
 use crate::backend::BackendUnavailable;
 
-use self::context::Context;
+use self::context::{Context, SetupError};
 
 /// Below this many floating-point operations (`2 * m * n * k`) the
 /// dispatch latency outweighs the GPU's edge over the slice path —
@@ -31,17 +31,25 @@ use self::context::Context;
 /// wherever it is compiled in. The crossover sits near 256-square.
 const FLOP_THRESHOLD: usize = 1 << 25;
 
-static CONTEXT: OnceLock<Result<Context, String>> = OnceLock::new();
+static CONTEXT: OnceLock<Result<Context, SetupError>> = OnceLock::new();
 static POISON: OnceLock<String> = OnceLock::new();
+
+/// Returns the one-time setup outcome, building it on the first call.
+///
+/// The typed error stays inside the module so the tests can skip on a
+/// missing device yet fail hard on every other setup defect.
+fn initialized() -> &'static Result<Context, SetupError> {
+    CONTEXT.get_or_init(Context::new)
+}
 
 /// Returns the lazily built context, or why the backend declines.
 fn context() -> Result<&'static Context, BackendUnavailable> {
     if let Some(reason) = POISON.get() {
         return Err(BackendUnavailable::Poisoned(reason.clone()));
     }
-    match CONTEXT.get_or_init(Context::new) {
+    match initialized() {
         Ok(context) => Ok(context),
-        Err(reason) => Err(BackendUnavailable::Initialization(reason.clone())),
+        Err(error) => Err(BackendUnavailable::Initialization(error.to_string())),
     }
 }
 

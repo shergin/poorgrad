@@ -21,6 +21,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   arithmetic, so an overflowing `start + len` fails identically in
   debug and release builds instead of wrapping past the range check
   in release (audit finding PG-005).
+- The Metal test grid and the backend status test skip only when the
+  machine has no Metal device; every other setup failure — a shader
+  that does not compile, a missing kernel, a rejected pipeline — is
+  now a hard test failure instead of a silent skip (audit finding
+  PG-006).
 
 ### Added
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Mutex;
 
@@ -24,11 +25,33 @@ const SPECIALIZED_CAPACITY: usize = 32;
 /// stride pairs.
 pub(super) type ShapeKey = [u32; 7];
 
+/// Why the one-time setup failed.
+///
+/// The two variants matter to different audiences: a machine without
+/// any Metal device is an expected environment where the backend
+/// simply declines and the GPU tests skip, while every other failure
+/// — a shader that does not compile, a missing kernel, a rejected
+/// pipeline — is a broken backend that the tests must report loudly.
+#[derive(Debug)]
+pub(super) enum SetupError {
+    NoDevice,
+    Failed(String),
+}
+
+impl fmt::Display for SetupError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoDevice => write!(formatter, "no Metal device"),
+            Self::Failed(reason) => write!(formatter, "{reason}"),
+        }
+    }
+}
+
 /// The backend's one-time state: the device and queue, the two
 /// compiled pipelines, and the buffer pool.
 ///
 /// Built lazily on the first eligible task or `status` call; any
-/// failure is the reason string the diagnostics report.
+/// failure is the `SetupError` the diagnostics report.
 pub(super) struct Context {
     pub(super) device: Retained<ProtocolObject<dyn MTLDevice>>,
     pub(super) queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
@@ -54,22 +77,24 @@ impl Context {
     /// Creates the device, compiles the kernels from source (fast
     /// math off — parity with the CPU paths matters more than the
     /// last percent), and builds both pipeline states.
-    pub(super) fn new() -> Result<Self, String> {
-        let device = MTLCreateSystemDefaultDevice().ok_or_else(|| "no Metal device".to_string())?;
+    pub(super) fn new() -> Result<Self, SetupError> {
+        let device = MTLCreateSystemDefaultDevice().ok_or(SetupError::NoDevice)?;
         let queue = device
             .newCommandQueue()
-            .ok_or_else(|| "no command queue".to_string())?;
+            .ok_or_else(|| SetupError::Failed("no command queue".to_string()))?;
         let source = NSString::from_str(include_str!("shaders/gemm.metal"));
         let options = MTLCompileOptions::new();
         #[allow(deprecated)]
         options.setFastMathEnabled(false);
         let library = device
             .newLibraryWithSource_options_error(&source, Some(&options))
-            .map_err(|error| error.localizedDescription().to_string())?;
-        let naive = pipeline(&device, &library, "gemm_naive_f32")?;
-        let tiled = pipeline(&device, &library, "gemm_tiled_f32")?;
+            .map_err(|error| SetupError::Failed(error.localizedDescription().to_string()))?;
+        let naive = pipeline(&device, &library, "gemm_naive_f32").map_err(SetupError::Failed)?;
+        let tiled = pipeline(&device, &library, "gemm_tiled_f32").map_err(SetupError::Failed)?;
         if tiled.maxTotalThreadsPerThreadgroup() < 128 {
-            return Err("the tiled kernel needs 128 threads per threadgroup".to_string());
+            return Err(SetupError::Failed(
+                "the tiled kernel needs 128 threads per threadgroup".to_string(),
+            ));
         }
         Ok(Self {
             device,

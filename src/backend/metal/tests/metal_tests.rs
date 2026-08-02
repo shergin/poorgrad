@@ -1,20 +1,24 @@
 use crate::GemmTask;
 
-use super::context::Context;
+use super::context::{Context, SetupError};
 use super::gemm::{Kernel, executed};
-use super::{context, gemm_f32};
+use super::{gemm_f32, initialized};
 
 /// Returns the context, or `None` on machines without a Metal
 /// device — the virtualized CI runners — where the GPU tests skip
 /// rather than fail, honoring the backend's own degrade-to-slow
-/// contract. Any other setup failure stays a hard error.
+/// contract. Any other setup failure — a shader that does not
+/// compile, a missing kernel, a rejected pipeline — stays a hard
+/// error, so a broken backend can never turn the grid green by
+/// skipping it.
 fn device() -> Option<&'static Context> {
-    match context() {
+    match initialized() {
         Ok(context) => Some(context),
-        Err(reason) => {
-            eprintln!("skipping: {reason}");
+        Err(SetupError::NoDevice) => {
+            eprintln!("skipping: no Metal device");
             None
         }
+        Err(SetupError::Failed(reason)) => panic!("Metal setup failed: {reason}"),
     }
 }
 

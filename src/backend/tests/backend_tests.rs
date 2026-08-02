@@ -9,12 +9,18 @@ fn all_lists_every_backend_in_chain_order() {
 fn metal_status_reports_the_build() {
     let status = Backend::Metal.status();
     if cfg!(all(feature = "metal", target_os = "macos")) {
-        // The lazy setup either succeeds or reports its reason; on
-        // real Apple hardware it succeeds.
-        assert!(matches!(
-            status,
-            Ok(()) | Err(BackendUnavailable::Initialization(_))
-        ));
+        // The lazy setup succeeds on real Apple hardware; the only
+        // acceptable failure is a machine without any Metal device
+        // (the virtualized CI runners). Every other initialization
+        // reason — a shader that does not compile, a missing kernel,
+        // a rejected pipeline — is a broken backend and fails here.
+        match status {
+            Ok(()) => {}
+            Err(BackendUnavailable::Initialization(reason)) => {
+                assert_eq!(reason, "no Metal device", "Metal setup failed: {reason}");
+            }
+            Err(other) => panic!("unexpected Metal status: {other}"),
+        }
     } else if cfg!(feature = "metal") {
         assert_eq!(status, Err(BackendUnavailable::PlatformUnsupported));
     } else {
