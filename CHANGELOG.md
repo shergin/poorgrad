@@ -13,9 +13,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   kernel's dimensions and strides bake as Metal function constants,
   one cached pipeline per recurring shape (record-once training
   replays a handful), with the generic params-driven pipeline as
-  the fallback past the cache cap. Measured on an M1 Pro: 534 to
-  612 GFLOP/s at 2048-square, a stable +15%; results within a
-  shape stay bitwise-reproducible as before.
+  the fallback past the cache cap.
+- Raise the metal kernel's occupancy threefold: a GPU-counter trace
+  showed the dedicated output-staging tile capping compute
+  occupancy at one resident threadgroup per core, so the epilogue
+  now reuses the operand staging area as a half-tile buffer in two
+  coalesced passes, cutting the threadgroup footprint from 26.9 KB
+  to 9.5 KB. Together with the per-shape pipelines, measured on an
+  M1 Pro at 2048-square: 534 to about 1400 GFLOP/s.
 
 ## [0.5.0] - 2026-08-02
 

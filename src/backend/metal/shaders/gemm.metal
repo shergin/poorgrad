@@ -56,6 +56,13 @@ constant constexpr uint A_PAD = BK + 4;
 constant constexpr uint B_PAD = BN + 4;
 constant constexpr uint THREADS = 128;
 
+// The staging area holds A and B tiles during the K loop and is
+// reused as a half-tile output buffer by the epilogue, so the whole
+// threadgroup footprint stays under 10 KB: the GPU capture showed a
+// dedicated output tile capping compute occupancy at one resident
+// threadgroup per core (8%), which was the measured bottleneck.
+constant constexpr uint SHARED_LEN = BM * A_PAD + BK * B_PAD;
+
 static inline void gemm_tiled_body(
     device const float* a,
     device const float* b,
@@ -67,13 +74,13 @@ static inline void gemm_tiled_body(
     const uint a_column_stride,
     const uint b_row_stride,
     const uint b_column_stride,
-    threadgroup float* a_tile,
-    threadgroup float* b_tile,
-    threadgroup float* out_tile,
+    threadgroup float* shared_tile,
     uint2 group,
     uint lane,
     uint simdgroup_id)
 {
+    threadgroup float* a_tile = shared_tile;
+    threadgroup float* b_tile = shared_tile + BM * A_PAD;
     const uint tile_row = group.y * BM;
     const uint tile_column = group.x * BN;
     const uint quadrant_row = (simdgroup_id / 2) * 32;
@@ -129,26 +136,33 @@ static inline void gemm_tiled_body(
         threadgroup_barrier(mem_flags::mem_threadgroup);
     }
 
-    // Epilogue: stage the tile through threadgroup memory with the
-    // sanctioned store intrinsic, then stream it out coalesced and
-    // guarded, so edges are exact and no thread_elements layout
-    // assumption is made.
-    for (uint i = 0; i < 4; i++) {
-        for (uint j = 0; j < 4; j++) {
-            simdgroup_store(
-                accumulator[i][j],
-                out_tile + (quadrant_row + i * 8) * B_PAD + quadrant_column + j * 8,
-                B_PAD);
+    // Epilogue: the K loop is done, so the staging area is free to
+    // hold half the output tile at a time; each half is stored with
+    // the sanctioned intrinsic and streamed out coalesced and
+    // guarded, so edges stay exact, no thread_elements layout
+    // assumption is made, and no scattered device store exists (the
+    // capture showed those thrashing the TLB).
+    for (uint half_index = 0; half_index < 2; half_index++) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (quadrant_row == half_index * 32) {
+            for (uint i = 0; i < 4; i++) {
+                for (uint j = 0; j < 4; j++) {
+                    simdgroup_store(
+                        accumulator[i][j],
+                        shared_tile + (i * 8) * B_PAD + quadrant_column + j * 8,
+                        B_PAD);
+                }
+            }
         }
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint index = lane; index < BM * BN; index += THREADS) {
-        const uint row = index / BN;
-        const uint column = index % BN;
-        const uint global_row = tile_row + row;
-        const uint global_column = tile_column + column;
-        if (global_row < m && global_column < n) {
-            product[global_row * n + global_column] = out_tile[row * B_PAD + column];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint index = lane; index < 32 * BN; index += THREADS) {
+            const uint row = index / BN;
+            const uint column = index % BN;
+            const uint global_row = tile_row + half_index * 32 + row;
+            const uint global_column = tile_column + column;
+            if (global_row < m && global_column < n) {
+                product[global_row * n + global_column] = shared_tile[row * B_PAD + column];
+            }
         }
     }
 }
@@ -162,15 +176,13 @@ kernel void gemm_tiled_f32(
     uint lane [[thread_index_in_threadgroup]],
     uint simdgroup_id [[simdgroup_index_in_threadgroup]])
 {
-    threadgroup float a_tile[BM * A_PAD];
-    threadgroup float b_tile[BK * B_PAD];
-    threadgroup float out_tile[BM * B_PAD];
+    threadgroup float shared_tile[SHARED_LEN];
     gemm_tiled_body(
         a, b, product,
         params.m, params.n, params.k,
         params.a_row_stride, params.a_column_stride,
         params.b_row_stride, params.b_column_stride,
-        a_tile, b_tile, out_tile,
+        shared_tile,
         group, lane, simdgroup_id);
 }
 
@@ -192,14 +204,12 @@ kernel void gemm_specialized_f32(
     uint lane [[thread_index_in_threadgroup]],
     uint simdgroup_id [[simdgroup_index_in_threadgroup]])
 {
-    threadgroup float a_tile[BM * A_PAD];
-    threadgroup float b_tile[BK * B_PAD];
-    threadgroup float out_tile[BM * B_PAD];
+    threadgroup float shared_tile[SHARED_LEN];
     gemm_tiled_body(
         a, b, product,
         SPEC_M, SPEC_N, SPEC_K,
         SPEC_A_ROW_STRIDE, SPEC_A_COLUMN_STRIDE,
         SPEC_B_ROW_STRIDE, SPEC_B_COLUMN_STRIDE,
-        a_tile, b_tile, out_tile,
+        shared_tile,
         group, lane, simdgroup_id);
 }
