@@ -35,18 +35,18 @@ const BATCH_LEN: usize = 64;
 /// The model's parameters as recorded proxies: what the `Mlp` facade
 /// would hold for us, laid out by hand.
 struct Model<'network> {
-    embeddings: Value<'network, Tensor<f64>>,
-    hidden_weights: Value<'network, Tensor<f64>>,
-    hidden_bias: Value<'network, Tensor<f64>>,
-    output_weights: Value<'network, Tensor<f64>>,
-    output_bias: Value<'network, Tensor<f64>>,
+    embeddings: Value<'network, Tensor<f32>>,
+    hidden_weights: Value<'network, Tensor<f32>>,
+    hidden_bias: Value<'network, Tensor<f32>>,
+    output_weights: Value<'network, Tensor<f32>>,
+    output_bias: Value<'network, Tensor<f32>>,
 }
 
 impl<'network> Model<'network> {
     /// Allocates the parameters on `network`: an embedding table, one
     /// tanh hidden layer, and an affine output layer, Xavier-scaled
     /// with zero biases.
-    fn new(network: &'network Network<Tensor<f64>>) -> Self {
+    fn new(network: &'network Network<Tensor<f32>>) -> Self {
         let mut weights = init::xavier(7);
         Self {
             embeddings: network.parameter(init::normal(8, 1.0)(&Shape::new([
@@ -67,9 +67,9 @@ impl<'network> Model<'network> {
     /// squash, and score.
     fn express(
         &self,
-        contexts: Value<'network, Tensor<f64>>,
+        contexts: Value<'network, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f64>> {
+    ) -> Value<'network, Tensor<f32>> {
         let embedded = self
             .embeddings
             .gather(contexts)

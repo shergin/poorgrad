@@ -39,7 +39,7 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
+    let network: Network<Tensor<f32>> = Network::new();
 
     // The embedding table stays a plain parameter; the facade covers
     // the dense layers only. The allocation order and seeds match

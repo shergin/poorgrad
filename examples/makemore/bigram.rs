@@ -33,7 +33,7 @@ fn main() {
         samples.len()
     );
 
-    let network = Network::new();
+    let network: Network<Tensor<f32>> = Network::new();
     let table = network.parameter(init::normal(7, 0.01)(&Shape::new([
         VOCABULARY_LEN,
         VOCABULARY_LEN,

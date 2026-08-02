@@ -18,7 +18,7 @@ fn main() {
 
     // Declared inputs: the minibatch arrives per run, so the defaults
     // only fix the shapes — two samples of two features, two targets.
-    let x = network.input(Tensor::filled([2, 2], 0.0_f64));
+    let x = network.input(Tensor::filled([2, 2], 0.0_f32));
     let y = network.input(Tensor::filled([2, 1], 0.0));
 
     let predicted = mlp.express(&network, x);

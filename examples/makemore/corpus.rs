@@ -97,13 +97,16 @@ pub fn unit(state: &mut u64) -> f64 {
 
 /// Draws one token from a probability `row` by walking its cumulative
 /// distribution.
-pub fn draw(row: &[f64], state: &mut u64) -> usize {
+///
+/// The walk stays in `f64` so the cumulative subtraction never loses
+/// the row's `f32` probabilities to rounding.
+pub fn draw(row: &[f32], state: &mut u64) -> usize {
     let mut threshold = unit(state);
     for (token, probability) in row.iter().enumerate() {
-        if threshold < *probability {
+        if threshold < f64::from(*probability) {
             return token;
         }
-        threshold -= probability;
+        threshold -= f64::from(*probability);
     }
     row.len() - 1
 }

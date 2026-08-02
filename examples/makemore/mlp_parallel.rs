@@ -54,7 +54,7 @@ const SHARD_LEN: usize = 8;
 /// the shard count: the reduction runs its pairs concurrently and
 /// finishes in logarithmic depth, while the tree — not the scheduler —
 /// decides the order of additions, keeping the result deterministic.
-fn tree_sum(mut layer: Vec<Gradients<Tensor<f64>>>) -> Gradients<Tensor<f64>> {
+fn tree_sum(mut layer: Vec<Gradients<Tensor<f32>>>) -> Gradients<Tensor<f32>> {
     while layer.len() > 1 {
         layer = layer
             .par_chunks(2)
@@ -75,7 +75,7 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
+    let network: Network<Tensor<f32>> = Network::new();
 
     // The same model as the serial examples, recorded at shard shape:
     // the batch size is baked into the graph, so the parallel plan is
@@ -118,7 +118,7 @@ fn main() {
     let recorded_nodes = network.len();
 
     let batch_len = SHARD_COUNT * SHARD_LEN;
-    let shard_inverse = Tensor::new([], [1.0 / SHARD_COUNT as f64]);
+    let shard_inverse = Tensor::new([], [1.0 / SHARD_COUNT as f32]);
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
     let mut network = network;
@@ -130,7 +130,7 @@ fn main() {
 
         // Fan out: one immutable forward and backward run per shard,
         // all reading the same generation.
-        let shard_results: Vec<(f64, Gradients<Tensor<f64>>)> = (0..SHARD_COUNT)
+        let shard_results: Vec<(f32, Gradients<Tensor<f32>>)> = (0..SHARD_COUNT)
             .into_par_iter()
             .map(|shard| {
                 let rows = &batch[shard * SHARD_LEN..(shard + 1) * SHARD_LEN];
@@ -156,9 +156,9 @@ fn main() {
             })
             .collect();
 
-        let (shard_losses, shard_gradients): (Vec<f64>, Vec<Gradients<Tensor<f64>>>) =
+        let (shard_losses, shard_gradients): (Vec<f32>, Vec<Gradients<Tensor<f32>>>) =
             shard_results.into_iter().unzip();
-        let batch_loss = shard_losses.iter().sum::<f64>() / SHARD_COUNT as f64;
+        let batch_loss = shard_losses.iter().sum::<f32>() / SHARD_COUNT as f32;
         let gradients = tree_sum(shard_gradients)
             .map(|gradient| gradient.clone() * shard_inverse.broadcast_like(gradient));
 

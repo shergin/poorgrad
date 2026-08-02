@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Added
+
+- Add `init::Sample` and make the initializer factories
+  element-generic: `uniform`, `normal`, `xavier`, and `kaiming` now
+  produce `Tensor<Element>` for any element implementing `Sample`,
+  with the element inferred from the network the closure feeds. The
+  generator pipeline stays in `f64` and converts once at the end, so
+  the `f64` path is bit-identical to every previous release (pinned
+  by a golden-bits test) and the `f32` path is the same stream
+  rounded once per element. Context-free factory calls bound to
+  nothing now need a type annotation.
+
+### Changed
+
+- Move the tensor examples (`mlp_xor` and the makemore family) to
+  `Tensor<f32>`: the field's training dtype, and the one every
+  acceleration rung favors. The scalar examples and the crate-root
+  doctest stay `f64`, and `f64` tensors remain fully supported and
+  tested. The facade example still trains bit-identically to its
+  hand-rolled twin from matching seeds.
+
 ## [0.4.0] - 2026-08-02
 
 ### Added
@@ -189,6 +212,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/shergin/poorgrad/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/shergin/poorgrad/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/shergin/poorgrad/compare/v0.2.0...v0.3.0

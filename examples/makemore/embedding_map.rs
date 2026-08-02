@@ -51,13 +51,13 @@ fn styled(token: usize) -> String {
 
 /// Renders the `[vocab, 2]` embedding `table` as a terminal scatter
 /// chart, one letter per token.
-fn embedding_chart(table: &Tensor<f64>) -> String {
+fn embedding_chart(table: &Tensor<f32>) -> String {
     let elements = table.to_vec();
     let points: Vec<(f64, f64, String)> = (0..VOCABULARY_LEN)
         .map(|token| {
             (
-                elements[token * EMBED_DIM],
-                elements[token * EMBED_DIM + 1],
+                f64::from(elements[token * EMBED_DIM]),
+                f64::from(elements[token * EMBED_DIM + 1]),
                 styled(token),
             )
         })
@@ -72,7 +72,7 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
+    let network: Network<Tensor<f32>> = Network::new();
     let embeddings = network.parameter(init::normal(8, 1.0)(&Shape::new([
         VOCABULARY_LEN,
         EMBED_DIM,
