@@ -70,6 +70,32 @@ fn run(criterion: &mut Criterion) {
         bencher.iter(|| regression_evaluation.backward(loss));
     });
 
+    // The same regression over dense payloads: `filled` above stores
+    // constants, which bypass the dense matmul and slice paths, so
+    // these twin cases are the ones that price the accelerated tiers.
+    let dense = Network::new();
+    let dense_values = |len: usize, seed: u64| -> Vec<f64> {
+        (0..len)
+            .map(|index| {
+                ((index as u64).wrapping_mul(2654435761).wrapping_add(seed) % 1000) as f64 / 1000.0
+            })
+            .collect()
+    };
+    let inputs = dense.leaf(Tensor::new([64, 32], dense_values(64 * 32, 1)));
+    let weights = dense.parameter(Tensor::new([32, 16], dense_values(32 * 16, 2)));
+    let targets = dense.leaf(Tensor::new([64, 16], dense_values(64 * 16, 3)));
+    let error = inputs.matmul(weights) - targets;
+    let dense_loss = (error * error).sum();
+
+    group.bench_function("forward/tensor-regression-dense", |bencher| {
+        bencher.iter(|| dense.forward());
+    });
+
+    let dense_evaluation = dense.forward();
+    group.bench_function("backward/tensor-regression-dense", |bencher| {
+        bencher.iter(|| dense_evaluation.backward(dense_loss));
+    });
+
     group.finish();
 }
 
