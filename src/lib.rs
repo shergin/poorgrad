@@ -38,13 +38,18 @@
 //! let learned = network.resolve(w_symbol).payload().unwrap();
 //! assert!((learned - 2.0).abs() < 1e-6);
 //! ```
-#![forbid(unsafe_code)]
+// The default build forbids `unsafe` outright. A backend feature
+// drops `forbid` but keeps the crate-wide `deny`, so `unsafe`
+// outside a scope-allowed backend module stays a compile error.
+#![cfg_attr(not(feature = "accelerate"), forbid(unsafe_code))]
+#![deny(unsafe_code)]
 
 mod backend;
 mod engine;
 mod neural;
 mod payload;
 
+pub use backend::{Backend, BackendUnavailable};
 pub use engine::{Evaluation, Field, Gradients, Network, Symbol, Value};
 pub use neural::{Activation, Layer, Mlp, Neuron, cross_entropy, init};
 pub use payload::{Differentiable, Elementary, GemmTask, Shape, Tensor, Tensorial};

@@ -394,8 +394,17 @@ task (wrong size, wrong platform, unavailable device), and the
 built-in paths answer when the whole chain declines. The chain is
 compile-time: enabling a feature is the activation, and no runtime
 switch exists, so within one binary two identical runs can never
-disagree. Today no backend feature exists and every chain entry
-answers `None`.
+disagree. The chain's first resident is `Backend::Accelerate` behind
+the `accelerate` feature: Apple's Accelerate framework
+(`cblas_sgemm`/`cblas_dgemm`, the AMX/SME matrix units on Apple
+Silicon), taking dense `f32` and `f64` tasks above a small flop
+threshold and declining stride patterns BLAS cannot express, which
+fall back to the built-in paths. [`Backend::status`] answers for
+every defined backend in every build — `NotCompiled` is an ordinary
+result, not a compile error — and the default build still compiles
+no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
+build confines `unsafe` to the backend's module under a crate-wide
+`deny` with one scoped allow.
 
 ## Neural building blocks
 

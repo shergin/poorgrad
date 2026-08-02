@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Added
+
+- Add the `accelerate` feature, the backend chain's first resident:
+  dense `f32`/`f64` matrix products above a small flop threshold
+  route to Apple's Accelerate framework (`cblas_sgemm`/`cblas_dgemm`
+  — the AMX/SME matrix units on Apple Silicon, AVX kernels on Intel
+  Macs), with transposed and narrowed views mapping to BLAS
+  transpose flags and leading dimensions without copies; stride
+  patterns BLAS cannot express and small tasks decline to the
+  built-in paths. macOS only, zero dependencies, and a safe stub
+  elsewhere. The default build is untouched and keeps
+  `#![forbid(unsafe_code)]`; with the feature on, `unsafe` is
+  confined to the backend module under a crate-wide `deny`.
+- Add `Backend` and `BackendUnavailable`: the backend diagnostics
+  surface, present in every build so no user code ever needs a
+  `cfg` — `Backend::ALL` lists the defined backends in chain order
+  and `Backend::status` reports `Ok`, `NotCompiled`,
+  `PlatformUnsupported`, or a setup/poison reason.
+
 ## [0.3.1] - 2026-08-02
 
 ### Added
@@ -168,6 +189,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.3.1...HEAD
 [0.3.1]: https://github.com/shergin/poorgrad/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/shergin/poorgrad/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/shergin/poorgrad/compare/v0.1.0...v0.2.0

@@ -23,3 +23,20 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
+      # Backend features compile to safe stubs off macOS; this keeps
+      # the stubs honest.
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  # The backend features are real only on macOS; this job runs the
+  # accelerate grid, determinism, and end-to-end training tests on
+  # Apple hardware.
+  check-macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --features accelerate -- -D warnings
+      - run: cargo test --all-targets --features accelerate

@@ -5,7 +5,8 @@
 </p>
 
 **A fully concurrent, thread-safe autograd engine, written the way Rust
-wants it written.**
+wants it written. CPU-only by default; teraflop-class when you flip a
+flag.**
 
 `poorgrad` begins from
 [Karpathy's `micrograd`](https://github.com/karpathy/micrograd) and then
@@ -48,9 +49,9 @@ choice:
   type can route dense products to its own kernel;
   no `unsafe` in this crate, with `#![forbid(unsafe_code)]` keeping
   it a promise rather than a claim (the arena's `unsafe` core is
-  `cow_vec`'s, encapsulated behind its tested interface). CPU-only, on
-  purpose: the engine is the point — and the claims are measured, not
-  asserted: `cargo bench` runs the suite.
+  `cow_vec`'s, encapsulated behind its tested interface). CPU-only by
+  default, on purpose: the engine is the point — and the claims are
+  measured, not asserted: `cargo bench` runs the suite.
 
 ## A taste
 
@@ -174,10 +175,20 @@ crate root keeps the public API flat. From tape to training:
   and `kaiming`) producing the shape-to-payload closures `Layer` and `Mlp`
   take, with no `rand` dependency: seeded runs stay bit-identical forever.
 
+## Acceleration
+
+The GPU poor on Apple Silicon have owned a matrix coprocessor all
+along. The opt-in `accelerate` feature routes dense `f32`/`f64`
+matrix products above a small threshold to Apple's Accelerate
+framework — the AMX/SME matrix units on Apple Silicon, AVX kernels
+on Intel Macs — through the same `Elementary::gemm` seam everything
+else uses. One flag, zero source changes.
+
 ## The name
 
-A poor man's autograd: no GPU required, none wanted. The name is the only
-modest thing about the design.
+A poor man's autograd: no GPU required, none wanted — and the poor, it
+turns out, were sitting on a matrix coprocessor the whole time. The
+name is the only modest thing about the design.
 
 ## Terminology
 

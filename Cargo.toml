@@ -31,6 +31,19 @@ static_assertions = "1.1"
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
 rayon = "1.12.0"
 
+[features]
+# Routes dense `f32`/`f64` matrix products above a small threshold to
+# Apple's Accelerate framework (the AMX/SME matrix units on Apple
+# Silicon, AVX kernels on Intel Macs). macOS only; a safe stub
+# elsewhere. Zero dependencies: one linked system framework.
+accelerate = []
+
+# Feature-gated items exist in every build (behavior changes, surface
+# does not), so docs render completely either way; all-features only
+# lets behavior notes mention the features as enabled.
+[package.metadata.docs.rs]
+all-features = true
+
 # The makemore examples live in a subfolder together with their shared
 # corpus module and dataset, so each target is declared explicitly;
 # auto-discovery only finds top-level example files.
