@@ -16,11 +16,13 @@ scalars and tensors alike. Sharing a computation graph across threads is
 not a feature bolted on with locks; it is what the types guarantee.
 
 The discipline is the product: three dependencies,
-`#![forbid(unsafe_code)]` unless you opt into the two audited FFI
-backends, shape errors surfaced when an expression is recorded —
-before anything runs — seeded runs bit-identical forever with
-golden-bit tests holding the line, and a suite on dual-platform CI
-that checks the hardware paths down to the last bit.
+`#![forbid(unsafe_code)]` unless you opt into the FFI backends —
+whose `unsafe` is scoped by a crate-wide `deny`, argued block by
+block, and small enough to audit in one sitting — shape errors
+surfaced when an expression is recorded, before anything runs,
+seeded runs bit-identical forever with golden-bit tests holding the
+line, and a suite on dual-platform CI that checks the hardware
+paths down to the last bit.
 
 ## The bet
 
