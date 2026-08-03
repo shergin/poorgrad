@@ -187,7 +187,8 @@ fn main() {
         });
     }
     println!(
-        "trained on {SHARD_COUNT} shards in {:.1}s",
+        "trained {} steps on {SHARD_COUNT} shards in {:.3}s",
+        losses.len(),
         training.elapsed().as_secs_f64()
     );
 

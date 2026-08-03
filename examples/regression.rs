@@ -10,6 +10,8 @@
 //!
 //! Run with: `cargo run --release --example regression`
 
+use std::time::Instant;
+
 use malevich::{Frame, Line, Plot, Points};
 use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial, init};
 
@@ -57,6 +59,7 @@ fn main() {
     let learning_rate = Tensor::new([], [0.001]);
     let mut network = network;
     let mut losses = Vec::new();
+    let training = Instant::now();
     for step in 0..STEP_COUNT {
         let loss_value = network.resolve(loss_symbol);
         let evaluation = network.forward();
@@ -70,6 +73,12 @@ fn main() {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
+
+    println!(
+        "trained {} steps in {:.3}s",
+        losses.len(),
+        training.elapsed().as_secs_f64()
+    );
 
     println!(
         "{}",

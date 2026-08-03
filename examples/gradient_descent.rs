@@ -9,6 +9,8 @@
 //!
 //! Run with: `cargo run --example gradient_descent`
 
+use std::time::Instant;
+
 use rayon::prelude::*;
 
 use malevich::{Frame, Line, Plot};
@@ -68,6 +70,7 @@ fn main() {
     // recorded graph and descends independently, keeping its whole loss
     // history for the chart.
     let learning_rates = [0.005, 0.02, 0.05];
+    let training = Instant::now();
     let runs: Vec<(f64, Vec<f64>, f64, f64)> = learning_rates
         .par_iter()
         .map(|&learning_rate| {
@@ -92,6 +95,12 @@ fn main() {
             (learning_rate, losses, w, b)
         })
         .collect();
+
+    println!(
+        "trained {} forks of 500 steps in {:.3}s",
+        learning_rates.len(),
+        training.elapsed().as_secs_f64()
+    );
 
     println!("parallel training on forks (target: w = 2, b = 1):");
     for (learning_rate, losses, w, b) in &runs {

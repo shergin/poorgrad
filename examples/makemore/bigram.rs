@@ -17,6 +17,8 @@
 mod chart;
 mod corpus;
 
+use std::time::Instant;
+
 use malevich::{Cells, Frame, Plot, Scale};
 use poorgrad::{Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
@@ -63,6 +65,7 @@ fn main() {
     let learning_rate = Tensor::new([], [10.0]);
     let mut network = network;
     let mut losses = Vec::new();
+    let training = Instant::now();
     for step in 0..1000 {
         let start = (step * BATCH_LEN) % (samples.len() - BATCH_LEN);
         let batch = &samples[start..start + BATCH_LEN];
@@ -90,6 +93,12 @@ fn main() {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
+
+    println!(
+        "trained {} steps in {:.3}s",
+        losses.len(),
+        training.elapsed().as_secs_f64()
+    );
 
     assert_eq!(network.len(), recorded_nodes);
     println!("the tape held {recorded_nodes} nodes through every step");

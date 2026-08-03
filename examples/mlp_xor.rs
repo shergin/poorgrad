@@ -10,6 +10,8 @@
 //!
 //! Run with: `cargo run --example mlp_xor`
 
+use std::time::Instant;
+
 use malevich::{Cells, Frame, Line, Plot};
 use poorgrad::{Mlp, Network, Tensor, Tensorial, init};
 
@@ -55,6 +57,7 @@ fn main() {
     let learning_rate = Tensor::new([], [0.05]);
     let mut network = network;
     let mut losses = Vec::new();
+    let training = Instant::now();
     for step in 0..4000 {
         let (batch_x, batch_y) = &minibatches[step % minibatches.len()];
         let loss_value = network.resolve(loss_symbol);
@@ -70,6 +73,12 @@ fn main() {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
+
+    println!(
+        "trained {} steps in {:.3}s",
+        losses.len(),
+        training.elapsed().as_secs_f64()
+    );
 
     assert_eq!(network.len(), recorded_nodes);
     println!("the tape held {recorded_nodes} nodes through every step");

@@ -15,6 +15,8 @@ mod chart;
 #[allow(dead_code)]
 mod corpus;
 
+use std::time::Instant;
+
 use malevich::{Color, Frame, Plot, Text};
 use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
@@ -192,6 +194,7 @@ fn main() {
     let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
+    let training = Instant::now();
     for step in 0..5000 {
         let start = (step * BATCH_LEN) % (samples.len() - BATCH_LEN);
         let batch = &samples[start..start + BATCH_LEN];
@@ -231,6 +234,11 @@ fn main() {
         });
     }
 
+    println!(
+        "trained {} steps in {:.3}s",
+        losses.len(),
+        training.elapsed().as_secs_f64()
+    );
     println!("{}", loss_chart("embedding map training", &losses));
 
     let table = network.resolve(embeddings_symbol).payload().unwrap();
