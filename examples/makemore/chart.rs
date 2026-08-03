@@ -25,5 +25,5 @@ pub fn loss_chart(title: &str, losses: &[f32]) -> String {
         .title(title)
         .x_label("step")
         .y_label("loss")
-        .render(&Frame::detect())
+        .render_best(&Frame::detect())
 }

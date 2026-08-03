@@ -131,7 +131,7 @@ fn main() {
             .title("bigram transition probabilities")
             .x_label("next token")
             .y_label("current token")
-            .render(&frame)
+            .render_best(&frame)
     );
 
     println!("sampled names:");

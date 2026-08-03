@@ -35,7 +35,7 @@ static_assertions = "1.1"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
-malevich = "1.11.1"
+malevich = { version = "1.12.0", features = ["pixel"] }
 rayon = "1.12.0"
 
 [features]

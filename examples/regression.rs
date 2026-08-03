@@ -87,7 +87,7 @@ fn main() {
             .title("regression training")
             .x_label("step")
             .y_label("sum of squared errors")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 
     // The fit, read over an evenly spaced grid fed through the trained
@@ -107,6 +107,6 @@ fn main() {
             .layer(Line::xy(&grid[..], &fit[..]).label("fit"))
             .title("a tanh mlp fit to noisy sin x")
             .x_label("x")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 }

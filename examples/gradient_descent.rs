@@ -118,5 +118,5 @@ fn main() {
     for (learning_rate, losses, ..) in &runs {
         plot = plot.layer(Line::y(&losses[..]).label(format!("lr = {learning_rate}")));
     }
-    println!("{}", plot.render(&Frame::detect()));
+    println!("{}", plot.render_best(&Frame::detect()));
 }

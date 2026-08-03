@@ -93,7 +93,7 @@ fn main() {
             .x_label("step")
             .y_label("sum of squared errors")
             .log_y()
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 
     println!("predictions (target in parentheses):");
@@ -138,6 +138,6 @@ fn main() {
             .layer(Cells::matrix(SURFACE_COLUMNS, surface).extents((0.0, 1.0), (0.0, 1.0)))
             .colorbar()
             .title("the learned xor surface")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 }

@@ -142,7 +142,7 @@ fn embedding_chart(title: &str, table: &Tensor<f32>) -> String {
         };
         plot = plot.layer(Text::at(x, y, String::from(letter)).color(color));
     }
-    plot.render(&frame)
+    plot.render_best(&frame)
 }
 
 fn main() {

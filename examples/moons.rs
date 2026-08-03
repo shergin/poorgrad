@@ -111,7 +111,7 @@ fn main() {
             .x_domain(f64::from(X_SPAN.0), f64::from(X_SPAN.1))
             .y_domain(f64::from(Y_SPAN.0), f64::from(Y_SPAN.1))
             .title("the two moons")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 
     let learning_rate = Tensor::new([], [0.0003]);
@@ -145,7 +145,7 @@ fn main() {
             .title("two moons training")
             .x_label("step")
             .y_label("sum of squared errors")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 
     // One forward serves both readouts: the training points' signs for
@@ -173,6 +173,6 @@ fn main() {
             ))
             .colorbar()
             .title("the learned decision surface")
-            .render(&Frame::detect())
+            .render_best(&Frame::detect())
     );
 }
