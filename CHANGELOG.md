@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog], and this project adheres to
 [Semantic Versioning].
 
+## [Unreleased]
+
+### Added
+
+- The `cuda` feature: large dense `f32`/`f64` products through
+  cuBLAS on an NVIDIA GPU, Linux only. The libraries
+  (`libcudart`/`libcublas`) are bound at run time by `dlopen`, so
+  the build never links them and a machine without the toolkit or a
+  device declines at run time; typed setup errors make the GPU
+  tests skip only in those two environments and fail loudly on any
+  other defect. `Backend::Cuda` joins the diagnostics enum between
+  `Metal` and `Simd`. Built blind against the documented APIs and
+  not yet validated on NVIDIA hardware: treat it as experimental
+  until the first measured run, which will also tune its provisional
+  flop threshold.
+
 ## [0.6.0] - 2026-08-02
 
 ### Added

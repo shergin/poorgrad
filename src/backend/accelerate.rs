@@ -10,15 +10,27 @@
 //! below the profitability threshold decline to the built-in paths.
 //!
 //! This is the crate's only `unsafe` code in an accelerate-only
-//! build (the `metal` feature carries its own); each backend module
-//! is scope-allowed under the crate-wide `deny(unsafe_code)`.
+//! build (every other backend feature carries its own); each
+//! backend module is scope-allowed under the crate-wide
+//! `deny(unsafe_code)`.
 
 use crate::{GemmTask, MapOperation};
+
+use super::operand::{Operand, classify};
 
 // Row-major CBLAS constants.
 const ROW_MAJOR: i32 = 101;
 const NO_TRANSPOSE: i32 = 111;
 const TRANSPOSE: i32 = 112;
+
+/// Returns the cblas transpose constant for a classified operand.
+fn transpose(operand: &Operand) -> i32 {
+    if operand.transposed {
+        TRANSPOSE
+    } else {
+        NO_TRANSPOSE
+    }
+}
 
 /// Below this many floating-point operations (`2 * m * n * k`) the
 /// built-in slice path wins on latency alone; the crossover sits
@@ -76,46 +88,6 @@ unsafe extern "C" {
     fn vvtanh(mapped: *mut f64, elements: *const f64, count: *const i32);
 }
 
-/// One cblas-ready operand: the transpose flag and the leading
-/// dimension.
-struct CblasOperand {
-    transpose: i32,
-    leading: i32,
-}
-
-/// It classifies an operand's strides into cblas form, or declines:
-/// `None` for patterns BLAS cannot express (a stride-0 broadcast
-/// axis of extent above one) and for dimensions beyond `i32`.
-///
-/// A unit column stride is `NoTrans` with the row stride as the
-/// leading dimension; a unit row stride is `Trans` with the column
-/// stride leading. An extent-1 axis leaves its stride unused, so a
-/// degenerate leading dimension is replaced by the smallest value
-/// cblas accepts rather than declined.
-fn classify(strides: [usize; 2], rows: usize, columns: usize) -> Option<CblasOperand> {
-    if strides[1] == 1 {
-        let leading = if rows == 1 { columns } else { strides[0] };
-        if leading < columns {
-            return None;
-        }
-        return Some(CblasOperand {
-            transpose: NO_TRANSPOSE,
-            leading: i32::try_from(leading).ok()?,
-        });
-    }
-    if strides[0] == 1 {
-        let leading = if columns == 1 { rows } else { strides[1] };
-        if leading < rows {
-            return None;
-        }
-        return Some(CblasOperand {
-            transpose: TRANSPOSE,
-            leading: i32::try_from(leading).ok()?,
-        });
-    }
-    None
-}
-
 /// It runs a `f32` task through `cblas_sgemm`, or declines with
 /// `None` when the task is below the threshold or outside the
 /// mapping.
@@ -160,8 +132,8 @@ pub(super) fn executed_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
     unsafe {
         cblas_sgemm(
             ROW_MAJOR,
-            a.transpose,
-            b.transpose,
+            transpose(&a),
+            transpose(&b),
             m,
             n,
             k,
@@ -235,8 +207,8 @@ pub(super) fn executed_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
     unsafe {
         cblas_dgemm(
             ROW_MAJOR,
-            a.transpose,
-            b.transpose,
+            transpose(&a),
+            transpose(&b),
             m,
             n,
             k,

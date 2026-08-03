@@ -4,8 +4,38 @@ use super::{Backend, BackendUnavailable};
 fn all_lists_every_backend_in_chain_order() {
     assert_eq!(
         Backend::ALL,
-        &[Backend::Accelerate, Backend::Metal, Backend::Simd]
+        &[
+            Backend::Accelerate,
+            Backend::Metal,
+            Backend::Cuda,
+            Backend::Simd
+        ]
     );
+}
+
+#[test]
+fn cuda_status_reports_the_build() {
+    let status = Backend::Cuda.status();
+    if cfg!(all(feature = "cuda", target_os = "linux")) {
+        // The lazy setup succeeds where the NVIDIA stack exists; the
+        // acceptable failures are the two expected environments — no
+        // libraries, no device. Every other initialization reason is
+        // a broken backend and fails here.
+        match status {
+            Ok(()) => {}
+            Err(BackendUnavailable::Initialization(reason)) => {
+                assert!(
+                    reason.contains("is not available") || reason == "no CUDA device",
+                    "CUDA setup failed: {reason}"
+                );
+            }
+            Err(other) => panic!("unexpected CUDA status: {other}"),
+        }
+    } else if cfg!(feature = "cuda") {
+        assert_eq!(status, Err(BackendUnavailable::PlatformUnsupported));
+    } else {
+        assert_eq!(status, Err(BackendUnavailable::NotCompiled));
+    }
 }
 
 #[test]

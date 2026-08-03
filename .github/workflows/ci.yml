@@ -28,10 +28,11 @@ jobs:
       - run: cargo test --lib --tests --examples
       # Named targets omit doctests, so they get their own run.
       - run: cargo test --doc
-      # The simd backend is real on Linux — the one backend this
-      # runner can execute instead of merely compiling as a stub.
-      - run: cargo test --lib --tests --examples --features simd
-      - run: cargo test --doc --features simd
+      # The simd and cuda backends are real on Linux — simd executes
+      # its grid here, and cuda (no GPU on this runner) proves its
+      # decline paths and skip guards live, falling through to simd.
+      - run: cargo test --lib --tests --examples --features cuda,simd
+      - run: cargo test --doc --features cuda,simd
       # The Apple backend features compile to safe stubs off macOS;
       # this keeps the stubs honest.
       - run: cargo clippy --all-targets --all-features -- -D warnings

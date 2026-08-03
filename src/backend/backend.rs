@@ -31,6 +31,12 @@ pub enum Backend {
     /// use. Behind the `metal` feature, macOS only; serves what
     /// BLAS declines, and everything large in metal-only builds.
     Metal,
+    /// cuBLAS on an NVIDIA GPU for large `f32`/`f64` products, its
+    /// libraries bound at run time by `dlopen` so a machine without
+    /// them declines instead of failing to build. Behind the `cuda`
+    /// feature, Linux only; PCIe copies bound every task, so the
+    /// threshold is high and residency stays future work.
+    Cuda,
     /// The `matrixmultiply` crate's tuned CPU microkernels with
     /// runtime instruction-set dispatch (AVX-512F, AVX2+FMA, AVX,
     /// NEON), single-threaded. Behind the `simd` feature, every
@@ -41,7 +47,12 @@ pub enum Backend {
 
 impl Backend {
     /// Every backend this crate version defines, in chain order.
-    pub const ALL: &'static [Backend] = &[Backend::Accelerate, Backend::Metal, Backend::Simd];
+    pub const ALL: &'static [Backend] = &[
+        Backend::Accelerate,
+        Backend::Metal,
+        Backend::Cuda,
+        Backend::Simd,
+    ];
 
     /// Reports whether this backend would accept work in this build
     /// on this machine, forcing its lazy setup if it has one.
@@ -78,6 +89,22 @@ impl Backend {
                 // Accelerate is a link-time dependency with nothing
                 // to initialize and nothing to lose at run time.
                 Ok(())
+            }
+            Backend::Cuda => {
+                if !cfg!(feature = "cuda") {
+                    return Err(BackendUnavailable::NotCompiled);
+                }
+                if !cfg!(target_os = "linux") {
+                    return Err(BackendUnavailable::PlatformUnsupported);
+                }
+                #[cfg(all(feature = "cuda", target_os = "linux"))]
+                {
+                    super::cuda::status()
+                }
+                #[cfg(not(all(feature = "cuda", target_os = "linux")))]
+                {
+                    unreachable!("the cfg! guards above cover this build")
+                }
             }
             Backend::Simd => {
                 if !cfg!(feature = "simd") {

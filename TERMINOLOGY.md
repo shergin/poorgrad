@@ -396,7 +396,7 @@ task (wrong size, wrong platform, unavailable device), and the
 built-in paths answer when the whole chain declines. The chain is
 compile-time: enabling a feature is the activation, and no runtime
 switch exists, so within one binary two identical runs can never
-disagree. The chain has three residents, tried in order.
+disagree. The chain has four residents, tried in order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
 dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
@@ -409,8 +409,14 @@ the GPU through hand-written simdgroup-matrix kernels compiled from
 source at first use — Metal has no `f64` — serving what BLAS
 declines and everything large in metal-only builds; a failed setup
 or runtime error poisons it into declining forever, degrading to
-slow rather than wrong. `Backend::Simd` (the `simd` feature) closes
-the chain: the `matrixmultiply` crate's tuned, single-threaded CPU
+slow rather than wrong. `Backend::Cuda` (the `cuda` feature, Linux
+only) runs large `f32` and `f64` products through cuBLAS on an
+NVIDIA GPU, binding `libcudart`/`libcublas` at run time by `dlopen`
+so a machine without them declines at run time instead of failing
+to build; PCIe copies bound every task, so its threshold is high,
+and it shares the BLAS stride classification with `accelerate`
+under a column-major swap. `Backend::Simd` (the `simd` feature)
+closes the chain: the `matrixmultiply` crate's tuned, single-threaded CPU
 microkernels with runtime instruction-set dispatch (AVX-512F,
 AVX2+FMA, AVX, NEON) for both `f32` and `f64` — the portable rung,
 real on every platform where the Apple backends are macOS-only, and

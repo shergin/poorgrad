@@ -55,10 +55,20 @@ metal = ["dep:objc2", "dep:objc2-foundation", "dep:objc2-metal"]
 # the portable acceleration rung for Linux and everyone else.
 simd = ["dep:matrixmultiply"]
 
+# Routes large dense `f32`/`f64` matrix products to cuBLAS on an
+# NVIDIA GPU, binding `libcudart`/`libcublas` at run time by `dlopen`
+# — the build never links them, so a machine without the toolkit
+# declines at run time instead of failing to build. Linux only; a
+# safe stub elsewhere. Unvalidated on hardware so far.
+cuda = ["dep:libloading"]
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }
 objc2-foundation = { version = "0.3", optional = true }
 objc2-metal = { version = "0.3", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libloading = { version = "0.9", optional = true }
 
 # Feature-gated items exist in every build (behavior changes, surface
 # does not), so docs render completely either way; all-features only

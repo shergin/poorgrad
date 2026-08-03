@@ -89,6 +89,19 @@ broadcast operands decline down the chain. On macOS it sits behind
 the Apple backends as mop-up; elementwise transcendentals stay
 scalar in this build.
 
+**The `cuda` feature** (Linux only) runs large `f32` and `f64`
+products through cuBLAS on an NVIDIA GPU. The libraries
+(`libcudart`, `libcublas`) are bound at run time by `dlopen`, never
+at link time: the build succeeds on every machine, and a missing
+toolkit or device is a `status` answer, not a build failure.
+Discrete memory sets the economics — PCIe copies bound every task,
+so the threshold is high (~200-square) and the arm is copy-bound
+even where it wins; GeForce-class cards also run `f64` at a small
+fraction of their `f32` rate. Status: built against the documented
+APIs, correctness- and skip-gated in CI, but not yet validated on
+NVIDIA hardware — treat it as experimental until measured numbers
+replace this sentence.
+
 **The `metal` feature** runs large `f32` products (Metal has no
 `f64`) on the GPU through the crate's own simdgroup-matrix kernels —
 no MPS, no vendor library — compiled from source at first use, with
@@ -105,8 +118,8 @@ library degrades to slow, never to wrong.
 ## Routing
 
 Backends form a compile-time chain tried in declaration order —
-`Accelerate`, then `Metal`, then `Simd` — and each may decline any
-task: below
+`Accelerate`, then `Metal`, then `Cuda`, then `Simd` — and each may
+decline any task: below
 its threshold, outside its stride mapping, beyond its integer
 range, or with its device gone. Whatever the whole chain declines
 lands on the built-in paths, so every task computes correctly in
@@ -138,10 +151,12 @@ backend build drops `forbid` but keeps a crate-wide
 `#![deny(unsafe_code)]`, with exactly one scoped `allow` per
 backend module — `unsafe` outside them stays a compile error, and
 what is inside is the FFI boundary itself: cblas and vForce calls
-with their safety arguments written out, the Metal encode path, and
-the two `matrixmultiply` call sites. `accelerate` adds no crates;
-`metal` adds the `objc2` binding family on macOS targets only;
-`simd` adds `matrixmultiply` and its single helper crate.
+with their safety arguments written out, the Metal encode path, the
+two `matrixmultiply` call sites, and the cuda module's dlopen and
+call boundary. `accelerate` adds no crates; `metal` adds the
+`objc2` binding family on macOS targets only; `simd` adds
+`matrixmultiply` and its single helper crate; `cuda` adds
+`libloading` on Linux targets only.
 
 ## The seam, for payload authors
 
