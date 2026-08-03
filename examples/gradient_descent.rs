@@ -11,6 +11,7 @@
 
 use rayon::prelude::*;
 
+use malevich::{Frame, Line, Plot};
 use poorgrad::Network;
 
 fn main() {
@@ -64,15 +65,18 @@ fn main() {
     let loss_symbol = loss.symbol();
 
     // Parallel training: each learning rate gets an O(1) fork of the same
-    // recorded graph and descends independently.
+    // recorded graph and descends independently, keeping its whole loss
+    // history for the chart.
     let learning_rates = [0.005, 0.02, 0.05];
-    let runs: Vec<(f64, f64, f64, f64)> = learning_rates
+    let runs: Vec<(f64, Vec<f64>, f64, f64)> = learning_rates
         .par_iter()
         .map(|&learning_rate| {
             let mut network = network.clone();
+            let mut losses = Vec::with_capacity(501);
             for _ in 0..500 {
                 let loss = network.resolve(loss_symbol);
                 let evaluation = network.forward();
+                losses.push(*evaluation.of(loss));
                 let gradients = evaluation.backward(loss);
                 network = network.update(&gradients, |parameter, gradient| {
                     parameter - learning_rate * gradient
@@ -80,17 +84,30 @@ fn main() {
             }
             let loss = network.resolve(loss_symbol);
             let evaluation = network.forward();
-            let final_loss = *evaluation.of(loss);
+            losses.push(*evaluation.of(loss));
             let w = network.resolve(w_symbol);
             let b = network.resolve(b_symbol);
             let w = w.payload().expect("parameters carry payloads");
             let b = b.payload().expect("parameters carry payloads");
-            (learning_rate, final_loss, w, b)
+            (learning_rate, losses, w, b)
         })
         .collect();
 
     println!("parallel training on forks (target: w = 2, b = 1):");
-    for (learning_rate, final_loss, w, b) in runs {
+    for (learning_rate, losses, w, b) in &runs {
+        let final_loss = losses.last().expect("every run records its final loss");
         println!("  lr = {learning_rate:5.3}: loss = {final_loss:.6}, w = {w:.3}, b = {b:.3}");
     }
+
+    // The same three descents as curves: on a log scale a constant
+    // convergence rate is a straight line, so the slope is the rate.
+    let mut plot = Plot::new()
+        .title("gradient descent per learning rate")
+        .x_label("step")
+        .y_label("loss")
+        .log_y();
+    for (learning_rate, losses, ..) in &runs {
+        plot = plot.layer(Line::y(&losses[..]).label(format!("lr = {learning_rate}")));
+    }
+    println!("{}", plot.render(&Frame::detect()));
 }

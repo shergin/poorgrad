@@ -13,10 +13,12 @@
 //!
 //! Run with: `cargo run --release --example makemore_mlp`
 
+mod chart;
 mod corpus;
 
 use poorgrad::{Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
 
+use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
 
 /// How many characters of history the model sees before predicting the
@@ -121,6 +123,7 @@ fn main() {
     let slow = Tensor::new([], [0.01]);
     let mut network = network;
     let mut window_loss = 0.0;
+    let mut losses = Vec::new();
     for step in 0..5000 {
         let start = (step * BATCH_LEN) % (samples.len() - BATCH_LEN);
         let batch = &samples[start..start + BATCH_LEN];
@@ -142,6 +145,7 @@ fn main() {
             ),
         ]);
         let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        losses.push(batch_loss);
         if step == 0 {
             println!(
                 "step 0: minibatch loss = {batch_loss:.4} (a uniform model costs ln 27 ~ 3.30)"
@@ -166,6 +170,7 @@ fn main() {
 
     assert_eq!(network.len(), recorded_nodes);
     println!("the tape held {recorded_nodes} nodes through every step");
+    println!("{}", loss_chart("mlp training", &losses));
 
     println!("sampled names:");
     let mut state: u64 = 7;

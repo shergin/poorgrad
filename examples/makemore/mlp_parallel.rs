@@ -14,6 +14,7 @@
 //!
 //! Run with: `cargo run --release --example makemore_mlp_parallel`
 
+mod chart;
 mod corpus;
 
 use std::time::Instant;
@@ -22,6 +23,7 @@ use rayon::prelude::*;
 
 use poorgrad::{Gradients, Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
+use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
 
 /// How many characters of history the model sees before predicting the
@@ -123,6 +125,7 @@ fn main() {
     let slow = Tensor::new([], [0.01]);
     let mut network = network;
     let mut window_loss = 0.0;
+    let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..5000 {
         let start = (step * batch_len) % (samples.len() - batch_len);
@@ -162,6 +165,7 @@ fn main() {
         let gradients = tree_sum(shard_gradients)
             .map(|gradient| gradient.clone() * shard_inverse.broadcast_like(gradient));
 
+        losses.push(batch_loss);
         if step == 0 {
             println!(
                 "step 0: minibatch loss = {batch_loss:.4} (a uniform model costs ln 27 ~ 3.30)"
@@ -189,6 +193,7 @@ fn main() {
 
     assert_eq!(network.len(), recorded_nodes);
     println!("the tape held {recorded_nodes} nodes through every step");
+    println!("{}", loss_chart("mlp (data parallel) training", &losses));
 
     println!("sampled names:");
     let mut state: u64 = 7;

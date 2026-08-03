@@ -9,14 +9,18 @@
 //! visits — the differentiable mirror of bigram counting. Minibatches
 //! arrive as per-run feeds, so the tape never grows during training,
 //! and sampling reads the trained table through the composite
-//! `softmax`.
+//! `softmax`. The run charts its loss curve against the bigram limit
+//! and the learned transition matrix as a heatmap.
 //!
 //! Run with: `cargo run --release --example makemore_bigram`
 
+mod chart;
 mod corpus;
 
+use malevich::{Cells, Frame, Plot, Scale};
 use poorgrad::{Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
+use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
 
 /// How many bigram pairs each training step feeds.
@@ -58,6 +62,7 @@ fn main() {
     // limit on this corpus is about `2.45`.
     let learning_rate = Tensor::new([], [10.0]);
     let mut network = network;
+    let mut losses = Vec::new();
     for step in 0..1000 {
         let start = (step * BATCH_LEN) % (samples.len() - BATCH_LEN);
         let batch = &samples[start..start + BATCH_LEN];
@@ -75,11 +80,10 @@ fn main() {
                 Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
             ),
         ]);
+        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        losses.push(batch_loss);
         if step % 100 == 0 {
-            println!(
-                "step {step:4}: minibatch loss = {:.4}",
-                evaluation.of(loss_value).to_vec()[0]
-            );
+            println!("step {step:4}: minibatch loss = {batch_loss:.4}");
         }
         let gradients = evaluation.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
@@ -89,6 +93,7 @@ fn main() {
 
     assert_eq!(network.len(), recorded_nodes);
     println!("the tape held {recorded_nodes} nodes through every step");
+    println!("{}", loss_chart("bigram training", &losses));
 
     // The trained logits exponentiate into transition probabilities
     // through the composite softmax: one more recorded expression.
@@ -99,6 +104,26 @@ fn main() {
         .as_slice()
         .expect("a computed softmax is contiguous")
         .to_vec();
+
+    // The trained table as a picture — the differentiable mirror of the
+    // classic makemore count matrix. Cell extents shift by half a cell
+    // so each cell centers on its token's band index, and the frame
+    // grows to give every one of the 27 rows its own terminal row.
+    let span = (-0.5, VOCABULARY_LEN as f64 - 0.5);
+    let letters = (0..VOCABULARY_LEN).map(|token| String::from(from_token(token)));
+    let mut frame = Frame::detect();
+    frame.height = VOCABULARY_LEN + 6;
+    println!(
+        "{}",
+        Plot::new()
+            .layer(Cells::matrix(VOCABULARY_LEN, &probabilities[..]).extents(span, span))
+            .colorbar()
+            .x_scale(Scale::bands(letters))
+            .title("bigram transition probabilities")
+            .x_label("next token")
+            .y_label("current token")
+            .render(&frame)
+    );
 
     println!("sampled names:");
     let mut state: u64 = 7;
