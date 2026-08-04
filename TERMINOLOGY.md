@@ -263,13 +263,28 @@ inferred; the target-sliced run's evaluated set is this idea's
 first, implicit form.
 
 **Liveness (buffer).** Which run buffers a plan still needs at each
-step: a slot whose last consumer has run, and which is outside the
-keep-set, is released immediately behind a non-allocating
+step: a slot whose last consumer has run, and which nothing later
+can read, is released immediately behind a non-allocating
 placeholder, so a run's peak memory follows the widest genuine
-dependency window instead of the whole tape. Forward-only plans free
-aggressively; training plans retain every closure value, because
-derivative rules read operand payloads and outputs — finer
-retention awaits a per-operation contract.
+dependency window instead of the whole tape. Forward-only plans keep
+only the keep-set; training plans additionally keep what the
+retention contract names.
+
+**Retention (contract).** Which payload *values* each operation's
+derivative rule reads when it runs: per-operand flags and an output
+flag, declared beside every `backward` (`Mul` reads both operands,
+`Tanh` its own output, `Gather` its selection's indices, the view
+family nothing at all — shape-only reads need no retention, because
+freed slots hold shape-correct placeholders). It gives a training
+plan its memory *floor*: the view chains, padded copies, and
+pure-arithmetic intermediates are releasable with gradients still
+exact to the bit, which the tests prove by forcing the releases.
+Training runs report the floor rather than executing it — per-step
+mid-run freeing measured as a peak-RSS regression under the system
+allocator, so cashing the floor in is rematerialization's job —
+while forward-only plans execute their releases, where the win is
+measured. Keeping a rule and its retention in step is part of
+changing either.
 
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across

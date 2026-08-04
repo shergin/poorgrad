@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// A value raised to the power of another, elementwise, with operands
 /// `[base, exponent]`.
@@ -20,6 +20,15 @@ impl Powf {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads both operands and its own output.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [true, true],
+            output: true,
+        }
     }
 
     /// Infers the shape of the result, which both operands must share.

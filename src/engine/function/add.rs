@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Differentiable, Shape};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// The sum of two values, with operands `[left, right]`.
 ///
@@ -15,6 +15,12 @@ impl Add {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads no payloads: both cotangents are the gradient itself.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the shape of the result, which both operands must share.

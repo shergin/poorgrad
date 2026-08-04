@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// A window of `len` elements from `start` along one axis of a value.
 ///
@@ -20,6 +20,12 @@ impl Narrow {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads its operand for shape only, which a placeholder answers.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the result shape: the operand's shape with `axis` restricted

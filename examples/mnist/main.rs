@@ -197,6 +197,13 @@ fn main() {
     // what backward reads; the probe plan frees as it goes.
     let training_plan = network.compile_training(loss_symbol, []);
     let probe_plan = network.compile([probe_logits_symbol], []);
+    for line in training_plan
+        .describe()
+        .lines()
+        .filter(|line| line.starts_with("plan:") || line.starts_with("live volume:"))
+    {
+        println!("training {line}");
+    }
     for line in probe_plan
         .describe()
         .lines()

@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// A reshape of a value to a new shape of the same volume.
 ///
@@ -18,6 +18,12 @@ impl Reshape {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads its operand for shape only, which a placeholder answers.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the result shape: the requested shape, which must match the

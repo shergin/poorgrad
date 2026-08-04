@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Differentiable, Shape};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// The negation of a value.
 ///
@@ -15,6 +15,12 @@ impl Neg {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads no payloads.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the shape of the result: the operand's shape.

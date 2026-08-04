@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// The explicit repetition of a payload along one named axis of a
 /// reference value's shape, with operands `[operand, like]`.
@@ -21,6 +21,12 @@ impl BroadcastAlong {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads no payloads: the cotangent sums back along the axis.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the shape of the result: the reference's shape, reachable

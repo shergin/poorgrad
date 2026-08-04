@@ -2,7 +2,7 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// A permutation of a value's axes: axis `i` of the result takes axis
 /// `order[i]` of the operand.
@@ -18,6 +18,12 @@ impl Permute {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads no payloads: the cotangent permutes back.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the result shape: the operand's axes reordered by `order`,

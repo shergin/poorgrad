@@ -191,3 +191,116 @@ fn describe_reports_the_liveness_story() {
     assert!(description.contains("kept"));
     assert!(description.contains("peak"));
 }
+
+#[test]
+fn training_liveness_matches_the_interpreter_on_a_convnet() {
+    // The real consumer motif: conv, relu, pool, flatten, dense,
+    // cross-entropy. Retention keeps what the derivative rules read
+    // and frees the view chains and padded copies; the proof is
+    // bitwise agreement of loss and every parameter gradient.
+    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+
+    let network = Network::new();
+    let input = network.leaf(Tensor::new(
+        [2, 1, 4, 4],
+        (0..32).map(|v| (v as f64) / 16.0 - 1.0).collect::<Vec<_>>(),
+    ));
+    let weights = network.parameter(Tensor::new(
+        [2, 1, 3, 3],
+        (0..18)
+            .map(|v| (v as f64) / 32.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let bias = network.parameter(Tensor::new([2], [0.1, -0.1]));
+    let head = network.parameter(Tensor::new(
+        [8, 3],
+        (0..24)
+            .map(|v| (v as f64) / 48.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let targets = network.leaf(Tensor::selection([1, 2], 3, 1.0));
+
+    let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
+    let logits = pooled.reshape([2, 8]).matmul(head);
+    let loss = cross_entropy(logits, targets);
+
+    let mut plan = network.compile_training(loss.symbol(), []);
+    // The retention analysis must license releases here: the conv view
+    // chains and output permutes are all shape-only.
+    assert!(plan.describe().contains("releasable after"));
+    assert!(plan.describe().contains("retention floor"));
+    // Force the analysis to execute (training runs hold everything by
+    // default after the allocator measurements): gradients must stay
+    // bit-identical even with every licensed release performed — the
+    // guarantee rematerialization will later build on.
+    plan.frees = plan.releases.clone();
+
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+
+    let planned_gradients = planned.backward(loss);
+    let interpreted_gradients = interpreted.backward(loss);
+    for parameter in [weights, bias, head] {
+        assert_eq!(
+            planned_gradients.of(parameter).to_vec(),
+            interpreted_gradients.of(parameter).to_vec()
+        );
+    }
+}
+
+#[test]
+fn training_liveness_matches_the_interpreter_on_every_value_reader() {
+    // One scalar soup exercising every retention class: mul, tanh,
+    // exp, ln, sqrt, powf, div, relu, maximum, with fan-out so freed
+    // and retained slots interleave.
+    let network = Network::new();
+    let w = network.parameter(0.7_f64);
+    let x = network.leaf(1.3_f64);
+
+    let product = w * x;
+    let squashed = product.tanh();
+    let grown = squashed.exp();
+    let logged = grown.ln();
+    let rooted = grown.sqrt();
+    let raised = product.powf(x);
+    let divided = grown / product;
+    let rectified = product.relu();
+    let larger = product.maximum(x);
+    let loss =
+        (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
+
+    let plan = network.compile_training(loss.symbol(), []);
+    let planned = plan.forward(&network, no_feeds());
+    let interpreted = network.forward();
+
+    assert_eq!(*planned.of(loss), *interpreted.of(loss));
+    assert_eq!(
+        *planned.backward(loss).of(w),
+        *interpreted.backward(loss).of(w)
+    );
+}
+
+#[test]
+fn training_liveness_retains_the_gather_selection() {
+    // The scatter in gather's backward reads the selection payload
+    // itself; freeing it would panic, not merely corrupt. Bitwise
+    // agreement proves retention kept it.
+    let network = Network::new();
+    let table = network.parameter(Tensor::new(
+        [4, 2],
+        (0..8).map(|v| v as f64 * 0.5).collect::<Vec<_>>(),
+    ));
+    let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
+    let loss = table.gather(selection).sum();
+
+    let plan = network.compile_training(loss.symbol(), []);
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+    assert_eq!(
+        planned.backward(loss).of(table).to_vec(),
+        interpreted.backward(loss).of(table).to_vec()
+    );
+}

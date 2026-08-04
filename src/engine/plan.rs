@@ -47,13 +47,21 @@ pub struct Plan<Data> {
     /// even when liveness happens to retain it, so the contract does
     /// not depend on the optimizer's choices.
     readable: Vec<bool>,
-    /// Per node, the slots this node is the last consumer of and which
-    /// may therefore be freed right after it computes. Empty for
-    /// training plans, which retain everything `backward` might read.
+    /// Per node, the slots whose last reader this node is — outside
+    /// the keep-set and, for training plans, outside the retention
+    /// contract. This is the *analysis*: the memory floor and the
+    /// rematerialization frontier.
+    releases: Vec<SmallVec<[usize; 2]>>,
+    /// Per node, the releases a run actually executes. Forward-only
+    /// plans execute every release (the measured win); training plans
+    /// execute none — per-step mid-run freeing measured as an RSS
+    /// regression under the system allocator (fragmentation), so the
+    /// training analysis is reported by `describe` and awaits
+    /// rematerialization or arena reuse to be cashed in.
     frees: Vec<SmallVec<[usize; 2]>>,
     /// Whether evaluations of this plan may differentiate: training
-    /// plans retain every closure value, forward-only plans free
-    /// buffers that `backward` would need.
+    /// plans keep everything `backward` reads (the retention
+    /// contract), forward-only plans free those buffers too.
     training: bool,
 }
 
@@ -90,32 +98,71 @@ impl<Data: Differentiable> Plan<Data> {
             .map(|index| tape.shape(super::ValueId(index)))
             .collect();
 
-        // Forward-only liveness: a slot may be freed by its highest
-        // consumer inside the closure, unless the caller may read it.
-        let mut frees: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
-        if !training {
-            let mut last_consumer: Vec<Option<usize>> = vec![None; length];
+        // Liveness: a slot may be freed by its highest consumer inside
+        // the closure once nothing later can read its value — neither
+        // the caller (the readable set) nor, in a training plan, any
+        // derivative rule. Retention names exactly the payloads whose
+        // values `backward` reads; shape-only readers are safe because
+        // freed slots keep shape-correct placeholders.
+        let mut required = readable.clone();
+        if training {
             for index in 0..length {
                 if !wanted[index] {
                     continue;
+                }
+                let function = snapshot
+                    .functions
+                    .get(index)
+                    .expect("snapshot cannot shrink");
+                let retention = function.retains();
+                if retention.output {
+                    required[index] = true;
                 }
                 let links = snapshot
                     .operands
                     .get(index)
                     .expect("snapshot cannot shrink");
-                for link in links.as_slice() {
-                    last_consumer[link.index()] = Some(index);
-                }
-            }
-            for slot in 0..length {
-                if !wanted[slot] || readable[slot] {
-                    continue;
-                }
-                if let Some(consumer) = last_consumer[slot] {
-                    frees[consumer].push(slot);
+                for (position, link) in links.as_slice().iter().enumerate() {
+                    if retention.operands[position] {
+                        required[link.index()] = true;
+                    }
                 }
             }
         }
+        let mut releases: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
+        let mut last_consumer: Vec<Option<usize>> = vec![None; length];
+        for index in 0..length {
+            if !wanted[index] {
+                continue;
+            }
+            let links = snapshot
+                .operands
+                .get(index)
+                .expect("snapshot cannot shrink");
+            for link in links.as_slice() {
+                last_consumer[link.index()] = Some(index);
+            }
+        }
+        for slot in 0..length {
+            if !wanted[slot] || required[slot] {
+                continue;
+            }
+            if let Some(consumer) = last_consumer[slot] {
+                releases[consumer].push(slot);
+            }
+        }
+        // Forward-only plans cash the analysis in immediately: bulk,
+        // occasional runs measured a clear RSS win. Training plans do
+        // not: per-step mid-run freeing measured an RSS *regression*
+        // under the system allocator (macOS, 2026-08-03: MNIST 743 MiB
+        // retain-all vs 1.16-1.23 GiB freeing, bit-identical results),
+        // so their analysis stays a report until rematerialization or
+        // arena reuse can realize it.
+        let frees = if training {
+            vec![SmallVec::new(); length]
+        } else {
+            releases.clone()
+        };
 
         Self {
             lineage: tape.lineage(),
@@ -125,6 +172,7 @@ impl<Data: Differentiable> Plan<Data> {
             shapes,
             wanted,
             readable,
+            releases,
             frees,
             training,
         }
@@ -140,32 +188,17 @@ impl<Data: Differentiable> Plan<Data> {
         self.len() == 0
     }
 
-    /// Renders the plan's decisions: one line per evaluated node with
-    /// its operation, shape, and liveness, then the summary — node and
-    /// readable counts, and the static live-volume story (in elements;
-    /// constants and placeholders count as zero, so the figures are the
-    /// plan's own accounting, not allocator truth).
-    pub fn describe(&self) -> String {
-        use std::fmt::Write;
-
-        let mut lines = String::new();
-        let mut freed_after: Vec<Option<usize>> = vec![None; self.len()];
-        for (index, frees) in self.frees.iter().enumerate() {
-            for &slot in frees {
-                freed_after[slot] = Some(index);
-            }
-        }
-
+    /// Simulates a run's live volume under `releases`, returning the
+    /// peak and where it occurs, plus the retain-all total.
+    fn live_story(&self, releases: &[SmallVec<[usize; 2]>]) -> (usize, usize, usize) {
         let mut live: usize = 0;
         let mut peak: usize = 0;
         let mut peak_at: usize = 0;
         let mut total: usize = 0;
-        let mut evaluated: usize = 0;
         for index in 0..self.len() {
             if !self.wanted[index] {
                 continue;
             }
-            evaluated += 1;
             let volume = self.shapes[index].volume();
             total += volume;
             live += volume;
@@ -173,12 +206,51 @@ impl<Data: Differentiable> Plan<Data> {
                 peak = live;
                 peak_at = index;
             }
+            for &slot in &releases[index] {
+                live -= self.shapes[slot].volume();
+            }
+        }
+        (peak, peak_at, total)
+    }
+
+    /// Renders the plan's decisions: one line per evaluated node with
+    /// its operation, shape, and liveness, then the summary — node and
+    /// readable counts, and the static live-volume story (in elements;
+    /// constants and placeholders count as zero, so the figures are the
+    /// plan's own accounting, not allocator truth). Training plans
+    /// report their retention *floor* — what the analysis could
+    /// release — alongside what a run actually holds.
+    pub fn describe(&self) -> String {
+        use std::fmt::Write;
+
+        let mut lines = String::new();
+        let mut released_after: Vec<Option<usize>> = vec![None; self.len()];
+        for (index, releases) in self.releases.iter().enumerate() {
+            for &slot in releases {
+                released_after[slot] = Some(index);
+            }
+        }
+        // Executed frees match the analysis for forward-only plans;
+        // training plans hold everything, so the wording distinguishes
+        // what happens from what the analysis licenses.
+        let release_word = if self.training {
+            "releasable after"
+        } else {
+            "freed after"
+        };
+
+        let mut evaluated: usize = 0;
+        for index in 0..self.len() {
+            if !self.wanted[index] {
+                continue;
+            }
+            evaluated += 1;
             let function = self.functions.get(index).expect("plan columns are fixed");
             let liveness = if self.readable[index] {
                 "kept".to_string()
             } else {
-                match freed_after[index] {
-                    Some(consumer) => format!("freed after {consumer}"),
+                match released_after[index] {
+                    Some(consumer) => format!("{release_word} {consumer}"),
                     None => "retained".to_string(),
                 }
             };
@@ -189,12 +261,9 @@ impl<Data: Differentiable> Plan<Data> {
                 self.shapes[index].to_string(),
             )
             .expect("writing to a string cannot fail");
-            for &slot in &self.frees[index] {
-                live -= self.shapes[slot].volume();
-            }
         }
         let mode = if self.training {
-            "training (retain all)"
+            "training (retention analysis)"
         } else {
             "forward-only"
         };
@@ -205,11 +274,20 @@ impl<Data: Differentiable> Plan<Data> {
             self.readable.iter().filter(|&&readable| readable).count(),
         )
         .expect("writing to a string cannot fail");
-        writeln!(
-            lines,
-            "live volume: peak {peak} elements at node {peak_at}, retain-all {total}",
-        )
-        .expect("writing to a string cannot fail");
+        let (floor, floor_at, total) = self.live_story(&self.releases);
+        if self.training {
+            writeln!(
+                lines,
+                "live volume: retain-all {total}, retention floor {floor} elements at node {floor_at}",
+            )
+            .expect("writing to a string cannot fail");
+        } else {
+            writeln!(
+                lines,
+                "live volume: peak {floor} elements at node {floor_at}, retain-all {total}",
+            )
+            .expect("writing to a string cannot fail");
+        }
         lines
     }
 }
@@ -320,8 +398,14 @@ impl<Data: Differentiable> Network<Data> {
     }
 
     /// Compiles a training [`Plan`] whose evaluations differentiate
-    /// `loss` exactly: every closure value is retained for `backward`,
-    /// and `loss` joins the readable set alongside `keep`.
+    /// `loss` exactly. The retention contract (which values each
+    /// derivative rule reads) computes the plan's memory *floor* —
+    /// everything but the retained values and the keep-set could be
+    /// released — and `describe` reports it, but training runs hold
+    /// every closure value: executing per-step releases measured as an
+    /// RSS regression under the system allocator, so cashing the floor
+    /// in awaits rematerialization or arena reuse. `loss` joins the
+    /// readable set alongside `keep`.
     ///
     /// # Panics
     /// Panics if `loss` or a keep does not resolve in this generation.

@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// An embedding-style row gather with operands `[table, selection]`:
 /// `output[i] = table[selection[i]]`, where the selection is a one-hot
@@ -20,6 +20,15 @@ impl Gather {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads the selection payload (the scatter needs its indices); the table contributes shape only.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [false, true],
+            output: false,
+        }
     }
 
     /// Infers the result shape `[count, ...table.shape[1..]]`, requiring the

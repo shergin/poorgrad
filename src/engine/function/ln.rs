@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// The natural logarithm of a value.
 ///
@@ -17,6 +17,15 @@ impl Ln {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads its operand: the derivative divides by it.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [true, false],
+            output: false,
+        }
     }
 
     /// Infers the shape of the result: the operand's shape.

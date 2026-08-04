@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// The transposition of a value.
 ///
@@ -15,6 +15,12 @@ impl Transpose {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads no payloads: the cotangent transposes back.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention::NOTHING
     }
 
     /// Infers the shape of the result: the operand's axes reversed.

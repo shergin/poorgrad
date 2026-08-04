@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// The square root of a value.
 ///
@@ -18,6 +18,15 @@ impl Sqrt {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads its own output: the derivative divides by twice it.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [false, false],
+            output: true,
+        }
     }
 
     /// Infers the shape of the result: the operand's shape.

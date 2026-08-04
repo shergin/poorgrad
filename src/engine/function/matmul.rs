@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// The matrix product of two values, with operands `[left, right]`.
 ///
@@ -15,6 +15,15 @@ impl MatMul {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads both operand payloads for the transposed products.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [true, true],
+            output: false,
+        }
     }
 
     /// Infers the shape `[m, n]` of a `[m, k] . [k, n]` product.

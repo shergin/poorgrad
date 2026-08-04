@@ -9,6 +9,19 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The retention contract: every operation now declares which
+  payload values its derivative rule reads (both operands for
+  `mul` and `matmul`, its own output for `tanh` and `log_softmax`,
+  the selection for `gather`, nothing for the view family — whose
+  backwards read shapes that placeholders answer). Training plans
+  use it to compute and report their memory *floor* — on the MNIST
+  convnet, 3.3M of 12.3M elements (3.75x) is releasable with
+  gradients still bit-identical, which tests prove by forcing the
+  releases. Training runs do not execute the releases by default:
+  A/B measurement showed per-step mid-run freeing regresses peak
+  RSS under the system allocator (fragmentation), so the floor
+  awaits rematerialization or arena reuse — while forward-only
+  plans keep executing theirs, where the win is measured.
 - `Plan`, `Network::compile`, and `Network::compile_training`: the
   first lowering tier. A plan is a compiled execution schedule —
   dead-node elimination against declared targets, a keep-set that

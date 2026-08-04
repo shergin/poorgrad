@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, unary};
+use super::{Cotangents, Operation, Retention, unary};
 
 /// The rectified linear unit: the elementwise maximum of a value and
 /// zero.
@@ -21,6 +21,15 @@ impl Relu {
     /// Returns the arity: one operand.
     pub(crate) fn arity(&self) -> usize {
         1
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads its operand to mask the active positions.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [true, false],
+            output: false,
+        }
     }
 
     /// Infers the shape of the result: the operand's shape.

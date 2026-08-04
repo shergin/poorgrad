@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, binary};
+use super::{Cotangents, Operation, Retention, binary};
 
 /// The elementwise maximum of two values, with operands `[left, right]`.
 ///
@@ -17,6 +17,15 @@ impl Maximum {
     /// Returns the arity: two operands.
     pub(crate) fn arity(&self) -> usize {
         2
+    }
+
+    /// Returns the retention of the derivative rule below.
+    /// It reads both operands to mask the winners.
+    pub(crate) fn retains(&self) -> Retention {
+        Retention {
+            operands: [true, true],
+            output: false,
+        }
     }
 
     /// Infers the shape of the result, which both operands must share.
