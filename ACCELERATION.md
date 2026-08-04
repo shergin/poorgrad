@@ -31,6 +31,37 @@ anchor and the fallback for exotic layouts. End to end, the same
 training source spans a factor of four thousand with zero source
 changes.
 
+## End to end
+
+The ladder above is pure matrix benchmarks; these are whole
+training steps — forward, backward, and update — from the two
+convolutional examples on the same machine (`mnist` on its compact
+plan, `cifar10` on its default plan, batch 64, `f32`):
+
+| build | `mnist` ms/step | `cifar10` ms/step |
+|---|---|---|
+| default | 106.8 | 391.5 |
+| `--features accelerate` | 82.0 (-23%) | 261.9 (-33%) |
+| `--features metal` | 107.7 (0%) | 313.3 (-20%) |
+
+Three readings worth their lines:
+
+- The wins track the products' share of the whole step (about a
+  third, by profile), not the ladder's headline ratios: convolution
+  GEMMs at these sizes are skinny (im2col columns 27 to 288), and
+  everything that is not a product — window fills, folds, pads —
+  runs the built-in paths regardless of features.
+- Metal's flat `mnist` row is its thresholds working, not failing:
+  every training product there sits below the flop bar, the chain
+  declines each one, and the run reproduces the default build bit
+  for bit. `cifar10`'s larger products clear the bar. The Metal
+  runtime does hold device state either way — a few hundred
+  megabytes of resident overhead on the small example.
+- The accuracies (98.20-98.22%, 65.20-65.47%) differ across builds
+  by design: each backend sums in its own order, so each build
+  follows its own, equally valid training trajectory — the
+  determinism boundary documented below, demonstrated end to end.
+
 ## Turning it on
 
 ```sh
