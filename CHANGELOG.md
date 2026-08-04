@@ -21,6 +21,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   is `narrow`'s adjoint (each is the other's gradient rule);
   `unfold` records the sliding-window view with `fold` as its
   gradient, so overlapping windows accumulate correctly.
+- `conv2d` and the `Conv2d` layer: 2-D convolution as a composed
+  formula — padding, two unfolds, and an im2col reshape feeding one
+  rank-2 `matmul` on the accelerated GEMM path — with stride and
+  symmetric zero padding, torch-shaped weights, and the gradient
+  from the chain rule alone.
+- `max_pool` and `average_pool`: spatial pooling over the same
+  window view; the maximum folds with the left-biased binary
+  `maximum`, so ties route deterministically to the earliest
+  window position.
 
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —

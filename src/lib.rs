@@ -60,7 +60,7 @@ mod payload;
 pub use backend::{Backend, BackendUnavailable};
 pub use engine::{Evaluation, Field, Gradients, Network, Symbol, Value};
 pub use neural::{
-    Activation, BatchNorm, Layer, LayerNorm, Mlp, Neuron, Normalization, RmsNorm, cross_entropy,
-    init,
+    Activation, BatchNorm, Conv2d, Layer, LayerNorm, Mlp, Neuron, Normalization, RmsNorm,
+    average_pool, conv2d, cross_entropy, init, max_pool,
 };
 pub use payload::{Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial};

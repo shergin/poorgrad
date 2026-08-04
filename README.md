@@ -237,6 +237,17 @@ crate root keeps the public API flat. From tape to training:
   plus affine, or root-mean-square re-scaling alone), so there are no
   running estimates and one recorded expression serves training and
   inference alike.
+- [`Conv2d`](src/neural/convolution.rs) — 2-D convolution over
+  `[batch, channels, height, width]` values as a composed formula, not
+  a primitive: padding, two sliding-window `unfold`s, and an im2col
+  reshape route the whole computation into one rank-2 `matmul` on the
+  accelerated GEMM path, and the gradient falls out of the chain rule.
+  Torch-shaped `[filters, channels, kh, kw]` weights; stride and
+  symmetric zero padding.
+- [`max_pool` and `average_pool`](src/neural/pooling.rs) — spatial
+  pooling over the same window view: the average via `mean_along`, the
+  maximum via a left-biased `maximum` fold whose ties route
+  deterministically to the earliest window position.
 - [`cross_entropy`](src/neural/loss.rs) — the classification loss as a
   composed formula over the fused, numerically stable `Value::log_softmax`:
   the mean negative log-likelihood of one-hot (or soft) targets, fed per

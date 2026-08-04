@@ -503,6 +503,36 @@ is no batch coupling, no running estimates, and no training/inference
 split: one recorded expression serves both. The transformer stack's
 norm. In poorgrad: [`LayerNorm`](src/neural/layer_norm.rs).
 
+**Convolution (Conv2d).** Sliding a stack of learned kernels across a
+`[batch, channels, height, width]` value: each output position is the
+kernel-weighted sum of a window of the (zero-padded) input, plus a
+per-filter bias. In poorgrad it is a composed formula, not a
+primitive: [`conv2d`](src/neural/convolution.rs) records `pad`, two
+single-axis `unfold`s, an axis permutation, the im2col reshape (the
+formula's one deliberate copy, which turns the whole computation into
+a single rank-2 `matmul` on the GEMM seam), and the bias broadcast —
+so the backward is pure chain rule through those operations' adjoints.
+The [`Conv2d`](src/neural/convolution.rs) facade holds torch-shaped
+`[filters, channels, kernel_height, kernel_width]` weights and records
+the weight-side `permute` + `reshape` to the GEMM operand per run.
+
+**Im2col.** Rewriting convolution as a matrix product by laying every
+kernel-sized window out as a matrix row (`[windows, channels *
+kernel]`), so one GEMM computes all positions and filters at once. The
+classic eager-framework trade: a `kernel`-fold memory copy buys the
+fastest kernel the machine has. In poorgrad the copy is not special
+code — it is `reshape`'s ordinary view-else-copy fallback firing on
+the overlapping window view.
+
+**Pooling.** Downsampling a spatial value by reducing each window to
+one number. In poorgrad both pools compose over the same `unfold`
+windows: [`average_pool`](src/neural/pooling.rs) reduces with
+`mean_along`, and [`max_pool`](src/neural/pooling.rs) folds the
+window lanes with the binary `maximum`, left-biased, so a tied
+maximum routes its gradient to the earliest window position —
+deterministic, like every tie rule in the crate. No dedicated reduce
+opcode exists for pooling; a fused `MaxAlong` stays a deferred option.
+
 **RMS normalization (RMSNorm).** Layer normalization without the
 centering and the shift: every sample is divided by the root mean
 square of its features, `sqrt(mean(x^2) + epsilon)`, and scaled per
