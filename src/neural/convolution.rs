@@ -8,8 +8,7 @@
 //! deliberate cost is the im2col materialization: reshaping the
 //! overlapping window view to a matrix copies it (the reshape fallback
 //! fires), which converts the whole convolution into a single
-//! contiguous GEMM on the accelerated seam. Design notes:
-//! `notes/convolution-design.md`.
+//! contiguous GEMM on the accelerated seam.
 
 use std::marker::PhantomData;
 

@@ -4,8 +4,7 @@
 //! and need no reduce opcode of their own: the average is
 //! `mean_along`, and the maximum is a left-biased fold of the existing
 //! binary `maximum` over the window lanes, so ties route their
-//! gradient deterministically to the earliest lane. Design notes:
-//! `notes/convolution-design.md`, section 4.
+//! gradient deterministically to the earliest lane.
 
 use crate::{Tensorial, Value};
 
