@@ -177,19 +177,6 @@ pub(crate) fn composed_windowed_patches<Data: Tensorial>(
     ]))
 }
 
-/// Composes the unfused window-product formula: the composed patches
-/// followed by the matrix product.
-pub(crate) fn composed_windowed_product<Data: Tensorial>(
-    input: &Data,
-    kernel: &Data,
-    kernel_height: usize,
-    kernel_width: usize,
-    stride: usize,
-    padding: usize,
-) -> Data {
-    composed_windowed_patches(input, kernel_height, kernel_width, stride, padding).matmul(kernel)
-}
-
 impl Tensorial for f32 {
     /// Scalar payloads use identity semantics: the patches are the
     /// value itself, so the product degenerates to the scalar matmul.

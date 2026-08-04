@@ -970,7 +970,7 @@ fn elementwise_lanes_agree_bitwise() {
 fn windowed_product_matches_the_composed_reference() {
     // The fast patch fill against the composed formula, bitwise, over
     // padding and stride variants.
-    use crate::payload::tensorial::composed_windowed_product;
+    use crate::payload::tensorial::composed_windowed_patches;
 
     let input = Tensor::new(
         [2, 3, 5, 4],
@@ -984,7 +984,7 @@ fn windowed_product_matches_the_composed_reference() {
     );
     for (stride, padding) in [(1, 0), (1, 1), (2, 0), (2, 1)] {
         let fast = input.windowed_product(&kernel, 2, 2, stride, padding);
-        let composed = composed_windowed_product(&input, &kernel, 2, 2, stride, padding);
+        let composed = composed_windowed_patches(&input, 2, 2, stride, padding).matmul(&kernel);
         assert_eq!(
             fast.shape(),
             composed.shape(),
@@ -1000,7 +1000,7 @@ fn windowed_product_matches_the_composed_reference() {
 
 #[test]
 fn windowed_product_falls_back_for_strided_views() {
-    use crate::payload::tensorial::composed_windowed_product;
+    use crate::payload::tensorial::composed_windowed_patches;
 
     let base = Tensor::new(
         [2, 3, 5, 6],
@@ -1017,6 +1017,6 @@ fn windowed_product_falls_back_for_strided_views() {
         (0..54).map(|v| (v as f64) * 0.07 - 1.5).collect::<Vec<_>>(),
     );
     let fast = view.windowed_product(&kernel, 3, 3, 1, 1);
-    let composed = composed_windowed_product(&view, &kernel, 3, 3, 1, 1);
+    let composed = composed_windowed_patches(&view, 3, 3, 1, 1).matmul(&kernel);
     assert_eq!(fast.to_vec(), composed.to_vec());
 }
