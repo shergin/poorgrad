@@ -101,6 +101,10 @@ name = "makemore_embedding_map"
 path = "examples/makemore/embedding_map.rs"
 
 [[example]]
+name = "makemore_mlp_batchnorm"
+path = "examples/makemore/mlp_batchnorm.rs"
+
+[[example]]
 name = "mnist"
 path = "examples/mnist/main.rs"
 

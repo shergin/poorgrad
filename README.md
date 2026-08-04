@@ -321,6 +321,15 @@ term and its mapping to the Rust types — is collected in
   and the forward-only probe plan's liveness keeps the 500-image
   accuracy probe's footprint flat. Downloads and caches the binary
   archive on first run: `cargo run --release --example cifar10`.
+- [`makemore_mlp_batchnorm`](examples/makemore/mlp_batchnorm.rs) —
+  makemore's third act: the same MLP with the hidden preactivation
+  batch-normalized before the tanh (and its bias retired in favor of
+  the learned shift). The training plan keeps the batch statistics
+  readable so the loop can fold them into running estimates — plain
+  payloads, fed to the single-row sampling twin per draw. At this
+  shallow depth the final loss matches the plain MLP, as it should:
+  the norm buys robustness to initialization, not loss:
+  `cargo run --release --example makemore_mlp_batchnorm`.
 - [`makemore_mlp_parallel`](examples/makemore/mlp_parallel.rs) — the
   same model trained data parallel: each step fans its minibatch out as
   eight shard-sized runs on the shared network and averages the

@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `makemore_mlp_batchnorm` example — makemore's third act: the
+  character MLP with its hidden preactivation batch-normalized
+  before the tanh, the hidden bias retired in favor of the learned
+  shift, running statistics maintained in the loop from the batch
+  statistics the training plan's keep-set exposes, and the
+  single-row sampling twin fed those estimates per draw. Final
+  loss matches the plain MLP at this shallow depth, as the lecture
+  it follows predicts: the norm buys robustness, not loss.
 - Window-GEMM fusion, the plan tier's first pattern: plans
   recognize the canonical im2col chain feeding a `matmul` and
   execute it as one `Tensorial::windowed_product` call, never
