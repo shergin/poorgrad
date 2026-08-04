@@ -40,9 +40,13 @@ choice:
   differentiating its own target.
 - **The tape is the spec; a `Plan` is the schedule.** `compile` lowers
   the recorded graph into an execution plan — dead-node elimination
-  against declared targets, buffer liveness that frees intermediates
-  after their last consumer — whose runs are bit-identical to the
-  interpreter's and survive every generation of a training run.
+  against declared targets, buffer liveness, pattern fusion (the
+  canonical im2col chain of a convolution executes as one window-GEMM
+  call, never materialized), and opt-in rematerialization that trades
+  backward time for memory — whose runs are bit-identical to the
+  interpreter's and survive every generation of a training run. Every
+  optimization's default was set by measurement, and where a trade
+  did not always win it is a labeled option, never silent behavior.
   `Plan::describe()` prints the decisions, and the naive interpreter
   ships forever as the executable oracle every plan is tested against.
 - **Values are `Copy`.** A `Value` is a borrow of its network plus a
@@ -193,6 +197,16 @@ crate root keeps the public API flat. From tape to training:
   and `backward`, read back with the same `Value` proxies that built the
   graph. Runs never mutate the network, so any number of them can execute
   concurrently.
+- [`Plan`](src/engine/plan.rs) — a compiled execution schedule derived
+  from the tape by `Network::compile` (forward-only: aggressive buffer
+  liveness, refuses `backward`), `compile_training` (retain-all, exact
+  gradients), or `compile_training_compact` (drops large intermediates
+  and rematerializes them during `backward`, bit-exactly). Plans fuse
+  recognized patterns — matching is structural, so hand-written
+  compositions fuse identically to facade-recorded ones, and keep-set
+  values are fusion barriers — and `describe()` renders the whole
+  schedule: liveness spans, drop sets, fusion groups, and the static
+  live-volume story.
 - [`Field`](src/engine/field.rs) — a value-aligned buffer tied to a network
   lineage rather than one generation, with elementwise algebra (`+`,
   `scale`, `zip`, `map`). `Gradients` is an alias for it: the field one
@@ -209,8 +223,11 @@ crate root keeps the public API flat. From tape to training:
   the same graph, evaluation, differentiation, and update APIs as a scalar
   network. The
   [`Tensorial`](src/payload/tensorial.rs) trait provides `matmul`,
-  `transpose`, the reductions `sum` and `sum_along`, and the explicit
-  broadcasts `broadcast_like` and `broadcast_along` (scalars implement
+  `transpose`, the reductions `sum` and `sum_along`, the explicit
+  broadcasts `broadcast_like` and `broadcast_along`, the window pair
+  `unfold`/`fold` behind convolution and pooling, and the fused
+  `windowed_product` the plan tier's window-GEMM pattern executes
+  (scalars implement
   scalar semantics for the same trait bound). Broadcasting
   is explicit by design: a single value spread across a named
   reference's shape, or a payload repeated along one named axis — never
