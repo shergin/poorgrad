@@ -286,6 +286,19 @@ while forward-only plans execute their releases, where the win is
 measured. Keeping a rule and its retention in step is part of
 changing either.
 
+**Rematerialization.** Trading compute for memory, opt-in through
+`compile_training_compact`: the plan *drops* its large
+intermediates — freed right after their last forward consumer — and
+`backward` recomputes them on demand from retained neighbors,
+memoized and evicted the moment their own node has been processed. The drop set is size-thresholded to the
+allocator's page-returning class (the measured lesson: many small
+mid-run frees fragment, few large ones return), sources are never
+dropped so recompute always bottoms out, and resolution is
+retention-guided so shape-only rules never trigger a recompute.
+Recompute re-runs the same pure rules on the same payloads, so plan
+gradients stay bit-identical to the interpreter's — asserted by
+forced full-remat differential tests.
+
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across
 runs (averaging data-parallel gradients) and carried across generations

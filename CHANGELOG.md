@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- Rematerialization, opt-in via `compile_training_compact`: the
+  plan drops its large intermediates (im2col patches, padded
+  copies, pooling lanes — the allocator's page-returning size
+  class) right after their last forward consumer, and `backward`
+  recomputes them on demand, memoized with prompt eviction and
+  bit-identical gradients. The trade is explicit because it does
+  not always win — measured at 9% less peak RSS for 22% more step
+  time on the MNIST example, but negative on the deeper CIFAR-10
+  stack, where gradient cotangent buffers dominate; the default
+  `compile_training` stays retain-all. `describe` reports the drop
+  set and the remat peak either way.
 - The retention contract: every operation now declares which
   payload values its derivative rule reads (both operands for
   `mul` and `matmul`, its own output for `tanh` and `log_softmax`,

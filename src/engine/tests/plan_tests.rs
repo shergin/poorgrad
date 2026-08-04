@@ -304,3 +304,132 @@ fn training_liveness_retains_the_gather_selection() {
         interpreted.backward(loss).of(table).to_vec()
     );
 }
+
+#[test]
+fn remat_matches_the_interpreter_on_a_convnet() {
+    // A tiny threshold forces deep drop chains through the conv motif;
+    // backward rematerializes them and must agree with the interpreter
+    // bit for bit on the loss and every parameter gradient.
+    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+
+    let network = Network::new();
+    let input = network.leaf(Tensor::new(
+        [2, 1, 4, 4],
+        (0..32).map(|v| (v as f64) / 16.0 - 1.0).collect::<Vec<_>>(),
+    ));
+    let weights = network.parameter(Tensor::new(
+        [2, 1, 3, 3],
+        (0..18)
+            .map(|v| (v as f64) / 32.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let bias = network.parameter(Tensor::new([2], [0.1, -0.1]));
+    let head = network.parameter(Tensor::new(
+        [8, 3],
+        (0..24)
+            .map(|v| (v as f64) / 48.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let targets = network.leaf(Tensor::selection([1, 2], 3, 1.0));
+
+    let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
+    let logits = pooled.reshape([2, 8]).matmul(head);
+    let loss = cross_entropy(logits, targets);
+
+    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 4);
+    let description = plan.describe();
+    assert!(description.contains("(remat)"));
+    assert!(description.contains("remat drops"));
+
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+
+    let planned_gradients = planned.backward(loss);
+    let interpreted_gradients = interpreted.backward(loss);
+    for parameter in [weights, bias, head] {
+        assert_eq!(
+            planned_gradients.of(parameter).to_vec(),
+            interpreted_gradients.of(parameter).to_vec()
+        );
+    }
+}
+
+#[test]
+fn full_remat_matches_the_interpreter_on_every_value_reader() {
+    // Threshold 1 drops every non-source, non-readable value: the
+    // whole backward runs on rematerialized payloads across every
+    // retention class.
+    let network = Network::new();
+    let w = network.parameter(0.7_f64);
+    let x = network.leaf(1.3_f64);
+
+    let product = w * x;
+    let squashed = product.tanh();
+    let grown = squashed.exp();
+    let logged = grown.ln();
+    let rooted = grown.sqrt();
+    let raised = product.powf(x);
+    let divided = grown / product;
+    let rectified = product.relu();
+    let larger = product.maximum(x);
+    let loss =
+        (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
+
+    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 1);
+    let planned = plan.forward(&network, no_feeds());
+    let interpreted = network.forward();
+
+    assert_eq!(*planned.of(loss), *interpreted.of(loss));
+    assert_eq!(
+        *planned.backward(loss).of(w),
+        *interpreted.backward(loss).of(w)
+    );
+}
+
+#[test]
+fn remat_never_drops_the_gather_selection() {
+    // Sources are never dropped, so the selection an input carries
+    // stays genuine for the backward scatter even under full remat.
+    let network = Network::new();
+    let table = network.parameter(Tensor::new(
+        [4, 2],
+        (0..8).map(|v| v as f64 * 0.5).collect::<Vec<_>>(),
+    ));
+    let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
+    let loss = table.gather(selection).sum();
+
+    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 1);
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+    assert_eq!(
+        planned.backward(loss).of(table).to_vec(),
+        interpreted.backward(loss).of(table).to_vec()
+    );
+}
+
+#[test]
+fn compact_training_drops_where_the_default_retains() {
+    // A value crossing the remat size class: the default plan keeps
+    // it, the compact plan drops and rematerializes it.
+    let network = Network::new();
+    let w = network.parameter(Tensor::filled([300, 300], 0.5_f64));
+    let x = network.leaf(Tensor::filled([300, 300], 2.0));
+    let big = w * x;
+    let loss = (big * big).sum();
+
+    let default = network.compile_training(loss.symbol(), []);
+    let compact = network.compile_training_compact(loss.symbol(), []);
+    assert!(default.describe().contains("remat drops 0 slots"));
+    assert!(!compact.describe().contains("remat drops 0 slots"));
+    assert!(compact.describe().contains("(remat)"));
+
+    let planned = compact.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(
+        planned.backward(loss).of(w).to_vec(),
+        interpreted.backward(loss).of(w).to_vec()
+    );
+}

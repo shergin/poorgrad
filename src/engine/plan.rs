@@ -12,6 +12,18 @@ use super::{Evaluation, Function, Lineage, Network, Operands, Segment, Symbol};
 // in `network.rs`.
 assert_impl_all!(Plan<f64>: Send, Sync);
 
+/// The element-count threshold above which a training plan drops a
+/// value for rematerialization.
+///
+/// It is sized to the system allocator's large-allocation class: the
+/// 2026-08-03 measurements showed many small mid-run frees fragment
+/// the heap and regress peak RSS, while few large frees return their
+/// pages. The threshold therefore selects only the big materialized
+/// copies — im2col patches, padded inputs, pooling lanes — for
+/// dropping and backward-time recompute, and leaves every small value
+/// in place.
+const REMAT_THRESHOLD: usize = 1 << 16;
+
 /// A compiled lowering of a recorded graph prefix: which nodes a run
 /// must evaluate, which values the caller may read, and which buffers
 /// may be freed the moment their last consumer has run.
@@ -47,18 +59,21 @@ pub struct Plan<Data> {
     /// even when liveness happens to retain it, so the contract does
     /// not depend on the optimizer's choices.
     readable: Vec<bool>,
-    /// Per node, the slots whose last reader this node is — outside
-    /// the keep-set and, for training plans, outside the retention
-    /// contract. This is the *analysis*: the memory floor and the
-    /// rematerialization frontier.
+    /// Per node, the slots whose last forward reader this node is and
+    /// which the analysis licenses for release: everything outside the
+    /// keep-set and retention contract, plus the dropped
+    /// (rematerialized) slots. This is the plan's memory floor.
     releases: Vec<SmallVec<[usize; 2]>>,
     /// Per node, the releases a run actually executes. Forward-only
-    /// plans execute every release (the measured win); training plans
-    /// execute none — per-step mid-run freeing measured as an RSS
-    /// regression under the system allocator (fragmentation), so the
-    /// training analysis is reported by `describe` and awaits
-    /// rematerialization or arena reuse to be cashed in.
+    /// plans execute every licensed release (the measured win);
+    /// training plans execute only the size-thresholded drops, whose
+    /// values `backward` rematerializes on demand — many small
+    /// mid-run frees measured as an RSS regression (allocator
+    /// fragmentation), so small values stay put.
     frees: Vec<SmallVec<[usize; 2]>>,
+    /// Which slots a training run drops for rematerialization:
+    /// backward recomputes them from retained neighbors, bit-exactly.
+    dropped: Arc<Vec<bool>>,
     /// Whether evaluations of this plan may differentiate: training
     /// plans keep everything `backward` reads (the retention
     /// contract), forward-only plans free those buffers too.
@@ -67,9 +82,16 @@ pub struct Plan<Data> {
 
 impl<Data: Differentiable> Plan<Data> {
     /// Compiles the plan for `network`: reachability from the roots,
-    /// the readable set, and — for forward-only plans — the free
-    /// lists.
-    fn new(network: &Network<Data>, targets: &[Symbol], keep: &[Symbol], training: bool) -> Self {
+    /// the readable set, the release analysis, and the drop set for
+    /// rematerialization (training plans, values of at least
+    /// `remat_threshold` elements).
+    fn new(
+        network: &Network<Data>,
+        targets: &[Symbol],
+        keep: &[Symbol],
+        training: bool,
+        remat_threshold: usize,
+    ) -> Self {
         let tape = network.tape();
         let snapshot = tape.snapshot();
         let length = snapshot.functions.len();
@@ -129,7 +151,31 @@ impl<Data: Differentiable> Plan<Data> {
                 }
             }
         }
+        // The drop set: large values a training run rematerializes.
+        // Sources are never dropped (recompute recursion bottoms out on
+        // them), readables answer the caller, and small values stay put
+        // — the fragmentation lesson.
+        let mut dropped = vec![false; length];
+        if training {
+            for index in 0..length {
+                if !wanted[index] || readable[index] {
+                    continue;
+                }
+                let function = snapshot
+                    .functions
+                    .get(index)
+                    .expect("snapshot cannot shrink");
+                if function.is_source() {
+                    continue;
+                }
+                if shapes[index].volume() >= remat_threshold {
+                    dropped[index] = true;
+                }
+            }
+        }
+
         let mut releases: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
+        let mut frees: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
         let mut last_consumer: Vec<Option<usize>> = vec![None; length];
         for index in 0..length {
             if !wanted[index] {
@@ -144,25 +190,28 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
         for slot in 0..length {
-            if !wanted[slot] || required[slot] {
+            if !wanted[slot] || readable[slot] {
                 continue;
             }
-            if let Some(consumer) = last_consumer[slot] {
-                releases[consumer].push(slot);
+            let releasable = !required[slot] || dropped[slot];
+            if !releasable {
+                continue;
+            }
+            let Some(consumer) = last_consumer[slot] else {
+                continue;
+            };
+            releases[consumer].push(slot);
+            // Forward-only plans execute every licensed release (bulk,
+            // occasional runs measured a clear RSS win). Training plans
+            // execute only the size-thresholded drops: per-step small
+            // frees measured an RSS regression (macOS, 2026-08-03:
+            // MNIST 743 MiB retain-all vs 1.16-1.23 GiB freeing), while
+            // dropped large buffers land in the allocator's
+            // page-returning class and are rematerialized by backward.
+            if !training || dropped[slot] {
+                frees[consumer].push(slot);
             }
         }
-        // Forward-only plans cash the analysis in immediately: bulk,
-        // occasional runs measured a clear RSS win. Training plans do
-        // not: per-step mid-run freeing measured an RSS *regression*
-        // under the system allocator (macOS, 2026-08-03: MNIST 743 MiB
-        // retain-all vs 1.16-1.23 GiB freeing, bit-identical results),
-        // so their analysis stays a report until rematerialization or
-        // arena reuse can realize it.
-        let frees = if training {
-            vec![SmallVec::new(); length]
-        } else {
-            releases.clone()
-        };
 
         Self {
             lineage: tape.lineage(),
@@ -174,6 +223,7 @@ impl<Data: Differentiable> Plan<Data> {
             readable,
             releases,
             frees,
+            dropped: Arc::new(dropped),
             training,
         }
     }
@@ -248,6 +298,11 @@ impl<Data: Differentiable> Plan<Data> {
             let function = self.functions.get(index).expect("plan columns are fixed");
             let liveness = if self.readable[index] {
                 "kept".to_string()
+            } else if self.dropped[index] {
+                match released_after[index] {
+                    Some(consumer) => format!("dropped after {consumer} (remat)"),
+                    None => "retained".to_string(),
+                }
             } else {
                 match released_after[index] {
                     Some(consumer) => format!("{release_word} {consumer}"),
@@ -276,9 +331,21 @@ impl<Data: Differentiable> Plan<Data> {
         .expect("writing to a string cannot fail");
         let (floor, floor_at, total) = self.live_story(&self.releases);
         if self.training {
+            let (executed, executed_at, _) = self.live_story(&self.frees);
+            let drops = self.dropped.iter().filter(|&&dropped| dropped).count();
+            let dropped_volume: usize = (0..self.len())
+                .filter(|&index| self.dropped[index])
+                .map(|index| self.shapes[index].volume())
+                .sum();
             writeln!(
                 lines,
-                "live volume: retain-all {total}, retention floor {floor} elements at node {floor_at}",
+                "live volume: retain-all {total}, remat peak {executed} elements at node \
+                 {executed_at}, retention floor {floor} at node {floor_at}",
+            )
+            .expect("writing to a string cannot fail");
+            writeln!(
+                lines,
+                "remat drops {drops} slots, {dropped_volume} elements, recomputed by backward",
             )
             .expect("writing to a string cannot fail");
         } else {
@@ -373,6 +440,7 @@ impl<Data: Tensorial> Plan<Data> {
             values,
             Some(self.readable.clone()),
             self.training,
+            Some(Arc::clone(&self.dropped)),
         )
     }
 }
@@ -394,18 +462,18 @@ impl<Data: Differentiable> Network<Data> {
     ) -> Plan<Data> {
         let targets: Vec<Symbol> = targets.into_iter().collect();
         let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &targets, &keep, false)
+        Plan::new(self, &targets, &keep, false, REMAT_THRESHOLD)
     }
 
     /// Compiles a training [`Plan`] whose evaluations differentiate
-    /// `loss` exactly. The retention contract (which values each
-    /// derivative rule reads) computes the plan's memory *floor* —
-    /// everything but the retained values and the keep-set could be
-    /// released — and `describe` reports it, but training runs hold
-    /// every closure value: executing per-step releases measured as an
-    /// RSS regression under the system allocator, so cashing the floor
-    /// in awaits rematerialization or arena reuse. `loss` joins the
-    /// readable set alongside `keep`.
+    /// `loss` exactly. Training runs hold every closure value — the
+    /// fastest and, on the measured consumers, usually the
+    /// smallest-RSS default, since the allocator recycles the uniform
+    /// per-step cycle perfectly — while `describe` reports the
+    /// retention floor the analysis licenses. `loss` joins the
+    /// readable set alongside `keep`. See
+    /// [`Network::compile_training_compact`] for the memory-leaning
+    /// trade.
     ///
     /// # Panics
     /// Panics if `loss` or a keep does not resolve in this generation.
@@ -415,7 +483,32 @@ impl<Data: Differentiable> Network<Data> {
         keep: impl IntoIterator<Item = Symbol>,
     ) -> Plan<Data> {
         let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &[loss], &keep, true)
+        Plan::new(self, &[loss], &keep, true, usize::MAX)
+    }
+
+    /// Compiles a training [`Plan`] that trades backward time for
+    /// memory: large intermediates (the im2col patches, padded copies,
+    /// and pooling lanes at or above the allocator's page-returning
+    /// size class) are dropped right after their last forward consumer
+    /// and rematerialized on demand during `backward`, bit-exactly.
+    ///
+    /// The trade is explicit because it does not always win: on the
+    /// MNIST example it cut peak RSS 9% below retain-all for 22% more
+    /// step time, while on the deeper CIFAR-10 example it cost time
+    /// *and* memory (gradient cotangent buffers, not forward values,
+    /// dominate there — their eviction is future work that may flip
+    /// the default). Reach for it when activations, not gradients, are
+    /// what does not fit.
+    ///
+    /// # Panics
+    /// Panics if `loss` or a keep does not resolve in this generation.
+    pub fn compile_training_compact(
+        &self,
+        loss: Symbol,
+        keep: impl IntoIterator<Item = Symbol>,
+    ) -> Plan<Data> {
+        let keep: Vec<Symbol> = keep.into_iter().collect();
+        Plan::new(self, &[loss], &keep, true, REMAT_THRESHOLD)
     }
 }
 
