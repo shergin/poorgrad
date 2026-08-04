@@ -298,6 +298,12 @@ term and its mapping to the Rust types — is collected in
   make it train bit-identically to `makemore_mlp`, demonstrating that
   the facade is packaging, not different math:
   `cargo run --release --example makemore_mlp_facade`.
+- [`mnist`](examples/mnist/main.rs) — a LeNet-style convolutional
+  network on MNIST: two conv/relu/max-pool stages and a dense head,
+  every convolution one im2col + GEMM under the hood. Downloads and
+  caches the four IDX files on first run, then reports test accuracy,
+  per-step time, and the loss chart:
+  `cargo run --release --example mnist`.
 - [`makemore_mlp_parallel`](examples/makemore/mlp_parallel.rs) — the
   same model trained data parallel: each step fans its minibatch out as
   eight shard-sized runs on the shared network and averages the

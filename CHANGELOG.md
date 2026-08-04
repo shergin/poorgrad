@@ -30,6 +30,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   window view; the maximum folds with the left-biased binary
   `maximum`, so ties route deterministically to the earliest
   window position.
+- The `mnist` example: a LeNet-style convolutional network trained
+  on MNIST through the composed convolution and pooling formulas —
+  the convolution rung's first consumer. It downloads and caches
+  the IDX files on first run and reports test accuracy, per-step
+  time, and the loss chart.
 
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —

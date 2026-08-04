@@ -100,6 +100,10 @@ path = "examples/makemore/mlp_parallel.rs"
 name = "makemore_embedding_map"
 path = "examples/makemore/embedding_map.rs"
 
+[[example]]
+name = "mnist"
+path = "examples/mnist/main.rs"
+
 [[bench]]
 name = "record"
 harness = false
