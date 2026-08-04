@@ -23,6 +23,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   forward-only probe whose liveness cuts its live volume 6.8x
   (28M of 191M elements) and the process peak RSS by 31%, with
   byte-identical output.
+- The `cifar10` example: a three-stage VGG-style convnet on real
+  32x32 color images, the plan tier's pressure consumer. One
+  training plan serves all 2000 generations, and the forward-only
+  probe plan holds the 500-image accuracy probe's live volume 8.8x
+  below retain-all. Reaches 65.2% test accuracy (chance is 10%)
+  in about 13 CPU minutes at 392 ms/step; downloads and caches the
+  binary archive on first run.
 
 - `Tensorial::unfold` and `Tensorial::fold`: single-axis sliding
   windows (torch semantics, with a dilation parameter) as a strided

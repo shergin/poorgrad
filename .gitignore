@@ -3,3 +3,4 @@
 # Personal planning notes, not part of the published crate.
 /ROADMAP.md
 examples/mnist/data/
+examples/cifar10/data/

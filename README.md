@@ -315,6 +315,12 @@ term and its mapping to the Rust types — is collected in
   caches the four IDX files on first run, then reports test accuracy,
   per-step time, and the loss chart:
   `cargo run --release --example mnist`.
+- [`cifar10`](examples/cifar10/main.rs) — a three-stage VGG-style
+  convnet on real 32x32 color images, the plan tier's pressure
+  consumer: a training plan compiled once serves every generation,
+  and the forward-only probe plan's liveness keeps the 500-image
+  accuracy probe's footprint flat. Downloads and caches the binary
+  archive on first run: `cargo run --release --example cifar10`.
 - [`makemore_mlp_parallel`](examples/makemore/mlp_parallel.rs) — the
   same model trained data parallel: each step fans its minibatch out as
   eight shard-sized runs on the shared network and averages the
