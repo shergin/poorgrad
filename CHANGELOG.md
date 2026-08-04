@@ -18,7 +18,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   generation (compile once, train forever), and refuse `backward`
   unless compiled for training, so freed buffers can never leak
   into gradients. `Plan::describe` renders the schedule: per-node
-  liveness spans and the static peak-live-volume estimate.
+  liveness spans and the static peak-live-volume estimate. The
+  MNIST example runs on plans — compile-once training plus a
+  forward-only probe whose liveness cuts its live volume 6.8x
+  (28M of 191M elements) and the process peak RSS by 31%, with
+  byte-identical output.
 
 - `Tensorial::unfold` and `Tensorial::fold`: single-axis sliding
   windows (torch semantics, with a dilation parameter) as a strided

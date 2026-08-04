@@ -21,8 +21,8 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Activation, Conv2d, Layer, Network, Shape, Symbol, Tensor, Tensorial, Value, cross_entropy,
-    init, max_pool,
+    Activation, Conv2d, Layer, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
+    cross_entropy, init, max_pool,
 };
 
 use chart::loss_chart;
@@ -127,9 +127,10 @@ fn batch_payloads(split: &Split, indices: &[usize]) -> (Tensor<f32>, Tensor<f32>
 }
 
 /// Counts correct predictions over `PROBE_LEN` test images from `start`,
-/// one probe-tape run.
+/// one probe-plan run.
 fn probe_correct(
     network: &Network<Tensor<f32>>,
+    probe_plan: &Plan<Tensor<f32>>,
     images_symbol: Symbol,
     logits_symbol: Symbol,
     test: &Split,
@@ -137,9 +138,9 @@ fn probe_correct(
 ) -> usize {
     let indices: Vec<usize> = (start..start + PROBE_LEN).collect();
     let (images, _) = batch_payloads(test, &indices);
-    // Slice the run to the probe expression: the training twin on the
-    // same tape is skipped entirely.
-    let evaluation = network.forward_for([logits_symbol], [(images_symbol, images)]);
+    // The forward-only plan skips the training twin and frees every
+    // probe intermediate right after its last consumer.
+    let evaluation = probe_plan.forward(network, [(images_symbol, images)]);
     let logits = evaluation.of(network.resolve(logits_symbol)).to_vec();
     let mut correct = 0;
     for (row, &index) in logits.chunks(CLASSES).zip(&indices) {
@@ -192,6 +193,18 @@ fn main() {
     let recorded_nodes = network.len();
     println!("recorded {recorded_nodes} nodes for both expressions");
 
+    // Compile once, run every generation: the training plan retains
+    // what backward reads; the probe plan frees as it goes.
+    let training_plan = network.compile_training(loss_symbol, []);
+    let probe_plan = network.compile([probe_logits_symbol], []);
+    for line in probe_plan
+        .describe()
+        .lines()
+        .filter(|line| line.starts_with("plan:") || line.starts_with("live volume:"))
+    {
+        println!("probe {line}");
+    }
+
     let mut order: Vec<usize> = (0..train.len()).collect();
     let mut shuffle_state: u64 = 5;
     shuffle(&mut order, &mut shuffle_state);
@@ -207,10 +220,10 @@ fn main() {
         let (batch_images, batch_targets) = batch_payloads(&train, batch);
 
         let loss_value = network.resolve(loss_symbol);
-        // Slice the run to the loss: the probe expression on the same
-        // tape is skipped during training.
-        let evaluation = network.forward_for(
-            [loss_symbol],
+        // The training plan skips the probe expression and survives
+        // every generation: compiled once, run per step.
+        let evaluation = training_plan.forward(
+            &network,
             [
                 (images_symbol, batch_images),
                 (targets_symbol, batch_targets),
@@ -230,8 +243,14 @@ fn main() {
         });
 
         if (step + 1) % 250 == 0 {
-            let correct =
-                probe_correct(&network, probe_images_symbol, probe_logits_symbol, &test, 0);
+            let correct = probe_correct(
+                &network,
+                &probe_plan,
+                probe_images_symbol,
+                probe_logits_symbol,
+                &test,
+                0,
+            );
             println!(
                 "step {:4}: minibatch loss = {batch_loss:.4}, probe accuracy = {:.1}%",
                 step + 1,
@@ -250,6 +269,7 @@ fn main() {
         .map(|chunk| {
             probe_correct(
                 &network,
+                &probe_plan,
                 probe_images_symbol,
                 probe_logits_symbol,
                 &test,
