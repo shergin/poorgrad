@@ -411,3 +411,65 @@ fn backward_rejects_foreign_targets() {
     let foreign = second.leaf(2.0);
     first.forward().backward(foreign);
 }
+
+#[test]
+fn pad_places_the_window_and_narrows_the_gradient() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let padded = x.pad(1, 1, 4);
+    // Distinct weights make the narrowed-back gradient unambiguous.
+    let weights = network.leaf(Tensor::new(
+        [2, 4],
+        (1..=8).map(|v| v as f64).collect::<Vec<_>>(),
+    ));
+    let loss = (padded * weights).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(padded).to_vec(),
+        &[0.0, 1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 0.0]
+    );
+
+    let gradients = evaluation.backward(loss);
+    // The pad gradient is the weights with the zero lanes narrowed away.
+    assert_eq!(gradients.of(x).to_vec(), &[2.0, 3.0, 6.0, 7.0]);
+}
+
+#[test]
+fn unfold_slides_windows_and_folds_the_gradient() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new(
+        [8],
+        (1..=8).map(|v| v as f64).collect::<Vec<_>>(),
+    ));
+    let windows = x.unfold(0, 3, 2, 1);
+    let loss = windows.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(windows).to_vec(),
+        &[1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 5.0, 6.0, 7.0]
+    );
+
+    let gradients = evaluation.backward(loss);
+    // Summing all windows grades each position by its window coverage;
+    // position 7 is beyond the last window and receives zero.
+    assert_eq!(
+        gradients.of(x).to_vec(),
+        &[1.0, 1.0, 2.0, 1.0, 2.0, 1.0, 1.0, 0.0]
+    );
+}
+
+#[test]
+fn narrow_of_pad_roundtrips_the_value() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let roundtrip = x.pad(0, 2, 7).narrow(0, 2, 3);
+    let loss = roundtrip.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(roundtrip).to_vec(), &[1.0, 2.0, 3.0]);
+
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(x).to_vec(), &[1.0, 1.0, 1.0]);
+}

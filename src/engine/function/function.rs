@@ -5,8 +5,8 @@ use static_assertions::assert_impl_all;
 
 use super::{
     Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, LogSoftmax,
-    MatMul, Maximum, Mul, Narrow, Neg, Operation, Parameter, Permute, Powf, Relu, Reshape, Sqrt,
-    Sub, Sum, SumAlong, Tanh, Transpose,
+    MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute, Powf, Relu, Reshape,
+    Sqrt, Sub, Sum, SumAlong, Tanh, Transpose, Unfold,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -44,6 +44,8 @@ pub(crate) enum Function<Data> {
     Reshape(Reshape),
     Permute(Permute),
     Narrow(Narrow),
+    Pad(Pad),
+    Unfold(Unfold),
     Gather(Gather),
     LogSoftmax(LogSoftmax),
     Sqrt(Sqrt),
@@ -159,6 +161,27 @@ impl<Data> Function<Data> {
         Function::Narrow(Narrow { axis, start, len })
     }
 
+    /// Creates the single operand placed at `start ..` along `axis`
+    /// inside zeros of `full_extent`.
+    pub(crate) fn pad(axis: usize, start: usize, full_extent: usize) -> Self {
+        Function::Pad(Pad {
+            axis,
+            start,
+            full_extent,
+        })
+    }
+
+    /// Creates the sliding windows of the single operand along `axis`:
+    /// `size` elements every `dilation` steps, one window every `step`.
+    pub(crate) fn unfold(axis: usize, size: usize, step: usize, dilation: usize) -> Self {
+        Function::Unfold(Unfold {
+            axis,
+            size,
+            step,
+            dilation,
+        })
+    }
+
     /// Creates the row gather over the `[table, selection]` operands: the
     /// table's rows picked by the one-hot selection.
     pub(crate) fn gather() -> Self {
@@ -214,6 +237,8 @@ impl<Data> Function<Data> {
             Function::Reshape(reshape) => reshape.arity(),
             Function::Permute(permute) => permute.arity(),
             Function::Narrow(narrow) => narrow.arity(),
+            Function::Pad(pad) => pad.arity(),
+            Function::Unfold(unfold) => unfold.arity(),
             Function::Gather(gather) => gather.arity(),
             Function::LogSoftmax(log_softmax) => log_softmax.arity(),
             Function::Sqrt(sqrt) => sqrt.arity(),
@@ -257,6 +282,8 @@ impl<Data> Function<Data> {
             Function::Reshape(reshape) => reshape.infer_shape(operands),
             Function::Permute(permute) => permute.infer_shape(operands),
             Function::Narrow(narrow) => narrow.infer_shape(operands),
+            Function::Pad(pad) => pad.infer_shape(operands),
+            Function::Unfold(unfold) => unfold.infer_shape(operands),
             Function::Gather(gather) => gather.infer_shape(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.infer_shape(operands),
             Function::Sqrt(sqrt) => sqrt.infer_shape(operands),
@@ -302,6 +329,8 @@ impl<Data: Tensorial> Function<Data> {
             Function::Reshape(reshape) => reshape.forward(operands),
             Function::Permute(permute) => permute.forward(operands),
             Function::Narrow(narrow) => narrow.forward(operands),
+            Function::Pad(pad) => pad.forward(operands),
+            Function::Unfold(unfold) => unfold.forward(operands),
             Function::Gather(gather) => gather.forward(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.forward(operands),
             Function::Sqrt(sqrt) => sqrt.forward(operands),
@@ -343,6 +372,8 @@ impl<Data: Tensorial> Function<Data> {
             Function::Reshape(reshape) => reshape.backward(operands, output, gradient),
             Function::Permute(permute) => permute.backward(operands, output, gradient),
             Function::Narrow(narrow) => narrow.backward(operands, output, gradient),
+            Function::Pad(pad) => pad.backward(operands, output, gradient),
+            Function::Unfold(unfold) => unfold.backward(operands, output, gradient),
             Function::Gather(gather) => gather.backward(operands, output, gradient),
             Function::LogSoftmax(log_softmax) => log_softmax.backward(operands, output, gradient),
             Function::Sqrt(sqrt) => sqrt.backward(operands, output, gradient),

@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   folding is deterministic under any evaluation strategy. The
   substrate for convolution and pooling. Breaking for custom
   payload implementations, which must add both methods.
+- `Value::pad` and `Value::unfold`: the corresponding recorded
+  operations. `pad` places a value inside zeros along one axis and
+  is `narrow`'s adjoint (each is the other's gradient rule);
+  `unfold` records the sliding-window view with `fold` as its
+  gradient, so overlapping windows accumulate correctly.
 
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —

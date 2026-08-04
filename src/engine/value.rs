@@ -307,6 +307,33 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.apply(Function::narrow(axis, start, len), &[self.id])
     }
 
+    /// Records this value placed at `start ..` along `axis` inside zeros
+    /// whose `axis` has extent `full_extent`, on the same network, and
+    /// returns a proxy to it: the adjoint of [`Value::narrow`], with
+    /// `narrow` as its own gradient rule.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank or the window overflows or
+    /// exceeds `full_extent`.
+    pub fn pad(self, axis: usize, start: usize, full_extent: usize) -> Self {
+        self.apply(Function::pad(axis, start, full_extent), &[self.id])
+    }
+
+    /// Records the sliding windows of this value along `axis` on the
+    /// same network and returns a proxy to it: the axis becomes a
+    /// `(count, size)` pair where window `w` starts at `w * step` and
+    /// takes every `dilation`-th element. The forward is a strided view;
+    /// the gradient folds every window contribution back onto its
+    /// source position, so overlapping windows accumulate.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank, `size`, `step`, or `dilation` is
+    /// zero, or the dilated window span `dilation * (size - 1) + 1`
+    /// overflows or exceeds the axis extent.
+    pub fn unfold(self, axis: usize, size: usize, step: usize, dilation: usize) -> Self {
+        self.apply(Function::unfold(axis, size, step, dilation), &[self.id])
+    }
+
     /// Records the row gather of this value (the table) by `selection`, a
     /// one-hot `[count, vocab]` whose vocabulary matches the table's first
     /// axis: `output[i]` is the table row `selection` names for position

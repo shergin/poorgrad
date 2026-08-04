@@ -370,7 +370,11 @@ position summing, output-centrically and in window order, the window
 elements read from it — deterministic under any evaluation strategy.
 Two `unfold`s produce 2-D windows (torch semantics). In poorgrad:
 [`Tensorial::unfold`/`fold`](src/payload/tensorial.rs) over
-[`Layout::unfold`](src/payload/layout.rs).
+[`Layout::unfold`](src/payload/layout.rs), recorded by
+[`Value::unfold`](src/engine/value.rs) (with `fold` as its gradient
+rule, a payload method rather than an opcode until transposed
+convolution needs the forward direction); `Value::pad` records
+`narrow`'s adjoint the same way.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or
