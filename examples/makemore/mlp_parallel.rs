@@ -144,16 +144,21 @@ fn main() {
                 let shard_targets: Vec<usize> = rows.iter().map(|&(_, next)| next).collect();
 
                 let loss_value = network.resolve(loss_symbol);
-                let evaluation = network.forward_with([
-                    (
-                        contexts_symbol,
-                        Tensor::selection(shard_contexts, VOCABULARY_LEN, 1.0),
-                    ),
-                    (
-                        targets_symbol,
-                        Tensor::selection(shard_targets, VOCABULARY_LEN, 1.0),
-                    ),
-                ]);
+                // Slice the run to the loss: the sampling twin on the
+                // same tape is skipped during training.
+                let evaluation = network.forward_for(
+                    [loss_symbol],
+                    [
+                        (
+                            contexts_symbol,
+                            Tensor::selection(shard_contexts, VOCABULARY_LEN, 1.0),
+                        ),
+                        (
+                            targets_symbol,
+                            Tensor::selection(shard_targets, VOCABULARY_LEN, 1.0),
+                        ),
+                    ],
+                );
                 let shard_loss = evaluation.of(loss_value).to_vec()[0];
                 (shard_loss, evaluation.backward(loss_value))
             })
@@ -202,10 +207,13 @@ fn main() {
         let mut window = [0usize; CONTEXT_LEN];
         let mut name = String::new();
         loop {
-            let evaluation = network.forward_with([(
-                sample_context_symbol,
-                Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
-            )]);
+            let evaluation = network.forward_for(
+                [sample_probabilities_symbol],
+                [(
+                    sample_context_symbol,
+                    Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
+                )],
+            );
             let row = evaluation
                 .of(network.resolve(sample_probabilities_symbol))
                 .to_vec();

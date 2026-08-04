@@ -205,16 +205,20 @@ fn main() {
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward_with([
-            (
-                contexts_symbol,
-                Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
-            ),
-            (
-                targets_symbol,
-                Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
-            ),
-        ]);
+        // Slice the run to the loss it reads.
+        let evaluation = network.forward_for(
+            [loss_symbol],
+            [
+                (
+                    contexts_symbol,
+                    Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
+                ),
+                (
+                    targets_symbol,
+                    Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
+                ),
+            ],
+        );
         let batch_loss = evaluation.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         window_loss += batch_loss;

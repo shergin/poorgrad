@@ -73,16 +73,20 @@ fn main() {
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward_with([
-            (
-                contexts_symbol,
-                Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
-            ),
-            (
-                targets_symbol,
-                Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
-            ),
-        ]);
+        // Slice the run to the loss it reads.
+        let evaluation = network.forward_for(
+            [loss_symbol],
+            [
+                (
+                    contexts_symbol,
+                    Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
+                ),
+                (
+                    targets_symbol,
+                    Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
+                ),
+            ],
+        );
         let batch_loss = evaluation.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step % 100 == 0 {
@@ -107,7 +111,9 @@ fn main() {
     // The trained logits exponentiate into transition probabilities
     // through the composite softmax: one more recorded expression.
     let probabilities = network.resolve(table_symbol).softmax(1);
-    let evaluation = network.forward();
+    // Slice to the freshly recorded softmax: the training expression
+    // does not re-run just to render the table.
+    let evaluation = network.forward_for([probabilities.symbol()], std::iter::empty());
     let probabilities = evaluation
         .of(probabilities)
         .as_slice()

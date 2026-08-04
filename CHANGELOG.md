@@ -43,7 +43,9 @@ The format is based on [Keep a Changelog], and this project adheres to
   its true gradient, zero), and results are bit-identical to full
   runs. With the training and evaluation expressions sharing one
   tape, the MNIST example dropped from 517 to 95 ms per step
-  (5.4x) with an unchanged 98.22% test accuracy.
+  (5.4x) with an unchanged 98.22% test accuracy. Every example
+  loop now slices its runs the same way; the makemore family
+  reproduced byte-identical output after the switch.
 
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —
