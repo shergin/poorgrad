@@ -172,7 +172,11 @@ crate root keeps the public API flat. From tape to training:
   the next generation, rebuilding only the parameter store while sharing
   everything else. `input` declares a per-run input with a default
   payload; `forward_with` binds fed payloads to inputs for one run,
-  validated against their recorded shapes.
+  validated against their recorded shapes; `forward_for` additionally
+  slices the run to the ancestors of declared targets, so a tape
+  carrying several expressions (a training batch and an evaluation
+  twin) evaluates only the one the run is for — reads of skipped
+  values fail loudly rather than answer with a placeholder.
 - [`Symbol`](src/engine/symbol.rs) — a detached, `Copy` identifier for a value.
   `Network::resolve` turns it into a proxy in a compatible generation, while
   rejecting unrelated or divergent networks. Training loops keep symbols of

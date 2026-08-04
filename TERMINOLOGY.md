@@ -223,6 +223,21 @@ a `Field`, so it combines and carries optimizer state directly). Every
 position-indexed buffer — evaluations, gradients, fields — answers the same
 read-back accessor, `of(value)`.
 
+**Target-sliced run.** A forward run restricted to the ancestor
+closure of declared targets:
+[`Network::forward_for`](src/engine/network.rs) marks reachability
+over the operand links in one descending sweep and skips every node
+outside the closure, leaving an O(1), shape-correct zero placeholder
+(`counted(shape, 0)`) in each skipped slot. The placeholders keep
+`update` sound — a parameter outside the closure receives its true
+gradient, exactly zero — while reads stay loud: `Evaluation::of` and
+`Evaluation::backward` panic on a skipped value rather than answer
+with a placeholder. Observability is declared, never inferred — the
+same contract the plan-lowering path generalizes into the keep-set.
+With several expressions recorded on one tape (the training and
+evaluation twins of the examples), slicing to one expression's
+targets skips the other entirely.
+
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across
 runs (averaging data-parallel gradients) and carried across generations

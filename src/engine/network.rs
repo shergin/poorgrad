@@ -5,7 +5,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Evaluation, Field, Function, Symbol, Tape, Value};
+use super::{Evaluation, Field, Function, Symbol, Tape, Value, ValueId};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
@@ -188,6 +188,50 @@ impl<Data: Tensorial> Network<Data> {
         &self,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
     ) -> Evaluation<'_, Data> {
+        self.run(None, feeds)
+    }
+
+    /// Evaluates only the ancestors of `targets` — the target-sliced
+    /// run — with `feeds` bound to declared inputs for this run only.
+    ///
+    /// It is `forward_with` restricted to what the caller will read:
+    /// reachability over the operand links selects the targets'
+    /// ancestor closure, and every node outside it is skipped, its slot
+    /// holding an O(1) zero placeholder of the recorded shape. The
+    /// placeholders keep [`Network::update`] sound — a parameter
+    /// outside the closure receives its true gradient, zero — while
+    /// reads stay loud: [`Evaluation::of`] and [`Evaluation::backward`]
+    /// panic on a skipped value instead of answering with a
+    /// placeholder.
+    ///
+    /// With several expressions recorded on one tape (the training and
+    /// evaluation twins of the examples), slicing to one expression's
+    /// targets skips the other expression entirely — the first rung of
+    /// the plan-lowering ladder, applied without any plan object.
+    ///
+    /// # Panics
+    /// Panics if a target does not resolve in this generation, or as
+    /// `forward_with` panics for `feeds`.
+    pub fn forward_for(
+        &self,
+        targets: impl IntoIterator<Item = Symbol>,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Evaluation<'_, Data> {
+        let targets: Vec<ValueId> = targets
+            .into_iter()
+            .map(|symbol| self.resolve(symbol).id())
+            .collect();
+        self.run(Some(targets), feeds)
+    }
+
+    /// Runs the tape over an atomic snapshot: the shared body of
+    /// `forward_with` (every node) and `forward_for` (the targets'
+    /// ancestor closure).
+    fn run(
+        &self,
+        targets: Option<Vec<ValueId>>,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Evaluation<'_, Data> {
         let mut bindings = Vec::new();
         for (symbol, payload) in feeds {
             let value = self.resolve(symbol);
@@ -213,9 +257,42 @@ impl<Data: Tensorial> Network<Data> {
             }
             Arc::new(overlaid)
         };
+        // Reachability doubles the backward scan's trick in reverse:
+        // operands live below their consumers, so one descending sweep
+        // marks the whole ancestor closure.
+        let evaluated = targets.map(|targets| {
+            let mut wanted = vec![false; snapshot.functions.len()];
+            for target in targets {
+                wanted[target.index()] = true;
+            }
+            for index in (0..wanted.len()).rev() {
+                if !wanted[index] {
+                    continue;
+                }
+                let links = snapshot
+                    .operands
+                    .get(index)
+                    .expect("snapshot cannot shrink");
+                for link in links.as_slice() {
+                    wanted[link.index()] = true;
+                }
+            }
+            wanted
+        });
         let mut values = Vec::with_capacity(snapshot.functions.len());
-        for (function, links) in snapshot.functions.iter().zip(snapshot.operands.iter()) {
-            let value = {
+        for (index, (function, links)) in snapshot
+            .functions
+            .iter()
+            .zip(snapshot.operands.iter())
+            .enumerate()
+        {
+            let skipped = matches!(&evaluated, Some(wanted) if !wanted[index]);
+            let value = if skipped {
+                // A shape-correct, non-allocating zero: never read back
+                // (`of` checks the evaluated set), but shaped so that
+                // gradient buffers and `update` stay coherent.
+                Data::counted(self.tape.shape(ValueId(index)), 0)
+            } else {
                 let operands: SmallVec<[&Data; 2]> = links
                     .as_slice()
                     .iter()
@@ -231,6 +308,7 @@ impl<Data: Tensorial> Network<Data> {
             snapshot.operands,
             snapshot.chain,
             values,
+            evaluated,
         )
     }
 }

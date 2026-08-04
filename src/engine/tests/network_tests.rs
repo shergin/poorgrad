@@ -1,6 +1,6 @@
 use std::thread;
 
-use crate::Field;
+use crate::{Field, Tensor};
 
 use super::Network;
 
@@ -232,4 +232,92 @@ fn update_rejects_foreign_gradients() {
     let gradients = first.forward().backward(parameter);
     let second = Network::<f64>::new();
     second.update(&gradients, |parameter, _gradient| *parameter);
+}
+
+#[test]
+fn forward_for_evaluates_only_the_ancestor_closure() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [2.0_f64, 3.0]));
+    let wanted = (x * x).sum();
+    let unwanted = (x + x).sum();
+
+    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
+    assert_eq!(evaluation.of(wanted).to_vec(), &[13.0]);
+
+    // The skipped expression is differentiable from a full run, and the
+    // sliced gradients match the full ones exactly.
+    let sliced = evaluation.backward(wanted);
+    let full = network.forward().backward(wanted);
+    assert_eq!(sliced.of(x).to_vec(), full.of(x).to_vec());
+    let _ = unwanted;
+}
+
+#[test]
+#[should_panic(expected = "not evaluated by this target-sliced run")]
+fn sliced_reads_outside_the_closure_are_rejected() {
+    let network = Network::new();
+    let x = network.leaf(2.0_f64);
+    let wanted = x * x;
+    let unwanted = x + x;
+
+    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
+    evaluation.of(unwanted);
+}
+
+#[test]
+#[should_panic(expected = "not evaluated by this target-sliced run")]
+fn sliced_backward_outside_the_closure_is_rejected() {
+    let network = Network::new();
+    let x = network.leaf(2.0_f64);
+    let wanted = x * x;
+    let unwanted = x + x;
+
+    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
+    evaluation.backward(unwanted);
+}
+
+#[test]
+fn forward_for_binds_feeds_like_forward_with() {
+    let network = Network::new();
+    let x = network.input(Tensor::new([2], [0.0_f64, 0.0]));
+    let doubled = x * Tensor::new([2], [2.0, 2.0]);
+
+    let evaluation = network.forward_for(
+        [doubled.symbol()],
+        [(x.symbol(), Tensor::new([2], [4.0, 5.0]))],
+    );
+    assert_eq!(evaluation.of(doubled).to_vec(), &[8.0, 10.0]);
+}
+
+#[test]
+fn sliced_gradients_step_parameters_like_full_gradients() {
+    // Two expressions share one tape; slicing to the first must step
+    // its parameter exactly as a full run does, while the second
+    // expression's parameter receives its true gradient — zero — and
+    // stays put.
+    let network = Network::new();
+    let first = network.parameter(Tensor::new([2], [1.0_f64, 2.0]));
+    let second = network.parameter(Tensor::new([2], [5.0, 6.0]));
+    let first_loss = (first * first).sum();
+    let _second_loss = (second * second).sum();
+
+    let first_symbol = first.symbol();
+    let second_symbol = second.symbol();
+
+    let evaluation = network.forward_for([first_loss.symbol()], std::iter::empty());
+    let gradients = evaluation.backward(first_loss);
+    let stepped = network.update(
+        &gradients,
+        |parameter: &Tensor<f64>, gradient: &Tensor<f64>| parameter.clone() - gradient.clone(),
+    );
+
+    // `d(sum(w^2))/dw = 2w`, so the first parameter steps by `-2w`.
+    assert_eq!(
+        stepped.resolve(first_symbol).payload().unwrap().to_vec(),
+        &[-1.0, -2.0]
+    );
+    assert_eq!(
+        stepped.resolve(second_symbol).payload().unwrap().to_vec(),
+        &[5.0, 6.0]
+    );
 }

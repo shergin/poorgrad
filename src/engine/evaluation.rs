@@ -28,6 +28,11 @@ pub struct Evaluation<'network, Data> {
     operands: CowVec<Operands>,
     chain: Arc<Vec<Segment>>,
     values: Field<Data>,
+    /// Which slots a target-sliced run actually computed; `None` for a
+    /// full run, where every slot is genuine. Skipped slots hold
+    /// shape-correct zero placeholders that reads must never answer
+    /// with, so `of` and `backward` check this set first.
+    evaluated: Option<Vec<bool>>,
 }
 
 impl<'network, Data: Differentiable> Evaluation<'network, Data> {
@@ -37,15 +42,29 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         operands: CowVec<Operands>,
         chain: Arc<Vec<Segment>>,
         values: Vec<Data>,
+        evaluated: Option<Vec<bool>>,
     ) -> Self {
         debug_assert_eq!(nodes.len(), values.len());
         debug_assert_eq!(nodes.len(), operands.len());
+        if let Some(evaluated) = &evaluated {
+            debug_assert_eq!(nodes.len(), evaluated.len());
+        }
         Self {
             tape,
             nodes,
             operands,
             values: Field::new(tape.lineage(), Arc::clone(&chain), values),
             chain,
+            evaluated,
+        }
+    }
+
+    /// Returns whether this run computed the slot at `index`, as
+    /// opposed to skipping it in a target-sliced run.
+    fn computed(&self, index: usize) -> bool {
+        match &self.evaluated {
+            Some(evaluated) => evaluated[index],
+            None => true,
         }
     }
 
@@ -55,17 +74,26 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     /// buffer: evaluations, gradients, and fields all answer `of(value)`.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different network or was allocated
-    /// after this evaluation ran.
+    /// Panics if `value` belongs to a different network, was allocated
+    /// after this evaluation ran, or was skipped by a target-sliced run
+    /// (see [`Network::forward_for`](crate::Network::forward_for)): a
+    /// placeholder must never read as a result.
     pub fn of(&self, value: Value<'_, Data>) -> &Data {
         assert!(
             ptr::eq(self.tape, value.tape()),
             "value belongs to a different network"
         );
-        self.values
+        let index = value.id().index();
+        let payload = self
+            .values
             .as_slice()
-            .get(value.id().index())
-            .expect("value was allocated after this evaluation ran")
+            .get(index)
+            .expect("value was allocated after this evaluation ran");
+        assert!(
+            self.computed(index),
+            "value was not evaluated by this target-sliced run; add it to the targets"
+        );
+        payload
     }
 }
 
@@ -92,7 +120,8 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     ///
     /// # Panics
     /// Panics if `output` is not a scalar, belongs to a different
-    /// network, or was allocated after this evaluation ran.
+    /// network, was allocated after this evaluation ran, or was skipped
+    /// by a target-sliced run.
     pub fn backward(&self, output: Value<'_, Data>) -> Gradients<Data> {
         assert!(
             ptr::eq(self.tape, output.tape()),
@@ -103,6 +132,13 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         assert!(
             output_index < values.len(),
             "value was allocated after this evaluation ran"
+        );
+        // A sliced run evaluates the whole ancestor closure of its
+        // targets, so any evaluated output has every operand its
+        // backward needs.
+        assert!(
+            self.computed(output_index),
+            "value was not evaluated by this target-sliced run; add it to the targets"
         );
         assert_eq!(
             values[output_index].shape().rank(),

@@ -35,6 +35,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   the convolution rung's first consumer. It downloads and caches
   the IDX files on first run and reports test accuracy, per-step
   time, and the loss chart.
+- `Network::forward_for`: the target-sliced run — it evaluates only
+  the ancestors of the declared targets, leaving every skipped slot
+  an O(1) shape-correct placeholder that `of` and `backward` refuse
+  to answer with, so skipped reads fail loudly. Sliced gradients
+  drive `update` soundly (a parameter outside the closure receives
+  its true gradient, zero), and results are bit-identical to full
+  runs. With the training and evaluation expressions sharing one
+  tape, the MNIST example dropped from 517 to 95 ms per step
+  (5.4x) with an unchanged 98.22% test accuracy.
 
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —

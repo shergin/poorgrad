@@ -137,7 +137,9 @@ fn probe_correct(
 ) -> usize {
     let indices: Vec<usize> = (start..start + PROBE_LEN).collect();
     let (images, _) = batch_payloads(test, &indices);
-    let evaluation = network.forward_with([(images_symbol, images)]);
+    // Slice the run to the probe expression: the training twin on the
+    // same tape is skipped entirely.
+    let evaluation = network.forward_for([logits_symbol], [(images_symbol, images)]);
     let logits = evaluation.of(network.resolve(logits_symbol)).to_vec();
     let mut correct = 0;
     for (row, &index) in logits.chunks(CLASSES).zip(&indices) {
@@ -205,10 +207,15 @@ fn main() {
         let (batch_images, batch_targets) = batch_payloads(&train, batch);
 
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward_with([
-            (images_symbol, batch_images),
-            (targets_symbol, batch_targets),
-        ]);
+        // Slice the run to the loss: the probe expression on the same
+        // tape is skipped during training.
+        let evaluation = network.forward_for(
+            [loss_symbol],
+            [
+                (images_symbol, batch_images),
+                (targets_symbol, batch_targets),
+            ],
+        );
         let batch_loss = evaluation.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
