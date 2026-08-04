@@ -9,6 +9,27 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `BatchNorm`: batch normalization at tensor granularity over
+  `[batch, features]` values. `express` records the training mode —
+  normalization by the batch's own mean and biased variance — and
+  returns a `Normalization` carrying the output and the statistic
+  values; `express_with` records the inference mode over statistics
+  supplied as values, fed per run, so running estimates live with
+  the training loop rather than on the tape.
+- `LayerNorm` and `RmsNorm`: the stateless normalization siblings,
+  taking per-sample statistics along the feature axis — full
+  standardization with a per-feature affine, and root-mean-square
+  re-scaling with a per-feature scale, respectively. No running
+  estimates and no training/inference split: one recorded
+  expression serves both. All three norms share one epsilon
+  contract: a single-value constant broadcast in-graph to the
+  variance's shape.
+- `Value::mean_along`: the mean-reduction composite, `sum_along`
+  divided by the reduced axis's extent.
+- `Differentiable::counted`: the shape-derived constant constructor
+  — a payload of a given shape holding an integer count — that lets
+  composed formulas mint axis extents as payloads. Breaking for
+  custom payload implementations, which must add the method.
 - The `cuda` feature: large dense `f32`/`f64` products through
   cuBLAS on an NVIDIA GPU, Linux only. The libraries
   (`libcudart`/`libcublas`) are bound at run time by `dlopen`, so

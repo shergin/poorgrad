@@ -210,6 +210,9 @@ impl Differentiable for Probe {
     fn one_like(&self) -> Self {
         Probe(1.0)
     }
+    fn counted(_shape: Shape, count: usize) -> Self {
+        Probe(count as f64)
+    }
     fn shape(&self) -> Shape {
         Shape::scalar()
     }

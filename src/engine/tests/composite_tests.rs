@@ -61,6 +61,30 @@ fn logsumexp_reduces_like_a_smooth_maximum() {
 }
 
 #[test]
+fn mean_along_divides_by_the_axis_extent() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let mean = x.mean_along(0);
+    assert_eq!(mean.shape(), Shape::new([3]));
+    let loss = mean.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(mean).to_vec(), &[2.5, 3.5, 4.5]);
+
+    // Each sample contributes `1 / extent` to the mean's gradient.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(x).to_vec(), &[0.5; 6]);
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn mean_along_rejects_an_axis_out_of_rank() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    x.mean_along(1);
+}
+
+#[test]
 fn logsumexp_gradient_is_the_softmax() {
     let network = Network::new();
     let x = network.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));

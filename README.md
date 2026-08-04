@@ -225,6 +225,18 @@ crate root keeps the public API flat. From tape to training:
 - [`Mlp`](src/neural/mlp.rs) — dense layers described by a sequence of widths
   such as `[3, 4, 4, 1]`: tanh hidden layers, an affine output, and
   caller-controlled initialization from each parameter's requested shape.
+- [`BatchNorm`](src/neural/batch_norm.rs) — batch normalization over
+  `[batch, features]` values: `express` normalizes by the batch's own
+  statistics and returns them for running-estimate upkeep, while
+  `express_with` normalizes by statistics fed per run — the training and
+  inference modes of one layer, with the running estimates living in the
+  training loop rather than on the tape.
+- [`LayerNorm`](src/neural/layer_norm.rs) and
+  [`RmsNorm`](src/neural/rms_norm.rs) — the stateless normalization
+  siblings: per-sample statistics along the feature axis (standardize
+  plus affine, or root-mean-square re-scaling alone), so there are no
+  running estimates and one recorded expression serves training and
+  inference alike.
 - [`cross_entropy`](src/neural/loss.rs) — the classification loss as a
   composed formula over the fused, numerically stable `Value::log_softmax`:
   the mean negative log-likelihood of one-hot (or soft) targets, fed per

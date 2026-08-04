@@ -40,6 +40,17 @@ pub trait Differentiable:
     /// The returned payload must have the same shape as `self`.
     fn one_like(&self) -> Self;
 
+    /// Returns a payload of `shape` with every element equal to `count`.
+    ///
+    /// It is the constructor behind size-derived constants: a composed
+    /// formula that divides by an axis extent (a mean, a normalization)
+    /// must mint that extent as a payload. Unlike `zero_like` and
+    /// `one_like` it cannot borrow a payload to copy the shape from,
+    /// because a composite over computed values has no payload at hand.
+    /// Counts convert exactly as long as the payload's numeric type can
+    /// represent them.
+    fn counted(shape: Shape, count: usize) -> Self;
+
     /// Returns the shape of this payload: its extent along every axis.
     ///
     /// It is what record-time shape inference seeds leaves with. Scalars
@@ -56,6 +67,12 @@ impl Differentiable for f32 {
         1.0
     }
 
+    /// Scalar payloads ignore the requested shape, mirroring the
+    /// identity semantics of their `Tensorial` operations.
+    fn counted(_shape: Shape, count: usize) -> Self {
+        count as f32
+    }
+
     fn shape(&self) -> Shape {
         Shape::scalar()
     }
@@ -68,6 +85,12 @@ impl Differentiable for f64 {
 
     fn one_like(&self) -> Self {
         1.0
+    }
+
+    /// Scalar payloads ignore the requested shape, mirroring the
+    /// identity semantics of their `Tensorial` operations.
+    fn counted(_shape: Shape, count: usize) -> Self {
+        count as f64
     }
 
     fn shape(&self) -> Shape {

@@ -514,6 +514,12 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
         Self::constant(self.logical_shape().clone(), self.get(0).one_like())
     }
 
+    /// Returns the count spread across `shape`, stored as a constant;
+    /// the element value comes from the element type's own `counted`.
+    fn counted(shape: Shape, count: usize) -> Self {
+        Self::constant(shape, Element::counted(Shape::scalar(), count))
+    }
+
     fn shape(&self) -> Shape {
         self.logical_shape().clone()
     }

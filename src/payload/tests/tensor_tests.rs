@@ -63,6 +63,13 @@ fn likes_preserve_shape() {
 }
 
 #[test]
+fn counted_spreads_the_count_across_the_shape() {
+    let counted = Tensor::<f64>::counted(Shape::new([2, 3]), 6);
+    assert_eq!(counted.shape(), Shape::new([2, 3]));
+    assert_eq!(counted.to_vec(), &[6.0; 6]);
+}
+
+#[test]
 fn transcendentals_apply_elementwise() {
     let tensor = Tensor::new([2], [0.0_f64, 1.0]);
     let result = tensor.tanh();

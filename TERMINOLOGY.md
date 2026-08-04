@@ -175,9 +175,10 @@ opcode mnemonics, each recording exactly one computed node (payload
 literals additionally record a leaf — data injection, not computation);
 [`composite.rs`](src/engine/composite.rs) holds the composites (`abs` as
 `maximum(-self)`, `softmax` as `exp(log_softmax)` — stable by inheritance,
-since log-probabilities cannot make `exp` overflow — and `logsumexp`,
+since log-probabilities cannot make `exp` overflow — `logsumexp`,
 recovered from the fused normalizer with the softmax as its composed
-gradient); and named formulas whose operands play distinct roles (a
+gradient, and `mean_along`, `sum_along` divided by the reduced axis's
+extent minted as a `counted` literal); and named formulas whose operands play distinct roles (a
 loss's logits and targets have no natural `self`) are free functions in
 domain modules. Composites compile against the public operation surface
 alone — they need no privileged engine access — and once recorded they
@@ -258,7 +259,11 @@ crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
 contract is the [`Differentiable`](src/payload/differentiable.rs) trait —
-arithmetic operators, `zero_like`/`one_like`, and `Send + Sync`;
+arithmetic operators, `zero_like`/`one_like`, the shape-derived constant
+constructor `counted` (a payload of a given shape holding an integer
+count, which lets composed formulas mint axis extents — a mean's
+divisor — without borrowing a payload to copy the shape from), and
+`Send + Sync`;
 [`Elementary`](src/payload/elementary.rs) adds the transcendentals, the
 correctly rounded `sqrt` (which `powf(0.5)` is not), and the order pair
 `maximum`/`step` that activations and stable normalization need — order
@@ -454,15 +459,55 @@ an affine output layer. A facade over `Layer`, detached the same way,
 with initialization owned by the caller through a shape-to-payload
 initializer. In poorgrad: [`Mlp`](src/neural/mlp.rs).
 
+**Batch normalization (BatchNorm).** Standardizing every feature of a
+`[batch, features]` value by minibatch statistics and applying a learned
+per-feature affine `scale * normalized + shift` (Ioffe & Szegedy, 2015).
+Training mode normalizes by the batch's own mean and biased variance,
+with gradients flowing through the statistics; inference mode normalizes
+by running estimates accumulated during training. In poorgrad:
+[`BatchNorm`](src/neural/batch_norm.rs), whose `express` records the
+training-mode expression and returns a `Normalization` — the output plus
+the batch-statistic values — and whose `express_with` records the
+inference-mode expression over statistics supplied as values. The layer
+stores no running statistics: they are fed as per-run inputs on the
+inference expression, and their exponential moving average lives in
+payload land with the training loop, so the tape stays a pure record of
+the computation.
+
+**Layer normalization (LayerNorm).** Batch normalization's stateless
+sibling: every sample is standardized by its own feature statistics —
+the mean and biased variance taken along the feature axis instead of
+the batch axis — and passed through the learned per-feature affine
+(Ba, Kiros & Hinton, 2016). Samples normalize independently, so there
+is no batch coupling, no running estimates, and no training/inference
+split: one recorded expression serves both. The transformer stack's
+norm. In poorgrad: [`LayerNorm`](src/neural/layer_norm.rs).
+
+**RMS normalization (RMSNorm).** Layer normalization without the
+centering and the shift: every sample is divided by the root mean
+square of its features, `sqrt(mean(x^2) + epsilon)`, and scaled per
+feature (Zhang & Sennrich, 2019) — re-scaling alone, on the
+observation that the re-centering half contributes little. Stateless
+like `LayerNorm`, and the cheaper modern default of transformer
+stacks. In poorgrad: [`RmsNorm`](src/neural/rms_norm.rs).
+
+**Running statistics.** The exponential moving averages of the batch
+means and variances that batch normalization accumulates during training
+and normalizes by at inference. Deliberately not engine state: the
+training loop reads each batch's statistics from an `Evaluation`,
+averages them as plain payloads, and feeds the estimates to the
+inference expression per run — the same division of labor as minibatch
+assembly.
+
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
 is what gives stacked neurons expressive power beyond affine maps. It is a
 graph operation like any other, so it participates in differentiation
 (`Function::Tanh`, recorded by `Value::tanh`, whose derivative
 `1 - tanh(x)^2` reuses the node's own output; `Function::Relu`, recorded
 by `Value::relu`, whose gradient is masked by the 0/1 `step` indicator —
-a dedicated unary variant because recording cannot construct a zero
-payload for a generic `Data`, while the rule reaches one at run time
-through `zero_like`). In poorgrad: the
+a dedicated unary variant so the mask costs one node and no zero leaf
+per occurrence, while the rule reaches its zero at run time through
+`zero_like`). In poorgrad: the
 [`Activation`](src/neural/activation.rs) enum selecting `Identity`,
 `Tanh`, or `Relu`.
 

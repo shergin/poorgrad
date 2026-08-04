@@ -60,6 +60,20 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
             .narrow(axis, 0, 1)
             .squeeze(axis)
     }
+
+    /// Records the mean of this value along `axis` as the composition
+    /// `self.sum_along(axis) / extent`, where the reduced axis's extent
+    /// enters the graph as a [`counted`](crate::Differentiable::counted)
+    /// literal; like `sum_along`, the reduced axis is removed.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    pub fn mean_along(self, axis: usize) -> Self {
+        let shape = self.shape();
+        assert!(axis < shape.rank(), "mean_along axis {axis} is out of rank");
+        let extent = shape.axes()[axis];
+        self.sum_along(axis) / Data::counted(shape.without_axis(axis), extent)
+    }
 }
 
 #[cfg(test)]
