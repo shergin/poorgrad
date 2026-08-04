@@ -238,6 +238,39 @@ With several expressions recorded on one tape (the training and
 evaluation twins of the examples), slicing to one expression's
 targets skips the other entirely.
 
+**Plan (lowering).** A compiled execution schedule derived from the
+tape: the ancestor closure of declared targets (dead-node
+elimination), the readable set (targets plus keeps), per-node free
+lists (buffer liveness), and captured shapes. Produced by
+[`Network::compile`](src/engine/plan.rs) (forward-only: aggressive
+liveness, refuses `backward`) or `Network::compile_training` (retains
+everything `backward` reads); run by `Plan::forward`, whose results
+are bit-identical to the interpreter's — a plan changes what is
+*stored*, never what is *computed*. Plans are graph-structural, so
+one plan survives every `update` generation and compile-once
+amortizes over a whole training run; later recordings simply grow the
+tape past the plan's prefix. `Plan::describe` renders the decisions —
+per-node liveness spans and the static live-volume story. The tape
+remains the specification and the plain interpreter the executable
+oracle every plan is differentially tested against.
+
+**Keep-set.** The declared observable values of a plan: its targets
+plus explicitly kept interiors. Only the keep-set answers
+`Evaluation::of` on a plan run — an interior value stays unreadable
+even when liveness happens to retain it, so the read contract never
+depends on the optimizer's choices. Observability is declared, never
+inferred; the target-sliced run's evaluated set is this idea's
+first, implicit form.
+
+**Liveness (buffer).** Which run buffers a plan still needs at each
+step: a slot whose last consumer has run, and which is outside the
+keep-set, is released immediately behind a non-allocating
+placeholder, so a run's peak memory follows the widest genuine
+dependency window instead of the whole tape. Forward-only plans free
+aggressively; training plans retain every closure value, because
+derivative rules read operand payloads and outputs — finer
+retention awaits a per-operation contract.
+
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across
 runs (averaging data-parallel gradients) and carried across generations

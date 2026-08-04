@@ -38,6 +38,13 @@ choice:
   `forward_with` — feeds are run state, not graph state — so one shared
   network serves any number of threads, each feeding its own data and
   differentiating its own target.
+- **The tape is the spec; a `Plan` is the schedule.** `compile` lowers
+  the recorded graph into an execution plan — dead-node elimination
+  against declared targets, buffer liveness that frees intermediates
+  after their last consumer — whose runs are bit-identical to the
+  interpreter's and survive every generation of a training run.
+  `Plan::describe()` prints the decisions, and the naive interpreter
+  ships forever as the executable oracle every plan is tested against.
 - **Values are `Copy`.** A `Value` is a borrow of its network plus a
   position: operators never consume their operands, handles cross threads
   freely, and a value outliving its graph is a compile error, not a bug

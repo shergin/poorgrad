@@ -33,6 +33,11 @@ pub struct Evaluation<'network, Data> {
     /// shape-correct zero placeholders that reads must never answer
     /// with, so `of` and `backward` check this set first.
     evaluated: Option<Vec<bool>>,
+    /// Whether the forward values `backward` reads are all present:
+    /// true for interpreter runs and training plans, false for
+    /// forward-only plan runs, whose liveness pass freed buffers the
+    /// derivative rules would need.
+    gradients_retained: bool,
 }
 
 impl<'network, Data: Differentiable> Evaluation<'network, Data> {
@@ -43,6 +48,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         chain: Arc<Vec<Segment>>,
         values: Vec<Data>,
         evaluated: Option<Vec<bool>>,
+        gradients_retained: bool,
     ) -> Self {
         debug_assert_eq!(nodes.len(), values.len());
         debug_assert_eq!(nodes.len(), operands.len());
@@ -56,6 +62,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
             values: Field::new(tape.lineage(), Arc::clone(&chain), values),
             chain,
             evaluated,
+            gradients_retained,
         }
     }
 
@@ -139,6 +146,11 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         assert!(
             self.computed(output_index),
             "value was not evaluated by this target-sliced run; add it to the targets"
+        );
+        assert!(
+            self.gradients_retained,
+            "this evaluation came from a forward-only plan, whose liveness pass freed \
+             the buffers backward reads; compile with `compile_training` to differentiate"
         );
         assert_eq!(
             values[output_index].shape().rank(),

@@ -213,6 +213,40 @@ impl<Data> Function<Data> {
         Function::Relu(Relu)
     }
 
+    /// Returns the operation's display name, for plan introspection.
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Function::Leaf(_) => "Leaf",
+            Function::Parameter(_) => "Parameter",
+            Function::Input(_) => "Input",
+            Function::Add(_) => "Add",
+            Function::Sub(_) => "Sub",
+            Function::Mul(_) => "Mul",
+            Function::Div(_) => "Div",
+            Function::Neg(_) => "Neg",
+            Function::Tanh(_) => "Tanh",
+            Function::Exp(_) => "Exp",
+            Function::Ln(_) => "Ln",
+            Function::MatMul(_) => "MatMul",
+            Function::Transpose(_) => "Transpose",
+            Function::Sum(_) => "Sum",
+            Function::SumAlong(_) => "SumAlong",
+            Function::Broadcast(_) => "Broadcast",
+            Function::BroadcastAlong(_) => "BroadcastAlong",
+            Function::Reshape(_) => "Reshape",
+            Function::Permute(_) => "Permute",
+            Function::Narrow(_) => "Narrow",
+            Function::Pad(_) => "Pad",
+            Function::Unfold(_) => "Unfold",
+            Function::Gather(_) => "Gather",
+            Function::LogSoftmax(_) => "LogSoftmax",
+            Function::Sqrt(_) => "Sqrt",
+            Function::Powf(_) => "Powf",
+            Function::Maximum(_) => "Maximum",
+            Function::Relu(_) => "Relu",
+        }
+    }
+
     /// Returns the number of operand links this function expects.
     ///
     /// Sources have none; recording asserts every node's operand list

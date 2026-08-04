@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Plan`, `Network::compile`, and `Network::compile_training`: the
+  first lowering tier. A plan is a compiled execution schedule —
+  dead-node elimination against declared targets, a keep-set that
+  alone answers reads, and (for forward-only plans) buffer liveness
+  that frees every intermediate after its last consumer. Plan runs
+  are bit-identical to the interpreter's, survive every `update`
+  generation (compile once, train forever), and refuse `backward`
+  unless compiled for training, so freed buffers can never leak
+  into gradients. `Plan::describe` renders the schedule: per-node
+  liveness spans and the static peak-live-volume estimate.
+
 - `Tensorial::unfold` and `Tensorial::fold`: single-axis sliding
   windows (torch semantics, with a dilation parameter) as a strided
   view over the shared buffer, and their adjoint — each source

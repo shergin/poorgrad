@@ -36,6 +36,12 @@ impl<Data: Differentiable> Network<Data> {
         Self { tape: Tape::new() }
     }
 
+    /// Returns the tape, for the engine's sibling modules (plans
+    /// validate kinship and read columns through it).
+    pub(crate) fn tape(&self) -> &Tape<Data> {
+        &self.tape
+    }
+
     /// Allocates a constant leaf and returns a proxy to it.
     ///
     /// Constants are fixed at recording time; see `parameter` for
@@ -309,6 +315,7 @@ impl<Data: Tensorial> Network<Data> {
             snapshot.chain,
             values,
             evaluated,
+            true,
         )
     }
 }
