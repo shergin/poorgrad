@@ -92,6 +92,29 @@ pub trait Tensorial: Elementary {
     /// window reaches fold to zero.
     fn fold(&self, axis: usize, size: usize, step: usize, dilation: usize, extent: usize) -> Self;
 
+    /// Returns the im2col product of `self` (`[batch, channels, height,
+    /// width]`) with the GEMM-shaped `kernel` (`[channels *
+    /// kernel_height * kernel_width, filters]`): the window rows of the
+    /// symmetric zero-padded, stride-stepped sliding windows, matrix-
+    /// multiplied in one call — `[batch * out_h * out_w, filters]`.
+    ///
+    /// It is the fused executor behind the plan tier's window-GEMM
+    /// pattern; the arguments are the descriptor, so neither payloads
+    /// nor backends ever see graph structure. The default implementation
+    /// composes the unfused formula (pad, two unfolds, permute, reshape,
+    /// matmul) and is the bitwise reference; `Tensor` overrides it with
+    /// a specialized patch fill that skips the general odometer walk.
+    fn windowed_product(
+        &self,
+        kernel: &Self,
+        kernel_height: usize,
+        kernel_width: usize,
+        stride: usize,
+        padding: usize,
+    ) -> Self {
+        composed_windowed_product(self, kernel, kernel_height, kernel_width, stride, padding)
+    }
+
     /// Returns the rows of `self` selected by `selection` (a one-hot
     /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
     /// embedding-style row gather, `result[i] = self[selection_index(i)]`.
@@ -103,7 +126,54 @@ pub trait Tensorial: Elementary {
     fn scatter(&self, selection: &Self, rows: usize) -> Self;
 }
 
+/// Composes the unfused window-product formula — pad, two unfolds,
+/// permute, the im2col reshape, and the matrix product — over any
+/// tensorial payload: the bitwise reference the fused fast paths are
+/// tested against, and the fallback for representations without one.
+pub(crate) fn composed_windowed_product<Data: Tensorial>(
+    input: &Data,
+    kernel: &Data,
+    kernel_height: usize,
+    kernel_width: usize,
+    stride: usize,
+    padding: usize,
+) -> Data {
+    let shape = input.shape();
+    let axes = shape.axes();
+    let (batch, channels, height, width) = (axes[0], axes[1], axes[2], axes[3]);
+    let mut padded = input.clone();
+    if padding > 0 {
+        padded = padded.pad(2, padding, height + 2 * padding);
+        padded = padded.pad(3, padding, width + 2 * padding);
+    }
+    let windows = padded
+        .unfold(2, kernel_height, stride, 1)
+        .unfold(4, kernel_width, stride, 1);
+    let windows_shape = windows.shape();
+    let out_height = windows_shape.axes()[2];
+    let out_width = windows_shape.axes()[4];
+    windows
+        .permute(&[0, 2, 4, 1, 3, 5])
+        .reshape(Shape::new([
+            batch * out_height * out_width,
+            channels * kernel_height * kernel_width,
+        ]))
+        .matmul(kernel)
+}
+
 impl Tensorial for f32 {
+    /// Scalar payloads use identity semantics: the product alone.
+    fn windowed_product(
+        &self,
+        kernel: &Self,
+        _kernel_height: usize,
+        _kernel_width: usize,
+        _stride: usize,
+        _padding: usize,
+    ) -> Self {
+        self.matmul(kernel)
+    }
+
     fn matmul(&self, rhs: &Self) -> Self {
         self * rhs
     }
@@ -173,6 +243,18 @@ impl Tensorial for f32 {
 }
 
 impl Tensorial for f64 {
+    /// Scalar payloads use identity semantics: the product alone.
+    fn windowed_product(
+        &self,
+        kernel: &Self,
+        _kernel_height: usize,
+        _kernel_width: usize,
+        _stride: usize,
+        _padding: usize,
+    ) -> Self {
+        self.matmul(kernel)
+    }
+
     fn matmul(&self, rhs: &Self) -> Self {
         self * rhs
     }

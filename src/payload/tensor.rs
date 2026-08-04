@@ -7,6 +7,7 @@ use super::elementary::MapOperation;
 use super::gemm;
 use super::layout::{Layout, Strides};
 use super::storage::Storage;
+use super::tensorial::composed_windowed_product;
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -1055,6 +1056,96 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                 .chain(axes[axis + 2..].iter().copied()),
         );
         Self::dense(folded, elements)
+    }
+
+    /// Returns the im2col product through a specialized patch fill:
+    /// contiguous runs of `kernel_width` copied per channel and kernel
+    /// row, zero runs where the padding window leaves the input, and no
+    /// per-element odometer arithmetic — the measured cost the fused
+    /// window-GEMM pattern exists to remove. Non-contiguous inputs and
+    /// non-dense storages take the composed reference path.
+    ///
+    /// # Panics
+    /// Panics if `self` is not rank 4, `stride` is zero, or a kernel
+    /// window does not fit the padded extents.
+    fn windowed_product(
+        &self,
+        kernel: &Self,
+        kernel_height: usize,
+        kernel_width: usize,
+        stride: usize,
+        padding: usize,
+    ) -> Self {
+        let shape = self.logical_shape();
+        let axes = shape.axes();
+        assert_eq!(
+            axes.len(),
+            4,
+            "windowed_product input must be rank 4 [batch, channels, height, width], got {shape}"
+        );
+        assert!(stride > 0, "windowed_product stride must be positive");
+        let (batch, channels, height, width) = (axes[0], axes[1], axes[2], axes[3]);
+        assert!(
+            kernel_height > 0
+                && kernel_width > 0
+                && kernel_height <= height + 2 * padding
+                && kernel_width <= width + 2 * padding,
+            "windowed_product kernel {kernel_height}x{kernel_width} does not fit {shape} \
+             with padding {padding}"
+        );
+        let Some(elements) = self.as_slice() else {
+            return composed_windowed_product(
+                self,
+                kernel,
+                kernel_height,
+                kernel_width,
+                stride,
+                padding,
+            );
+        };
+
+        let out_height = (height + 2 * padding - kernel_height) / stride + 1;
+        let out_width = (width + 2 * padding - kernel_width) / stride + 1;
+        let columns = channels * kernel_height * kernel_width;
+        let zero = elements[0].zero_like();
+        let mut patches = vec![zero; batch * out_height * out_width * columns];
+        for image in 0..batch {
+            for out_y in 0..out_height {
+                for out_x in 0..out_width {
+                    let row = ((image * out_height + out_y) * out_width + out_x) * columns;
+                    let source_x = (out_x * stride) as isize - padding as isize;
+                    // The kernel columns that land inside the image; the
+                    // rest of the patch row stays zero (the padding).
+                    let clip_low = (-source_x).max(0) as usize;
+                    let clip_high = kernel_width.min((width as isize - source_x).max(0) as usize);
+                    if clip_low >= clip_high {
+                        continue;
+                    }
+                    let run = clip_high - clip_low;
+                    for channel in 0..channels {
+                        for kernel_y in 0..kernel_height {
+                            let source_y = (out_y * stride + kernel_y) as isize - padding as isize;
+                            if source_y < 0 || source_y >= height as isize {
+                                continue;
+                            }
+                            let source =
+                                ((image * channels + channel) * height + source_y as usize) * width
+                                    + (source_x + clip_low as isize) as usize;
+                            let target = row
+                                + (channel * kernel_height + kernel_y) * kernel_width
+                                + clip_low;
+                            patches[target..target + run]
+                                .clone_from_slice(&elements[source..source + run]);
+                        }
+                    }
+                }
+            }
+        }
+        Self::dense(
+            Shape::new([batch * out_height * out_width, columns]),
+            patches,
+        )
+        .matmul(kernel)
     }
 
     /// Returns the rows of `self` selected by `selection`, a one-hot

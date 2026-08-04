@@ -965,3 +965,58 @@ fn elementwise_lanes_agree_bitwise() {
     let seeded_generic = zero + view;
     assert_eq!(bits(&seeded_fast), bits(&seeded_generic));
 }
+
+#[test]
+fn windowed_product_matches_the_composed_reference() {
+    // The fast patch fill against the composed formula, bitwise, over
+    // padding and stride variants.
+    use crate::payload::tensorial::composed_windowed_product;
+
+    let input = Tensor::new(
+        [2, 3, 5, 4],
+        (0..120)
+            .map(|v| (v as f64) * 0.37 - 20.0)
+            .collect::<Vec<_>>(),
+    );
+    let kernel = Tensor::new(
+        [12, 4],
+        (0..48).map(|v| (v as f64) * 0.11 - 2.0).collect::<Vec<_>>(),
+    );
+    for (stride, padding) in [(1, 0), (1, 1), (2, 0), (2, 1)] {
+        let fast = input.windowed_product(&kernel, 2, 2, stride, padding);
+        let composed = composed_windowed_product(&input, &kernel, 2, 2, stride, padding);
+        assert_eq!(
+            fast.shape(),
+            composed.shape(),
+            "stride {stride} pad {padding}"
+        );
+        assert_eq!(
+            fast.to_vec(),
+            composed.to_vec(),
+            "stride {stride} pad {padding}"
+        );
+    }
+}
+
+#[test]
+fn windowed_product_falls_back_for_strided_views() {
+    use crate::payload::tensorial::composed_windowed_product;
+
+    let base = Tensor::new(
+        [2, 3, 5, 6],
+        (0..180)
+            .map(|v| (v as f64) * 0.19 - 15.0)
+            .collect::<Vec<_>>(),
+    );
+    // A narrowed view is not contiguous: the fast fill must decline and
+    // the fallback must agree with the reference anyway.
+    let view = base.narrow(3, 1, 4);
+    assert!(view.as_slice().is_none());
+    let kernel = Tensor::new(
+        [27, 2],
+        (0..54).map(|v| (v as f64) * 0.07 - 1.5).collect::<Vec<_>>(),
+    );
+    let fast = view.windowed_product(&kernel, 3, 3, 1, 1);
+    let composed = composed_windowed_product(&view, &kernel, 3, 3, 1, 1);
+    assert_eq!(fast.to_vec(), composed.to_vec());
+}

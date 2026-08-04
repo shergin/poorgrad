@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Tensorial::windowed_product`: the im2col product as one payload
+  call — sliding windows of a `[batch, channels, height, width]`
+  value against a GEMM-shaped kernel — with a composed default that
+  is the bitwise reference and a `Tensor` fast path that fills
+  patches in contiguous runs instead of the general odometer walk.
+  The executor behind the plan tier's window-GEMM fusion.
 - Rematerialization, opt-in via `compile_training_compact`: the
   plan drops its large intermediates (im2col patches, padded
   copies, pooling lanes — the allocator's page-returning size
