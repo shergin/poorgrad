@@ -9,12 +9,28 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
-- `Tensorial::windowed_product`: the im2col product as one payload
-  call — sliding windows of a `[batch, channels, height, width]`
-  value against a GEMM-shaped kernel — with a composed default that
-  is the bitwise reference and a `Tensor` fast path that fills
-  patches in contiguous runs instead of the general odometer walk.
-  The executor behind the plan tier's window-GEMM fusion.
+- Window-GEMM fusion, the plan tier's first pattern: plans
+  recognize the canonical im2col chain feeding a `matmul` and
+  execute it as one `Tensorial::windowed_product` call, never
+  materializing the chain. Matching is structural and
+  provenance-blind, keep-set nodes are fusion barriers, and fusion
+  follows the plan's memory posture — forward-only plans always
+  fuse, compact training plans fuse (backward rebuilds patches
+  with one `windowed_patches` fast fill, bit-identically), and the
+  default retain-all training plan stays unfused, because per-step
+  patch re-allocation in backward measured as a peak-RSS
+  regression on the deeper consumer. Profile-driven: the CIFAR-10
+  step was ~50% strided-view iteration and materialization, under
+  2% elementwise arithmetic — which also retired the planned
+  elementwise-chain and `MaxAlong` fusions as worthless. The MNIST
+  example's compact training dropped from 114.6 to 106.8 ms/step
+  at unchanged memory, with byte-identical output.
+- `Tensorial::windowed_product` and `windowed_patches`: the im2col
+  product and its patch-matrix half as payload calls, with composed
+  defaults that are the bitwise references and a `Tensor` fast path
+  that fills patches in contiguous runs instead of the general
+  odometer walk. The descriptors are the method arguments, so
+  payloads and backends never see graph structure.
 - Rematerialization, opt-in via `compile_training_compact`: the
   plan drops its large intermediates (im2col patches, padded
   copies, pooling lanes — the allocator's page-returning size

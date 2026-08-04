@@ -433,3 +433,139 @@ fn compact_training_drops_where_the_default_retains() {
         interpreted.backward(loss).of(w).to_vec()
     );
 }
+
+#[test]
+fn window_gemm_fusion_matches_the_interpreter() {
+    // The conv facade's emission fuses; forward and backward stay
+    // bitwise against the interpreter with the chain never
+    // materialized.
+    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+
+    let network = Network::new();
+    let input = network.leaf(Tensor::new(
+        [2, 1, 4, 4],
+        (0..32).map(|v| (v as f64) / 16.0 - 1.0).collect::<Vec<_>>(),
+    ));
+    let weights = network.parameter(Tensor::new(
+        [2, 1, 3, 3],
+        (0..18)
+            .map(|v| (v as f64) / 32.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let bias = network.parameter(Tensor::new([2], [0.1, -0.1]));
+    let head = network.parameter(Tensor::new(
+        [8, 3],
+        (0..24)
+            .map(|v| (v as f64) / 48.0 - 0.25)
+            .collect::<Vec<_>>(),
+    ));
+    let targets = network.leaf(Tensor::selection([1, 2], 3, 1.0));
+    let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
+    let loss = cross_entropy(pooled.reshape([2, 8]).matmul(head), targets);
+
+    let plan = network.compile_training_compact(loss.symbol(), []);
+    let description = plan.describe();
+    assert!(description.contains("fused 1 window-gemm"));
+    assert!(description.contains("fused (window-gemm)"));
+
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+    let planned_gradients = planned.backward(loss);
+    let interpreted_gradients = interpreted.backward(loss);
+    for parameter in [weights, bias, head] {
+        assert_eq!(
+            planned_gradients.of(parameter).to_vec(),
+            interpreted_gradients.of(parameter).to_vec()
+        );
+    }
+}
+
+#[test]
+fn forward_only_plans_fuse_and_agree() {
+    use crate::{Tensorial, conv2d, max_pool};
+
+    let network = Network::new();
+    let input = network.leaf(Tensor::new(
+        [2, 1, 4, 4],
+        (0..32).map(|v| (v as f64) / 10.0 - 1.5).collect::<Vec<_>>(),
+    ));
+    let weights = network.leaf(Tensor::new(
+        [2, 1, 3, 3],
+        (0..18)
+            .map(|v| (v as f64) / 24.0 - 0.375)
+            .collect::<Vec<_>>(),
+    ));
+    let bias = network.leaf(Tensor::new([2], [0.05, -0.05]));
+    let output = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
+
+    let plan = network.compile([output.symbol()], []);
+    assert!(plan.describe().contains("fused 1 window-gemm"));
+
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(planned.of(output).to_vec(), interpreted.of(output).to_vec());
+}
+
+#[test]
+fn kept_interiors_bar_fusion() {
+    // Keeping the im2col matrix readable is a fusion barrier: the
+    // chain must materialize so the keep-set can answer.
+    let network = Network::new();
+    let x = network.leaf(Tensor::new(
+        [1, 1, 4, 4],
+        (0..16).map(|v| v as f64 * 0.3 - 2.0).collect::<Vec<_>>(),
+    ));
+    let kernel = network.leaf(Tensor::new(
+        [4, 2],
+        (0..8).map(|v| v as f64 * 0.25 - 0.75).collect::<Vec<_>>(),
+    ));
+    let patches = x
+        .unfold(2, 2, 1, 1)
+        .unfold(4, 2, 1, 1)
+        .permute([0, 2, 4, 1, 3, 5])
+        .reshape([9, 4]);
+    let loss = patches.matmul(kernel).sum();
+
+    let fused = network.compile_training_compact(loss.symbol(), []);
+    assert!(fused.describe().contains("window-gemm"));
+    // The default retain-all training plan does not fuse at all: its
+    // memory contract stays exact.
+    let default = network.compile_training(loss.symbol(), []);
+    assert!(!default.describe().contains("window-gemm"));
+
+    let barred = network.compile_training_compact(loss.symbol(), [patches.symbol()]);
+    assert!(!barred.describe().contains("window-gemm"));
+    let evaluation = barred.forward(&network, std::iter::empty());
+    assert_eq!(
+        evaluation.of(patches).to_vec(),
+        network.forward().of(patches).to_vec()
+    );
+}
+
+#[test]
+fn shared_windows_bar_fusion() {
+    // A second consumer inside the chain bars fusion, and results
+    // stay bitwise either way.
+    use crate::Tensorial;
+
+    let network = Network::new();
+    let x = network.leaf(Tensor::new(
+        [1, 1, 4, 4],
+        (0..16).map(|v| v as f64 * 0.5 - 3.0).collect::<Vec<_>>(),
+    ));
+    let kernel = network.leaf(Tensor::new(
+        [4, 2],
+        (0..8).map(|v| v as f64 * 0.125).collect::<Vec<_>>(),
+    ));
+    let windows = x.unfold(2, 2, 1, 1).unfold(4, 2, 1, 1);
+    let patches = windows.permute([0, 2, 4, 1, 3, 5]).reshape([9, 4]);
+    let loss = patches.matmul(kernel).sum() + windows.sum();
+
+    let plan = network.compile_training_compact(loss.symbol(), []);
+    assert!(!plan.describe().contains("window-gemm"));
+
+    let planned = plan.forward(&network, std::iter::empty());
+    let interpreted = network.forward();
+    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+}

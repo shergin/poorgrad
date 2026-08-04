@@ -286,6 +286,20 @@ while forward-only plans execute their releases, where the win is
 measured. Keeping a rule and its retention in step is part of
 changing either.
 
+**Fusion (window-GEMM).** The plan tier's first pattern: the
+canonical im2col chain — pads, two unfolds, the permute, the patch
+reshape — feeding a `matmul` executes as one
+`Tensorial::windowed_product` call, and the chain is never
+materialized. Matching is structural and provenance-blind (a
+hand-written chain identical to `conv2d`'s fuses identically), a
+keep-set node inside the chain is a fusion barrier, and fusion
+follows the plan's memory posture: forward-only plans always fuse (a
+pure win), compact training plans fuse (backward rebuilds the
+patches with one fast fill, bit-identically), and the default
+retain-all training plan stays unfused so its memory contract stays
+exact. `describe` prints the groups; recognition proposes, payloads
+and backends dispose — neither ever sees graph structure.
+
 **Rematerialization.** Trading compute for memory, opt-in through
 `compile_training_compact`: the plan *drops* its large
 intermediates — freed right after their last forward consumer — and

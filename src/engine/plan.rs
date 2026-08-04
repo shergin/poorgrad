@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cow_vec::CowVec;
@@ -11,6 +12,27 @@ use super::{Evaluation, Function, Lineage, Network, Operands, Segment, Symbol};
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Plan<f64>: Send, Sync);
+
+/// A matched window-GEMM fusion group: the `matmul` node computes
+/// [`Tensorial::windowed_product`] directly from the source, and the
+/// im2col chain between them — pads, unfolds, permute, reshape — is
+/// never materialized. Backward rematerializes the chain on demand
+/// through the ordinary rules, so gradients stay bit-identical.
+///
+/// Matching is structural and provenance-blind: any recording of the
+/// canonical im2col composition fuses, whichever facade (or hand)
+/// wrote it, and a keep-set node inside the chain is a fusion barrier.
+#[derive(Debug, Clone)]
+pub(crate) struct WindowProduct {
+    /// The rank-4 `[batch, channels, height, width]` source.
+    pub(crate) source: usize,
+    /// The GEMM-shaped `[columns, filters]` kernel operand.
+    pub(crate) kernel: usize,
+    pub(crate) kernel_height: usize,
+    pub(crate) kernel_width: usize,
+    pub(crate) stride: usize,
+    pub(crate) padding: usize,
+}
 
 /// The element-count threshold above which a training plan drops a
 /// value for rematerialization.
@@ -74,10 +96,159 @@ pub struct Plan<Data> {
     /// Which slots a training run drops for rematerialization:
     /// backward recomputes them from retained neighbors, bit-exactly.
     dropped: Arc<Vec<bool>>,
+    /// The window-GEMM fusion group rooted at each `matmul` node, if
+    /// its im2col chain matched.
+    fused: Vec<Option<WindowProduct>>,
+    /// The interior nodes of fusion groups: skipped by runs (their
+    /// slots hold placeholders) and rematerialized by backward.
+    fused_interior: Vec<bool>,
+    /// The fused patch recipes keyed by their im2col reshape slot, so
+    /// the backward rematerializer can rebuild a chain's patches with
+    /// one fast fill instead of the general element walk.
+    fused_patches: Arc<HashMap<usize, WindowProduct>>,
     /// Whether evaluations of this plan may differentiate: training
     /// plans keep everything `backward` reads (the retention
     /// contract), forward-only plans free those buffers too.
     training: bool,
+}
+
+/// Scans for the canonical im2col chain feeding each `matmul` —
+/// `reshape(permute(unfold(unfold(pad(pad(x)?)?))))` with the conv
+/// parameterization — and returns the fusion groups plus the interior
+/// mask. Matching is structural: interiors must be wanted, outside
+/// the keep-set (a kept interior is a fusion barrier), and consumed
+/// exactly once inside the closure.
+fn match_window_products<Data: Differentiable>(
+    functions: &CowVec<Function<Data>>,
+    operands: &CowVec<Operands>,
+    shapes: &[Shape],
+    wanted: &[bool],
+    readable: &[bool],
+) -> (Vec<Option<WindowProduct>>, Vec<bool>) {
+    let length = functions.len();
+    let mut consumers = vec![0usize; length];
+    for index in 0..length {
+        if !wanted[index] {
+            continue;
+        }
+        let links = operands.get(index).expect("plan columns are fixed");
+        for link in links.as_slice() {
+            consumers[link.index()] += 1;
+        }
+    }
+    let interior_ok = |index: usize| wanted[index] && !readable[index] && consumers[index] == 1;
+    let sole_operand = |index: usize| {
+        operands
+            .get(index)
+            .expect("plan columns are fixed")
+            .as_slice()[0]
+            .index()
+    };
+
+    let mut fused: Vec<Option<WindowProduct>> = vec![None; length];
+    let mut interior = vec![false; length];
+    for index in 0..length {
+        if !wanted[index] {
+            continue;
+        }
+        let Some(Function::MatMul(_)) = functions.get(index) else {
+            continue;
+        };
+        let links = operands.get(index).expect("plan columns are fixed");
+        let [lhs, kernel] = links.as_slice() else {
+            continue;
+        };
+        let (lhs, kernel) = (lhs.index(), kernel.index());
+
+        let Some(Function::Reshape(reshape)) = functions.get(lhs) else {
+            continue;
+        };
+        if !interior_ok(lhs) || reshape.shape.rank() != 2 {
+            continue;
+        }
+        let permuted = sole_operand(lhs);
+        let Some(Function::Permute(permute)) = functions.get(permuted) else {
+            continue;
+        };
+        if !interior_ok(permuted) || permute.order.as_slice() != [0, 2, 4, 1, 3, 5] {
+            continue;
+        }
+        let windows_w = sole_operand(permuted);
+        let Some(Function::Unfold(unfold_w)) = functions.get(windows_w) else {
+            continue;
+        };
+        if !interior_ok(windows_w) || unfold_w.axis != 4 || unfold_w.dilation != 1 {
+            continue;
+        }
+        let windows_h = sole_operand(windows_w);
+        let Some(Function::Unfold(unfold_h)) = functions.get(windows_h) else {
+            continue;
+        };
+        if !interior_ok(windows_h)
+            || unfold_h.axis != 2
+            || unfold_h.dilation != 1
+            || unfold_h.step != unfold_w.step
+        {
+            continue;
+        }
+        let mut chain: SmallVec<[usize; 6]> =
+            SmallVec::from_slice(&[lhs, permuted, windows_w, windows_h]);
+        let mut source = sole_operand(windows_h);
+        let mut padding = 0;
+        // Symmetric zero pads fold into the fused call; anything else
+        // simply leaves the pad output as the (materialized) source.
+        if let Some(Function::Pad(pad_w)) = functions.get(source) {
+            if interior_ok(source) && pad_w.axis == 3 {
+                let below = sole_operand(source);
+                if let Some(Function::Pad(pad_h)) = functions.get(below) {
+                    let base = sole_operand(below);
+                    let base_axes = shapes[base].axes();
+                    if interior_ok(below)
+                        && pad_h.axis == 2
+                        && base_axes.len() == 4
+                        && pad_h.start == pad_w.start
+                        && pad_h.full_extent == base_axes[2] + 2 * pad_h.start
+                        && pad_w.full_extent == base_axes[3] + 2 * pad_w.start
+                    {
+                        chain.push(source);
+                        chain.push(below);
+                        padding = pad_h.start;
+                        source = base;
+                    }
+                }
+            }
+        }
+        let source_axes = shapes[source].axes();
+        if source_axes.len() != 4 {
+            continue;
+        }
+        let (batch, channels) = (source_axes[0], source_axes[1]);
+        let padded_height = source_axes[2] + 2 * padding;
+        let padded_width = source_axes[3] + 2 * padding;
+        let (kernel_height, kernel_width) = (unfold_h.size, unfold_w.size);
+        let stride = unfold_h.step;
+        let out_height = (padded_height - kernel_height) / stride + 1;
+        let out_width = (padded_width - kernel_width) / stride + 1;
+        let expected = Shape::new([
+            batch * out_height * out_width,
+            channels * kernel_height * kernel_width,
+        ]);
+        if reshape.shape != expected {
+            continue;
+        }
+        fused[index] = Some(WindowProduct {
+            source,
+            kernel,
+            kernel_height,
+            kernel_width,
+            stride,
+            padding,
+        });
+        for &node in &chain {
+            interior[node] = true;
+        }
+    }
+    (fused, interior)
 }
 
 impl<Data: Differentiable> Plan<Data> {
@@ -119,6 +290,41 @@ impl<Data: Differentiable> Plan<Data> {
         let shapes: Vec<Shape> = (0..length)
             .map(|index| tape.shape(super::ValueId(index)))
             .collect();
+
+        // Fusion: match the canonical im2col chains. Fusing a training
+        // plan requires rematerializing the patches during backward, so
+        // fusion follows the plan's memory posture: forward-only plans
+        // always fuse (a pure win — the chain simply never exists), and
+        // compact training plans fuse (measured strictly better), while
+        // the default retain-all training plan keeps its exact contract
+        // unfused — per-step patch re-allocation in backward measured
+        // as a peak-RSS regression on the deeper consumer.
+        let compact = remat_threshold != usize::MAX;
+        let (fused, fused_interior) = if !training || compact {
+            match_window_products(
+                &snapshot.functions,
+                &snapshot.operands,
+                &shapes,
+                &wanted,
+                &readable,
+            )
+        } else {
+            (vec![None; length], vec![false; length])
+        };
+
+        // The backward rematerializer rebuilds a fused chain's patches
+        // with one fast fill; key the recipes by the reshape slot the
+        // matmul's operand link names.
+        let mut fused_patches: HashMap<usize, WindowProduct> = HashMap::new();
+        for (index, group) in fused.iter().enumerate() {
+            if let Some(group) = group {
+                let links = snapshot
+                    .operands
+                    .get(index)
+                    .expect("snapshot cannot shrink");
+                fused_patches.insert(links.as_slice()[0].index(), group.clone());
+            }
+        }
 
         // Liveness: a slot may be freed by its highest consumer inside
         // the closure once nothing later can read its value — neither
@@ -172,6 +378,34 @@ impl<Data: Differentiable> Plan<Data> {
                     dropped[index] = true;
                 }
             }
+            // Fusion interiors are never materialized, so backward must
+            // always be able to rematerialize them, whatever their size.
+            for index in 0..length {
+                if fused_interior[index] {
+                    dropped[index] = true;
+                }
+            }
+            // Rematerialization inputs: recompute of a dropped chain
+            // bottoms out at its first non-dropped ancestors, whose
+            // values backward will read — the release analysis must
+            // keep them, or a forced release would rebuild the chain
+            // from placeholders. (Executed training frees only ever
+            // release dropped slots, but the licensed set and the
+            // reported floor must be honest too.)
+            for index in 0..length {
+                if !dropped[index] {
+                    continue;
+                }
+                let links = snapshot
+                    .operands
+                    .get(index)
+                    .expect("snapshot cannot shrink");
+                for link in links.as_slice() {
+                    if !dropped[link.index()] {
+                        required[link.index()] = true;
+                    }
+                }
+            }
         }
 
         let mut releases: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
@@ -187,6 +421,17 @@ impl<Data: Differentiable> Plan<Data> {
                 .expect("snapshot cannot shrink");
             for link in links.as_slice() {
                 last_consumer[link.index()] = Some(index);
+            }
+        }
+        // A fused matmul reads its source and kernel directly, past the
+        // skipped chain the operand links describe: liveness must not
+        // release them before the fused call.
+        for (index, group) in fused.iter().enumerate() {
+            if let Some(group) = group {
+                for slot in [group.source, group.kernel] {
+                    let latest = last_consumer[slot].unwrap_or(0).max(index);
+                    last_consumer[slot] = Some(latest);
+                }
             }
         }
         for slot in 0..length {
@@ -224,6 +469,9 @@ impl<Data: Differentiable> Plan<Data> {
             releases,
             frees,
             dropped: Arc::new(dropped),
+            fused_patches: Arc::new(fused_patches),
+            fused,
+            fused_interior,
             training,
         }
     }
@@ -246,7 +494,7 @@ impl<Data: Differentiable> Plan<Data> {
         let mut peak_at: usize = 0;
         let mut total: usize = 0;
         for index in 0..self.len() {
-            if !self.wanted[index] {
+            if !self.wanted[index] || self.fused_interior[index] {
                 continue;
             }
             let volume = self.shapes[index].volume();
@@ -257,6 +505,11 @@ impl<Data: Differentiable> Plan<Data> {
                 peak_at = index;
             }
             for &slot in &releases[index] {
+                // Fusion interiors were never counted live: their
+                // slots hold placeholders from the start.
+                if self.fused_interior[slot] {
+                    continue;
+                }
                 live -= self.shapes[slot].volume();
             }
         }
@@ -296,7 +549,9 @@ impl<Data: Differentiable> Plan<Data> {
             }
             evaluated += 1;
             let function = self.functions.get(index).expect("plan columns are fixed");
-            let liveness = if self.readable[index] {
+            let liveness = if self.fused_interior[index] {
+                "fused (window-gemm)".to_string()
+            } else if self.readable[index] {
                 "kept".to_string()
             } else if self.dropped[index] {
                 match released_after[index] {
@@ -329,6 +584,18 @@ impl<Data: Differentiable> Plan<Data> {
             self.readable.iter().filter(|&&readable| readable).count(),
         )
         .expect("writing to a string cannot fail");
+        let groups = self.fused.iter().flatten().count();
+        if groups > 0 {
+            writeln!(
+                lines,
+                "fused {groups} window-gemm groups, {} interior nodes skipped",
+                self.fused_interior
+                    .iter()
+                    .filter(|&&interior| interior)
+                    .count(),
+            )
+            .expect("writing to a string cannot fail");
+        }
         let (floor, floor_at, total) = self.live_story(&self.releases);
         if self.training {
             let (executed, executed_at, _) = self.live_story(&self.frees);
@@ -412,7 +679,19 @@ impl<Data: Tensorial> Plan<Data> {
 
         let mut values: Vec<Data> = Vec::with_capacity(self.len());
         for index in 0..self.len() {
-            let value = if self.wanted[index] {
+            let value = if !self.wanted[index] || self.fused_interior[index] {
+                Data::counted(self.shapes[index].clone(), 0)
+            } else if let Some(group) = &self.fused[index] {
+                // The fused call reads the source and kernel directly;
+                // the im2col chain between them was never materialized.
+                values[group.source].windowed_product(
+                    &values[group.kernel],
+                    group.kernel_height,
+                    group.kernel_width,
+                    group.stride,
+                    group.padding,
+                )
+            } else {
                 let function = self.functions.get(index).expect("plan columns are fixed");
                 let links = self.operands.get(index).expect("plan columns are fixed");
                 let operands: SmallVec<[&Data; 2]> = links
@@ -421,8 +700,6 @@ impl<Data: Tensorial> Plan<Data> {
                     .map(|link| &values[link.index()])
                     .collect();
                 function.forward(&operands, snapshot.parameters.payloads(), &inputs)
-            } else {
-                Data::counted(self.shapes[index].clone(), 0)
             };
             values.push(value);
             // Liveness: this node was the last consumer of these
@@ -441,6 +718,7 @@ impl<Data: Tensorial> Plan<Data> {
             Some(self.readable.clone()),
             self.training,
             Some(Arc::clone(&self.dropped)),
+            Some(Arc::clone(&self.fused_patches)),
         )
     }
 }

@@ -317,6 +317,7 @@ impl<Data: Tensorial> Network<Data> {
             evaluated,
             true,
             None,
+            None,
         )
     }
 }

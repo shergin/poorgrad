@@ -7,7 +7,7 @@ use super::elementary::MapOperation;
 use super::gemm;
 use super::layout::{Layout, Strides};
 use super::storage::Storage;
-use super::tensorial::composed_windowed_product;
+use super::tensorial::composed_windowed_patches;
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -1058,7 +1058,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         Self::dense(folded, elements)
     }
 
-    /// Returns the im2col product through a specialized patch fill:
+    /// Returns the im2col matrix through a specialized patch fill:
     /// contiguous runs of `kernel_width` copied per channel and kernel
     /// row, zero runs where the padding window leaves the input, and no
     /// per-element odometer arithmetic — the measured cost the fused
@@ -1068,9 +1068,8 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// # Panics
     /// Panics if `self` is not rank 4, `stride` is zero, or a kernel
     /// window does not fit the padded extents.
-    fn windowed_product(
+    fn windowed_patches(
         &self,
-        kernel: &Self,
         kernel_height: usize,
         kernel_width: usize,
         stride: usize,
@@ -1094,14 +1093,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
              with padding {padding}"
         );
         let Some(elements) = self.as_slice() else {
-            return composed_windowed_product(
-                self,
-                kernel,
-                kernel_height,
-                kernel_width,
-                stride,
-                padding,
-            );
+            return composed_windowed_patches(self, kernel_height, kernel_width, stride, padding);
         };
 
         let out_height = (height + 2 * padding - kernel_height) / stride + 1;
@@ -1145,7 +1137,6 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             Shape::new([batch * out_height * out_width, columns]),
             patches,
         )
-        .matmul(kernel)
     }
 
     /// Returns the rows of `self` selected by `selection`, a one-hot

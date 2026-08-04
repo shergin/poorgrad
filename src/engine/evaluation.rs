@@ -8,6 +8,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
+use super::plan::WindowProduct;
 use super::{Field, Function, Gradients, Operands, Segment, Tape, Value};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -43,6 +44,10 @@ pub struct Evaluation<'network, Data> {
     /// their placeholders must never feed a derivative rule, so
     /// `backward` recomputes their values on demand.
     dropped: Option<Arc<Vec<bool>>>,
+    /// The fused patch recipes by reshape slot: rematerializing those
+    /// slots takes one fast fill from the source instead of replaying
+    /// the view chain through the general element walk.
+    fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
 }
 
 impl<'network, Data: Differentiable> Evaluation<'network, Data> {
@@ -56,6 +61,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         evaluated: Option<Vec<bool>>,
         gradients_retained: bool,
         dropped: Option<Arc<Vec<bool>>>,
+        fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
     ) -> Self {
         debug_assert_eq!(nodes.len(), values.len());
         debug_assert_eq!(nodes.len(), operands.len());
@@ -71,6 +77,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
             evaluated,
             gradients_retained,
             dropped,
+            fused_patches,
         }
     }
 
@@ -252,6 +259,24 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         }
         if let Some(hit) = recomputed.get(&index) {
             return hit.clone();
+        }
+        // A fused chain's patches rebuild with one fast fill from the
+        // source; the interior views beneath never resolve at all.
+        if let Some(recipe) = self
+            .fused_patches
+            .as_ref()
+            .and_then(|patches| patches.get(&index))
+        {
+            let recipe = recipe.clone();
+            let source = self.resolved(recipe.source, recomputed);
+            let value = source.windowed_patches(
+                recipe.kernel_height,
+                recipe.kernel_width,
+                recipe.stride,
+                recipe.padding,
+            );
+            recomputed.insert(index, value.clone());
+            return value;
         }
         let links = self
             .operands

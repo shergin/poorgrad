@@ -112,7 +112,27 @@ pub trait Tensorial: Elementary {
         stride: usize,
         padding: usize,
     ) -> Self {
-        composed_windowed_product(self, kernel, kernel_height, kernel_width, stride, padding)
+        self.windowed_patches(kernel_height, kernel_width, stride, padding)
+            .matmul(kernel)
+    }
+
+    /// Returns the im2col matrix alone: the window rows of the padded,
+    /// strided sliding windows of `self` (`[batch, channels, height,
+    /// width]`), shaped `[batch * out_h * out_w, channels *
+    /// kernel_height * kernel_width]`.
+    ///
+    /// It is the half of [`Tensorial::windowed_product`] the backward
+    /// rematerializer calls when a fused chain's patches are read for a
+    /// kernel gradient: one fast fill instead of replaying the view
+    /// chain through the general element walk.
+    fn windowed_patches(
+        &self,
+        kernel_height: usize,
+        kernel_width: usize,
+        stride: usize,
+        padding: usize,
+    ) -> Self {
+        composed_windowed_patches(self, kernel_height, kernel_width, stride, padding)
     }
 
     /// Returns the rows of `self` selected by `selection` (a one-hot
@@ -126,13 +146,12 @@ pub trait Tensorial: Elementary {
     fn scatter(&self, selection: &Self, rows: usize) -> Self;
 }
 
-/// Composes the unfused window-product formula — pad, two unfolds,
-/// permute, the im2col reshape, and the matrix product — over any
-/// tensorial payload: the bitwise reference the fused fast paths are
-/// tested against, and the fallback for representations without one.
-pub(crate) fn composed_windowed_product<Data: Tensorial>(
+/// Composes the unfused im2col formula — pad, two unfolds, permute,
+/// and the patch reshape — over any tensorial payload: the bitwise
+/// reference the fused fast paths are tested against, and the fallback
+/// for representations without one.
+pub(crate) fn composed_windowed_patches<Data: Tensorial>(
     input: &Data,
-    kernel: &Data,
     kernel_height: usize,
     kernel_width: usize,
     stride: usize,
@@ -152,26 +171,36 @@ pub(crate) fn composed_windowed_product<Data: Tensorial>(
     let windows_shape = windows.shape();
     let out_height = windows_shape.axes()[2];
     let out_width = windows_shape.axes()[4];
-    windows
-        .permute(&[0, 2, 4, 1, 3, 5])
-        .reshape(Shape::new([
-            batch * out_height * out_width,
-            channels * kernel_height * kernel_width,
-        ]))
-        .matmul(kernel)
+    windows.permute(&[0, 2, 4, 1, 3, 5]).reshape(Shape::new([
+        batch * out_height * out_width,
+        channels * kernel_height * kernel_width,
+    ]))
+}
+
+/// Composes the unfused window-product formula: the composed patches
+/// followed by the matrix product.
+pub(crate) fn composed_windowed_product<Data: Tensorial>(
+    input: &Data,
+    kernel: &Data,
+    kernel_height: usize,
+    kernel_width: usize,
+    stride: usize,
+    padding: usize,
+) -> Data {
+    composed_windowed_patches(input, kernel_height, kernel_width, stride, padding).matmul(kernel)
 }
 
 impl Tensorial for f32 {
-    /// Scalar payloads use identity semantics: the product alone.
-    fn windowed_product(
+    /// Scalar payloads use identity semantics: the patches are the
+    /// value itself, so the product degenerates to the scalar matmul.
+    fn windowed_patches(
         &self,
-        kernel: &Self,
         _kernel_height: usize,
         _kernel_width: usize,
         _stride: usize,
         _padding: usize,
     ) -> Self {
-        self.matmul(kernel)
+        *self
     }
 
     fn matmul(&self, rhs: &Self) -> Self {
@@ -243,16 +272,16 @@ impl Tensorial for f32 {
 }
 
 impl Tensorial for f64 {
-    /// Scalar payloads use identity semantics: the product alone.
-    fn windowed_product(
+    /// Scalar payloads use identity semantics: the patches are the
+    /// value itself, so the product degenerates to the scalar matmul.
+    fn windowed_patches(
         &self,
-        kernel: &Self,
         _kernel_height: usize,
         _kernel_width: usize,
         _stride: usize,
         _padding: usize,
     ) -> Self {
-        self.matmul(kernel)
+        *self
     }
 
     fn matmul(&self, rhs: &Self) -> Self {
