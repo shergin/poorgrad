@@ -196,6 +196,32 @@ impl Layout {
             offset: self.offset + start * self.strides[axis],
         }
     }
+
+    /// Returns the layout of sliding windows along `axis`, a view sharing
+    /// the buffer: the axis is replaced by a `(count, size)` pair whose
+    /// window-start stride is `step` steps and whose in-window stride is
+    /// `dilation` steps of the original axis stride. Overlapping windows
+    /// (`step < dilation * size`) alias buffer elements, which is safe
+    /// because no operation ever writes through a view.
+    ///
+    /// The caller guarantees nonzero `size`, `step`, and `dilation`, and
+    /// `dilation * (size - 1) + 1 <= extent(axis)`.
+    pub(crate) fn unfold(&self, axis: usize, size: usize, step: usize, dilation: usize) -> Layout {
+        let axes = self.shape.axes();
+        let count = (axes[axis] - dilation * (size - 1) - 1) / step + 1;
+        let mut unfolded: Vec<usize> = axes.to_vec();
+        unfolded[axis] = count;
+        unfolded.insert(axis + 1, size);
+        let mut strides = self.strides.clone();
+        let along = strides[axis];
+        strides[axis] = step * along;
+        strides.insert(axis + 1, dilation * along);
+        Layout {
+            shape: Shape::new(unfolded),
+            strides,
+            offset: self.offset,
+        }
+    }
 }
 
 #[cfg(test)]

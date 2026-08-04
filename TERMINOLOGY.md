@@ -335,6 +335,9 @@ and broadcasting are adjoint in two matched pairs: `sum` with
 same adjoint way: `reshape` and `permute` invert their view, and
 `narrow` selects a window whose gradient `pad`s back into the excluded
 positions as zeros (`narrow` with `pad` as the third adjoint pair),
+`unfold` slides windows along an axis whose gradient `fold`s back with
+per-position accumulation (the fourth adjoint pair; see the sliding
+windows entry),
 and `gather` selects table rows by a one-hot `Selection` whose gradient
 `scatter`s back, accumulating rows selected more than once (`gather` with
 `scatter` as the fourth pair, and the embedding lookup). The selection is
@@ -355,6 +358,19 @@ written, and no operation aligns shapes implicitly. In poorgrad: the
 `Value::matmul`, `transpose`, `sum`, `sum_along`, `broadcast_like`,
 `broadcast_along`, `reshape`, `permute`, `narrow`, `gather`,
 `log_softmax`, and the `reshape`-based `squeeze` and `unsqueeze`.
+
+**Unfold (sliding windows) / fold.** The windowing pair behind
+convolution and pooling. `unfold(axis, size, step, dilation)` replaces
+an axis with a `(count, size)` pair — window `w` starts at `w * step`
+and takes every `dilation`-th element — as a strided *view* over the
+shared buffer: overlapping windows alias elements read-only, which
+immutability makes safe. `fold` is its adjoint and gradient rule: the
+window pair folds back onto an axis of a given extent, each source
+position summing, output-centrically and in window order, the window
+elements read from it — deterministic under any evaluation strategy.
+Two `unfold`s produce 2-D windows (torch semantics). In poorgrad:
+[`Tensorial::unfold`/`fold`](src/payload/tensorial.rs) over
+[`Layout::unfold`](src/payload/layout.rs).
 
 **Arena.** Append-only storage in which every recorded node lives exactly
 once, shared by all generations of a network; allocations never move or

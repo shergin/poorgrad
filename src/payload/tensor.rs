@@ -924,6 +924,139 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         Self::dense(padded, elements)
     }
 
+    /// Returns the sliding windows of `self` along `axis` as a strided
+    /// view over the same buffer: the axis becomes a `(count, size)`
+    /// pair where window `w` starts at `w * step` and takes every
+    /// `dilation`-th element. Overlapping windows alias elements
+    /// read-only, which immutability makes safe.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank, `size`, `step`, or `dilation`
+    /// is zero, or the dilated window span `dilation * (size - 1) + 1`
+    /// overflows or exceeds the axis extent.
+    fn unfold(&self, axis: usize, size: usize, step: usize, dilation: usize) -> Self {
+        let shape = self.logical_shape();
+        assert!(
+            axis < shape.rank(),
+            "unfold axis {axis} is out of rank for {shape}"
+        );
+        assert!(size > 0, "unfold windows must hold at least one element");
+        assert!(step > 0, "unfold step must be positive");
+        assert!(dilation > 0, "unfold dilation must be positive");
+        let extent = shape.axes()[axis];
+        let span = dilation
+            .checked_mul(size - 1)
+            .and_then(|reach| reach.checked_add(1))
+            .expect("unfold window span overflows `usize`");
+        assert!(
+            span <= extent,
+            "unfold window span {span} exceeds axis {axis} extent {extent}"
+        );
+        match &self.storage {
+            Storage::Constant { value, .. } => {
+                let count = (extent - span) / step + 1;
+                let mut unfolded: Vec<usize> = shape.axes().to_vec();
+                unfolded[axis] = count;
+                unfolded.insert(axis + 1, size);
+                Self::constant(Shape::new(unfolded), value.clone())
+            }
+            Storage::Dense { data, layout } => Self {
+                storage: Storage::Dense {
+                    data: Arc::clone(data),
+                    layout: layout.unfold(axis, size, step, dilation),
+                },
+            },
+            Storage::Selection { .. } => self.densify().unfold(axis, size, step, dilation),
+        }
+    }
+
+    /// Returns the `(count, size)` window pair at `axis`, `axis + 1`
+    /// folded back onto an axis of `extent`: the adjoint of
+    /// [`unfold`](Tensorial::unfold) and its gradient rule.
+    ///
+    /// The accumulation is output-centric: each source position sums,
+    /// in window order, the window elements that were read from it, so
+    /// the result is deterministic under any evaluation strategy.
+    /// Positions no window reaches fold to zero.
+    ///
+    /// # Panics
+    /// Panics if `axis + 1` is out of rank, `size`, `step`, or
+    /// `dilation` is zero, the dilated window span overflows or exceeds
+    /// `extent`, or the shape at `axis`, `axis + 1` disagrees with the
+    /// windows `unfold` would produce for `extent`.
+    fn fold(&self, axis: usize, size: usize, step: usize, dilation: usize, extent: usize) -> Self {
+        let shape = self.logical_shape();
+        let axes = shape.axes();
+        assert!(
+            axis + 1 < axes.len(),
+            "fold window axes {axis}, {} are out of rank for {shape}",
+            axis + 1
+        );
+        assert!(size > 0, "fold windows must hold at least one element");
+        assert!(step > 0, "fold step must be positive");
+        assert!(dilation > 0, "fold dilation must be positive");
+        let span = dilation
+            .checked_mul(size - 1)
+            .and_then(|reach| reach.checked_add(1))
+            .expect("fold window span overflows `usize`");
+        assert!(
+            span <= extent,
+            "fold window span {span} exceeds the extent {extent}"
+        );
+        let count = (extent - span) / step + 1;
+        assert_eq!(
+            axes[axis], count,
+            "fold window count {} disagrees with the {count} windows of extent {extent}",
+            axes[axis]
+        );
+        assert_eq!(
+            axes[axis + 1],
+            size,
+            "fold window size {} disagrees with {size}",
+            axes[axis + 1]
+        );
+        let outer: usize = axes[..axis].iter().product();
+        let inner: usize = axes[axis + 2..].iter().product();
+        let zero = self.get(0).zero_like();
+
+        let mut elements = Vec::with_capacity(outer * extent * inner);
+        for outer_index in 0..outer {
+            for position in 0..extent {
+                for inner_index in 0..inner {
+                    let mut total = zero.clone();
+                    // Window `w` reads `position` as its element `k`
+                    // exactly when `w * step + k * dilation == position`.
+                    for k in 0..size {
+                        let reach = k * dilation;
+                        if reach > position {
+                            break;
+                        }
+                        let rest = position - reach;
+                        if rest % step != 0 {
+                            continue;
+                        }
+                        let window = rest / step;
+                        if window >= count {
+                            continue;
+                        }
+                        let source =
+                            ((outer_index * count + window) * size + k) * inner + inner_index;
+                        total = total + self.get(source).clone();
+                    }
+                    elements.push(total);
+                }
+            }
+        }
+        let folded = Shape::new(
+            axes[..axis]
+                .iter()
+                .copied()
+                .chain(std::iter::once(extent))
+                .chain(axes[axis + 2..].iter().copied()),
+        );
+        Self::dense(folded, elements)
+    }
+
     /// Returns the rows of `self` selected by `selection`, a one-hot
     /// `[count, vocab]` whose vocabulary must equal `self`'s first axis; the
     /// result is `[count, ...self.shape[1..]]` with row `i` equal to

@@ -71,6 +71,27 @@ pub trait Tensorial: Elementary {
     /// [`narrow`](Tensorial::narrow) and the gradient rule for it.
     fn pad(&self, axis: usize, start: usize, full_extent: usize) -> Self;
 
+    /// Returns the sliding windows of `self` along `axis`: the axis is
+    /// replaced by a `(count, size)` pair where window `w` starts at
+    /// `w * step` and takes every `dilation`-th element, so
+    /// `count = (extent - dilation * (size - 1) - 1) / step + 1`.
+    ///
+    /// It is the windowing view behind convolution and pooling (the
+    /// torch-semantics single-axis `unfold`; two applications produce 2-D
+    /// windows). Windows overlap when `step < dilation * size`, which is
+    /// safe read-only aliasing: payloads are immutable.
+    fn unfold(&self, axis: usize, size: usize, step: usize, dilation: usize) -> Self;
+
+    /// Returns the `(count, size)` window pair at `axis`, `axis + 1`
+    /// folded back onto an axis of `extent`: the adjoint of
+    /// [`unfold`](Tensorial::unfold) and the gradient rule for it.
+    ///
+    /// Each source position sums the window elements that were read from
+    /// it, accumulated output-centrically in window order, so the result
+    /// is deterministic under any evaluation strategy. Positions no
+    /// window reaches fold to zero.
+    fn fold(&self, axis: usize, size: usize, step: usize, dilation: usize, extent: usize) -> Self;
+
     /// Returns the rows of `self` selected by `selection` (a one-hot
     /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
     /// embedding-style row gather, `result[i] = self[selection_index(i)]`.
@@ -127,6 +148,21 @@ impl Tensorial for f32 {
         *self
     }
 
+    fn unfold(&self, _axis: usize, _size: usize, _step: usize, _dilation: usize) -> Self {
+        *self
+    }
+
+    fn fold(
+        &self,
+        _axis: usize,
+        _size: usize,
+        _step: usize,
+        _dilation: usize,
+        _extent: usize,
+    ) -> Self {
+        *self
+    }
+
     fn gather(&self, _selection: &Self) -> Self {
         *self
     }
@@ -178,6 +214,21 @@ impl Tensorial for f64 {
     }
 
     fn pad(&self, _axis: usize, _start: usize, _full_extent: usize) -> Self {
+        *self
+    }
+
+    fn unfold(&self, _axis: usize, _size: usize, _step: usize, _dilation: usize) -> Self {
+        *self
+    }
+
+    fn fold(
+        &self,
+        _axis: usize,
+        _size: usize,
+        _step: usize,
+        _dilation: usize,
+        _extent: usize,
+    ) -> Self {
         *self
     }
 

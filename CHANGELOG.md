@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Tensorial::unfold` and `Tensorial::fold`: single-axis sliding
+  windows (torch semantics, with a dilation parameter) as a strided
+  view over the shared buffer, and their adjoint — each source
+  position sums its own window contributions in window order, so
+  folding is deterministic under any evaluation strategy. The
+  substrate for convolution and pooling. Breaking for custom
+  payload implementations, which must add both methods.
+
 - `BatchNorm`: batch normalization at tensor granularity over
   `[batch, features]` values. `express` records the training mode —
   normalization by the batch's own mean and biased variance — and

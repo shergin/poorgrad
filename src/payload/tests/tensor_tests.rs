@@ -70,6 +70,81 @@ fn counted_spreads_the_count_across_the_shape() {
 }
 
 #[test]
+fn unfold_slides_overlapping_windows() {
+    let tensor = Tensor::new([8], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
+    let windows = tensor.unfold(0, 3, 2, 1);
+    assert_eq!(windows.shape(), Shape::new([3, 3]));
+    // Windows start every 2 elements and overlap by one; the view is
+    // strided, not contiguous.
+    assert_eq!(
+        windows.to_vec(),
+        &[1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 5.0, 6.0, 7.0]
+    );
+    assert!(windows.as_slice().is_none());
+}
+
+#[test]
+fn unfold_dilation_spaces_the_window_elements() {
+    let tensor = Tensor::new([8], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
+    let windows = tensor.unfold(0, 2, 1, 3);
+    // Span `3 * (2 - 1) + 1 = 4`, so `(8 - 4) / 1 + 1 = 5` windows of
+    // elements three apart.
+    assert_eq!(windows.shape(), Shape::new([5, 2]));
+    assert_eq!(
+        windows.to_vec(),
+        &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0, 4.0, 7.0, 5.0, 8.0]
+    );
+}
+
+#[test]
+fn unfold_preserves_surrounding_axes() {
+    let tensor = Tensor::new([2, 4], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
+    let windows = tensor.unfold(1, 2, 2, 1);
+    assert_eq!(windows.shape(), Shape::new([2, 2, 2]));
+    assert_eq!(windows.to_vec(), &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+}
+
+#[test]
+fn unfold_keeps_constants_constant() {
+    let windows = Tensor::filled([5], 7.0_f64).unfold(0, 2, 1, 1);
+    assert_eq!(windows.shape(), Shape::new([4, 2]));
+    assert_eq!(windows.to_vec(), &[7.0; 8]);
+}
+
+#[test]
+#[should_panic(expected = "exceeds axis 0 extent")]
+fn unfold_rejects_an_oversized_window() {
+    Tensor::new([4], vec![1.0_f64; 4]).unfold(0, 3, 2, 2);
+}
+
+#[test]
+fn fold_sums_the_window_coverage() {
+    // Folding all-ones windows counts how many windows read each
+    // position; position 7 is beyond the last window and folds to zero.
+    let windows = Tensor::filled([3, 3], 1.0_f64);
+    let folded = windows.fold(0, 3, 2, 1, 8);
+    assert_eq!(folded.shape(), Shape::new([8]));
+    assert_eq!(folded.to_vec(), &[1.0, 1.0, 2.0, 1.0, 2.0, 1.0, 1.0, 0.0]);
+}
+
+#[test]
+fn fold_is_the_adjoint_of_unfold() {
+    // `<unfold(x), y> == <x, fold(y)>` for exact dyadic fixtures, in
+    // both pairing directions of the same identity.
+    let x = Tensor::new([8], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
+    let y = Tensor::new([3, 3], (1..=9).map(|v| v as f64).collect::<Vec<_>>());
+    let unfolded_pairing = (x.unfold(0, 3, 2, 1) * y.clone()).sum();
+    let folded_pairing = (x * y.fold(0, 3, 2, 1, 8)).sum();
+    assert_eq!(unfolded_pairing.to_vec(), folded_pairing.to_vec());
+}
+
+#[test]
+#[should_panic(expected = "disagrees with the 3 windows")]
+fn fold_rejects_a_mismatched_window_count() {
+    Tensor::filled([4, 3], 1.0_f64).fold(0, 3, 2, 1, 8);
+}
+
+#[test]
 fn transcendentals_apply_elementwise() {
     let tensor = Tensor::new([2], [0.0_f64, 1.0]);
     let result = tensor.tanh();
