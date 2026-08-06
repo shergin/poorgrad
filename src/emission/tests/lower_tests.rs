@@ -91,7 +91,7 @@ fn unfold_case() -> Case {
 fn a_small_plan_emits_the_golden_module() {
     let expected = "\
 module @poorgrad {
-  func.func @plan(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<f32>) {
+  func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<f32>) {
     %v2 = stablehlo.dot_general %arg1, %arg0, contracting_dims = [1] x [0] : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xf32>
     %v3_zero = stablehlo.constant dense<0.0> : tensor<2x2xf32>
     %v3 = stablehlo.maximum %v2, %v3_zero : tensor<2x2xf32>
@@ -359,9 +359,19 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
             String::from_utf8_lossy(&output.stderr),
         );
         let stdout = String::from_utf8(output.stdout).expect("the evaluator prints text");
+        // Keep only protocol lines — a dimensions token then elements —
+        // since some backends print banners to standard output.
         let results: Vec<Vec<f64>> = stdout
             .lines()
-            .filter(|line| !line.trim().is_empty())
+            .filter(|line| {
+                let Some(first) = line.split_whitespace().next() else {
+                    return false;
+                };
+                first == "-"
+                    || first
+                        .split('x')
+                        .all(|extent| extent.parse::<usize>().is_ok())
+            })
             .map(|line| {
                 line.split_whitespace()
                     .skip(1)

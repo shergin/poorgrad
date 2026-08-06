@@ -73,7 +73,7 @@ impl Emitter {
 
 impl<Element: Emittable> Plan<Tensor<Element>> {
     /// Serializes this plan as a textual StableHLO module: one
-    /// `func.func @plan` whose arguments are the plan's parameters then
+    /// `func.func @main` whose arguments are the plan's parameters then
     /// its inputs, both in recording order, and whose results are the
     /// readable values in recording order. Leaves embed as constants.
     ///
@@ -143,7 +143,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         writeln!(module, "module @poorgrad {{").expect("writing to a string cannot fail");
         writeln!(
             module,
-            "  func.func @plan({}) -> ({}) {{",
+            "  func.func @main({}) -> ({}) {{",
             arguments.join(", "),
             result_types.join(", "),
         )
@@ -418,10 +418,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                     .collect();
                 emitter.line(format!(
                     "{result} = \"stablehlo.gather\"({source_name}, {starts}) \
-                     <{{dimension_numbers = #stablehlo.gather<offset_dims = {offset_dims:?}, \
+                     {{dimension_numbers = #stablehlo.gather<offset_dims = {offset_dims:?}, \
                      collapsed_slice_dims = [{axis}], start_index_map = [{axis}], \
                      index_vector_dim = 2>, indices_are_sorted = false, \
-                     slice_sizes = array<i64: {sizes}>}}> \
+                     slice_sizes = array<i64: {sizes}>}} \
                      : ({source_type}, {starts_type}) -> {result_type}",
                     axis = unfold.axis,
                     sizes = slice_sizes.join(", "),
