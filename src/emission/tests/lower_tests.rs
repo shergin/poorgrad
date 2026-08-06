@@ -171,6 +171,62 @@ fn convolution_case() -> Case {
     }
 }
 
+/// Builds a miniature of the mnist probe: convolution, relu, max
+/// pooling, a dense head, and log-softmax scores — the whole conv
+/// consumer family shape, emitted end to end.
+fn probe_case() -> Case {
+    use crate::{conv2d, max_pool};
+
+    let network = Network::new();
+    let image = Tensor::new(
+        [1, 2, 6, 6],
+        (0..72)
+            .map(|index| (index % 13) as f32 / 6.0 - 1.0)
+            .collect::<Vec<_>>(),
+    );
+    let image_value = network.parameter(image.clone());
+    let weights = Tensor::new(
+        [3, 2, 3, 3],
+        (0..54)
+            .map(|index| (index % 11) as f32 / 5.0 - 1.0)
+            .collect::<Vec<_>>(),
+    );
+    let weights_value = network.parameter(weights.clone());
+    let bias = Tensor::new([3], [0.1_f32, -0.2, 0.3]);
+    let bias_value = network.parameter(bias.clone());
+    let dense = Tensor::new(
+        [27, 5],
+        (0..135)
+            .map(|index| (index % 7) as f32 / 3.0 - 1.0)
+            .collect::<Vec<_>>(),
+    );
+    let dense_value = network.parameter(dense.clone());
+
+    let features = conv2d(image_value, weights_value, bias_value, 1, 1).relu();
+    let pooled = max_pool(features, 2, 2);
+    let scores = pooled.reshape([1, 27]).matmul(dense_value).log_softmax(1);
+    let plan = network.compile([scores.symbol()], []);
+    assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
+    let evaluation = plan.forward(&network, []);
+    Case {
+        name: "probe",
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![image, weights, bias, dense],
+        expected: vec![evaluation.of(network.resolve(scores.symbol())).to_vec()],
+    }
+}
+
+#[test]
+fn probe_networks_emit_end_to_end() {
+    let module = probe_case().module;
+    // The conv chain raises; the pool chain lowers through the
+    // static-gather fallback until a reduce_window raise earns its
+    // place.
+    assert!(module.contains("stablehlo.convolution"), "{module}");
+    assert!(module.contains("\"stablehlo.gather\""), "{module}");
+    assert!(module.contains("stablehlo.maximum"), "{module}");
+}
+
 #[test]
 fn fused_plans_raise_to_convolution() {
     let module = convolution_case().module;
@@ -226,6 +282,7 @@ fn emitted_modules_parse_through_the_toolchain() {
         attention_case(),
         unfold_case(),
         convolution_case(),
+        probe_case(),
     ] {
         let path = temp_file(&format!("parse-{}.mlir", case.name), &case.module);
         let output = Command::new(&command[0])
@@ -282,6 +339,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         attention_case(),
         unfold_case(),
         convolution_case(),
+        probe_case(),
     ] {
         let module_path = temp_file(&format!("eval-{}.mlir", case.name), &case.module);
         let lines: Vec<String> = case.arguments.iter().map(evaluator_line).collect();
