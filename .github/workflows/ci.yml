@@ -54,3 +54,25 @@ jobs:
       - run: cargo clippy --all-targets --features accelerate,metal,simd -- -D warnings
       - run: cargo test --lib --tests --examples --features accelerate,metal,simd
       - run: cargo test --doc --features accelerate,metal,simd
+
+  # Emission conformance runs for real: without a toolchain the
+  # round-trip and execution tests pass vacuously, so this job
+  # installs `jax` (whose bundled MLIR bindings carry the StableHLO
+  # parser and reference interpreter) and points the suite's two
+  # evaluator seams at the tools scripts. Every emitted module must
+  # parse through an external parser and execute to the plan's own
+  # results within the envelope.
+  conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install jax
+      - run: cargo test emission
+        env:
+          POORGRAD_STABLEHLO_VALIDATOR: python3 tools/validate-stablehlo.py
+          POORGRAD_STABLEHLO_EVALUATOR: python3 tools/eval-stablehlo.py
