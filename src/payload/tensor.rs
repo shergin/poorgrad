@@ -115,8 +115,12 @@ impl<Element> Tensor<Element> {
 
     /// Returns the buffer window a strided dense view addresses together
     /// with its layout rebased to the window start, or `None` when the
-    /// storage is not a strided view or walking the window would cost more
-    /// than a logical walk (a narrow view over a sliver of a large buffer).
+    /// storage is not a strided view or the window is not strictly narrower
+    /// than the volume: only a broadcast view computes fewer elements and
+    /// earns staying a view. An equal-width window (a transpose) must keep
+    /// the logical scalar walk — the backend seam reading the window would
+    /// silently replace the documented bitwise fallback — and a wider one
+    /// (a narrow sliver) would cost more than the walk it replaces.
     ///
     /// An elementwise transform commutes with any view, so a caller may
     /// transform the window and keep the layout instead of materializing
@@ -126,7 +130,7 @@ impl<Element> Tensor<Element> {
         let Storage::Dense { data, layout } = &self.storage else {
             return None;
         };
-        if layout.is_contiguous() || layout.span() > layout.volume() {
+        if layout.is_contiguous() || layout.span() >= layout.volume() {
             return None;
         }
         let start = layout.offset();
