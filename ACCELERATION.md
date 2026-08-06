@@ -4,19 +4,20 @@ How poorgrad uses the hardware the GPU poor already own. The stack
 is deliberately explicit: backends are opt-in cargo features,
 enabling a feature is the whole activation, and every number below
 is measured, not asserted — `cargo bench` and the `throughput`
-example rerun all of them on your machine.
+example rerun the in-crate numbers on your machine, and the
+[tools/](tools/) scripts rerun the emission ones.
 
 ## The ladder
 
 Measured on an Apple M1 Pro (16-core GPU, 32 GB unified memory);
 matrix numbers at 512- to 2048-square:
 
-| build | matrix products | `exp` `ln` `sqrt` `tanh` | runs on |
+| build | matrix products | `exp` `ln` `sqrt` `tanh` (`f32` `tanh`, 2M-8M) | runs on |
 |---|---|---|---|
-| default | 26 GFLOP/s `f32`, 13 `f64` | scalar | everywhere |
-| `--features simd` | 96 GFLOP/s `f32`, 47 `f64` | scalar | everywhere |
-| `--features accelerate` | 1.6 TFLOP/s `f32`, 550 GFLOP/s `f64` | vectorized | macOS; a safe stub elsewhere |
-| `--features metal` | 1.4 TFLOP/s `f32` at large sizes; no `f64` | scalar | macOS; a safe stub elsewhere |
+| default | 26 GFLOP/s `f32`, 13 `f64` | scalar, 0.4 Gelem/s | everywhere |
+| `--features simd` | 96 GFLOP/s `f32`, 47 `f64` | scalar, 0.4 Gelem/s | everywhere |
+| `--features accelerate` | 1.6 TFLOP/s `f32`, 550 GFLOP/s `f64` | vForce, 1.2 Gelem/s | macOS; a safe stub elsewhere |
+| `--features metal` | 1.4 TFLOP/s `f32` at large sizes; no `f64` | GPU, 2.2-2.7 Gelem/s above 128k elements | macOS; a safe stub elsewhere |
 
 The `simd` row is that backend's NEON kernels on the same machine;
 its AVX-512/AVX2 kernels on x86 Linux are expected to be of the
@@ -30,6 +31,32 @@ logical access — measures 0.4 GFLOP/s and remains the correctness
 anchor and the fallback for exotic layouts. End to end, the same
 training source spans a factor of four thousand with zero source
 changes.
+
+## Views and broadcasting
+
+Broadcasting is metadata, not memory: a broadcast is a stride-0
+view over the source buffer, a squeeze of a broadcast view stays a
+view, and the elementwise paths read views at slice speed. Two
+mechanisms carry this, both in the default build. Binary operations
+walk same-shape operands by innermost runs — a unit stride is a
+slice, a zero stride holds one element for the run — which is the
+loop shape the auto-vectorizer wants and the odometer walk defeats.
+Elementwise maps over a broadcast view transform only the distinct
+elements and keep the layout, so the result is still a view and the
+backend seam sees a contiguous window.
+
+Measured on 2M-element `f32` operands (the `broadcast` bench):
+
+| case | odometer walk | view paths |
+|---|---|---|
+| matrix plus broadcast row (bias add) | 0.17 Gelem/s | 7.6 Gelem/s |
+| broadcast column times broadcast row | 0.14 Gelem/s | 9.8 Gelem/s |
+| `exp` over a broadcast row | 0.19 Gelem/s | the 1k distinct elements only |
+
+The graph tier records broadcasts explicitly — `broadcast_to` and
+`broadcast_pair` compose the named expansions under the right-aligned
+NumPy rule — and the payload tier makes them free; no operation ever
+broadcasts implicitly.
 
 ## End to end
 
@@ -107,7 +134,8 @@ and narrowed views map to BLAS transpose flags and leading
 dimensions without copies; stride patterns BLAS cannot express (a
 broadcast operand) decline down the chain. Whole-buffer `exp`,
 `ln`, `sqrt`, and `tanh` over contiguous tensors run through
-vForce's vectorized transcendentals.
+vForce's vectorized transcendentals — including over broadcast
+views, whose distinct-element windows are contiguous.
 
 **The `simd` feature** is the portable rung: the `matrixmultiply`
 crate's hand-tuned, single-threaded CPU microkernels, selecting
@@ -142,22 +170,70 @@ memory. Stated as measured: the AMX units currently beat this
 kernel at every size, so where both Apple features are compiled
 Accelerate leads and Metal serves what BLAS declines; in metal-only
 builds it runs everything large at about fifty times the built-in
-path. A failed setup or a runtime error poisons the backend into
-declining forever, with the reason held for `status` — a numerics
-library degrades to slow, never to wrong.
+path. Whole-buffer `exp`, `ln`, `sqrt`, and `tanh` run on the GPU
+through one-thread-per-element kernels in the same compiled
+library, and here the order reverses: the GPU passes vForce near
+512k elements (2.7 against 1.2 Gelem/s at 8M), so Metal leads the
+map chain with a size gate that adapts to whether `accelerate`
+stands behind it. A failed setup or a runtime error poisons the
+backend into declining forever, with the reason held for `status` —
+a numerics library degrades to slow, never to wrong.
 
 ## Routing
 
-Backends form a compile-time chain tried in declaration order —
-`Accelerate`, then `Metal`, then `Cuda`, then `Simd` — and each may
-decline any task: below
-its threshold, outside its stride mapping, beyond its integer
-range, or with its device gone. Whatever the whole chain declines
+Backends form a compile-time chain tried in declaration order and
+ordered per task family by measurement — products try `Accelerate`,
+then `Metal`, then `Cuda`, then `Simd`; elementwise maps try
+`Metal`, then `Accelerate`, the measured crossover — and each may
+decline any task: below its threshold, outside its stride mapping,
+beyond its integer range, or with its device gone. Whatever the whole chain declines
 lands on the built-in paths, so every task computes correctly in
 every build; features change speed, never behavior classes. There
 is deliberately no runtime switch: selection is per-build
 (features) and per-task (thresholds, dtype — `f64` never reaches
 Metal), never per-call-site.
+
+## Past the boundary: emitted plans on XLA
+
+Everything above accelerates poorgrad's own execution. There is a
+second road, for serving: a compiled forward plan is a closed, pure
+tensor function, and `Plan::emit_stablehlo` writes it down as a
+textual StableHLO module that any XLA-world runtime compiles and
+runs. Nothing links in-crate — the boundary is text, and the
+runners are scripts in [tools/](tools/) driven by two environment
+variables the test suite also honors (`POORGRAD_STABLEHLO_VALIDATOR`
+parses every emitted module, `POORGRAD_STABLEHLO_EVALUATOR` executes
+it and checks the results against the interpreter's own).
+
+Measured steady state on the same machine, modules emitted from
+real plans, compile costs (16-121 ms) amortized:
+
+| per run | poorgrad plan (`accelerate`) | XLA-CPU | XLA on the GPU (`jax-metal`) | reference interpreter |
+|---|---|---|---|---|
+| batch-8 CNN forward | 2.6 ms | 0.24 ms | 5.4 ms | 3.0 s |
+| 256-token attention block | 0.46 ms | 0.37 ms | 0.65 ms | 6.3 s |
+
+Three readings worth their lines:
+
+- The CNN row is the emission story's whole argument in one number:
+  the same tape serves eleven times faster by writing the plan down
+  and letting XLA's threaded convolution kernels run it. Training
+  and inspection stay at home, where the oracle and the determinism
+  contract live; serving rides an industrial compiler for free.
+- The attention row says the interpreter is within a quarter of XLA
+  on GEMM-bound work — both ride BLAS, and the view paths above
+  keep everything around the products out of the way.
+- XLA-on-Metal loses to every CPU path at these sizes (Apple's
+  PJRT plugin is experimental and version-frozen), and the
+  reference interpreter is a specification tool, three orders of
+  magnitude off — each is a conformance target, not a runner.
+
+Every emitted module is checked twice before any of this: an
+external parser must accept the text, and the StableHLO reference
+interpreter — the specification's executable semantics — must
+reproduce the plan's results within an envelope. Both checks run in
+the ordinary test suite whenever the toolchain (any Python with
+`jax`) is present, and pass vacuously when it is not.
 
 ## Determinism
 
