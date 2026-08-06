@@ -105,6 +105,10 @@ name = "makemore_mlp_batchnorm"
 path = "examples/makemore/mlp_batchnorm.rs"
 
 [[example]]
+name = "makemore_transformer"
+path = "examples/makemore/transformer.rs"
+
+[[example]]
 name = "mnist"
 path = "examples/mnist/main.rs"
 
