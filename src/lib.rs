@@ -53,11 +53,13 @@
 #![deny(unsafe_code)]
 
 mod backend;
+mod emission;
 mod engine;
 mod neural;
 mod payload;
 
 pub use backend::{Backend, BackendUnavailable};
+pub use emission::{EmitError, Emittable};
 pub use engine::{Evaluation, Field, Gradients, Network, Plan, Symbol, Value, concat, stack};
 pub use neural::{
     Activation, BatchNorm, Conv2d, Layer, LayerNorm, Mlp, Neuron, Normalization, RmsNorm,

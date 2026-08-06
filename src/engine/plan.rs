@@ -486,6 +486,38 @@ impl<Data: Differentiable> Plan<Data> {
         self.len() == 0
     }
 
+    /// Returns the plan's function column, for plan consumers such as
+    /// the StableHLO emitter — introspection siblings of `describe`.
+    pub(crate) fn functions(&self) -> &CowVec<Function<Data>> {
+        &self.functions
+    }
+
+    /// Returns the plan's operand column, parallel to the functions.
+    pub(crate) fn operands(&self) -> &CowVec<Operands> {
+        &self.operands
+    }
+
+    /// Returns the recorded shape of every node.
+    pub(crate) fn shapes(&self) -> &[Shape] {
+        &self.shapes
+    }
+
+    /// Returns the ancestor closure of the targets and keeps: what a
+    /// run must evaluate.
+    pub(crate) fn wanted(&self) -> &[bool] {
+        &self.wanted
+    }
+
+    /// Returns the declared observable set: targets plus keeps.
+    pub(crate) fn readable(&self) -> &[bool] {
+        &self.readable
+    }
+
+    /// Returns how many window-GEMM fusion groups the plan matched.
+    pub(crate) fn fusion_groups(&self) -> usize {
+        self.fused.iter().flatten().count()
+    }
+
     /// Simulates a run's live volume under `releases`, returning the
     /// peak and where it occurs, plus the retain-all total.
     fn live_story(&self, releases: &[SmallVec<[usize; 2]>]) -> (usize, usize, usize) {
