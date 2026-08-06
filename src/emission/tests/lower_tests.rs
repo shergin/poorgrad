@@ -1,34 +1,23 @@
-use crate::{Network, Tensor, concat};
+use std::process::Command;
+
+use crate::{Network, Plan, Tensor, concat};
 
 use super::EmitError;
 
-#[test]
-fn a_small_plan_emits_the_golden_module() {
+/// Compiles the smallest interesting plan: an input times a parameter,
+/// rectified and summed.
+fn small_plan() -> Plan<Tensor<f32>> {
     let network = Network::new();
     let weights = network.parameter(Tensor::new([2, 2], [1.0_f32, 2.0, 3.0, 4.0]));
     let x = network.input(Tensor::new([2, 2], [0.0_f32; 4]));
     let loss = x.matmul(weights).relu().sum();
-    let plan = network.compile([loss.symbol()], []);
-
-    let expected = "\
-module @poorgrad {
-  func.func @plan(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<f32>) {
-    %v2 = stablehlo.dot_general %arg1, %arg0, contracting_dims = [1] x [0] : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xf32>
-    %v3_zero = stablehlo.constant dense<0.0> : tensor<2x2xf32>
-    %v3 = stablehlo.maximum %v2, %v3_zero : tensor<2x2xf32>
-    %v4_seed = stablehlo.constant dense<0.0> : tensor<f32>
-    %v4 = stablehlo.reduce(%v3 init: %v4_seed) applies stablehlo.add across dimensions = [0, 1] : (tensor<2x2xf32>, tensor<f32>) -> tensor<f32>
-    return %v4 : tensor<f32>
-  }
-}
-";
-    assert_eq!(plan.emit_stablehlo().expect("the plan emits"), expected);
+    network.compile([loss.symbol()], [])
 }
 
-#[test]
-fn attention_shaped_plans_emit_their_composition() {
-    // A miniature of the transformer's sampling plan: embedding gather,
-    // masked softmax over scaled scores, two heads joined by concat.
+/// Compiles a miniature of the transformer's sampling plan: embedding
+/// gather, masked softmax over scaled scores, two heads joined by
+/// concat.
+fn attention_plan() -> Plan<Tensor<f32>> {
     let network = Network::new();
     let table = network.parameter(Tensor::new([3, 4], vec![0.1_f32; 12]));
     let tokens = network.input(Tensor::selection(vec![0, 1], 3, 1.0_f32));
@@ -44,9 +33,32 @@ fn attention_shaped_plans_emit_their_composition() {
         })
         .collect();
     let output = concat(&heads, 1);
-    let plan = network.compile([output.symbol()], []);
+    network.compile([output.symbol()], [])
+}
 
-    let module = plan.emit_stablehlo().expect("the plan emits");
+#[test]
+fn a_small_plan_emits_the_golden_module() {
+    let expected = "\
+module @poorgrad {
+  func.func @plan(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<f32>) {
+    %v2 = stablehlo.dot_general %arg1, %arg0, contracting_dims = [1] x [0] : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xf32>
+    %v3_zero = stablehlo.constant dense<0.0> : tensor<2x2xf32>
+    %v3 = stablehlo.maximum %v2, %v3_zero : tensor<2x2xf32>
+    %v4_seed = stablehlo.constant dense<0.0> : tensor<f32>
+    %v4 = stablehlo.reduce(%v3 init: %v4_seed) applies stablehlo.add across dimensions = [0, 1] : (tensor<2x2xf32>, tensor<f32>) -> tensor<f32>
+    return %v4 : tensor<f32>
+  }
+}
+";
+    assert_eq!(
+        small_plan().emit_stablehlo().expect("the plan emits"),
+        expected
+    );
+}
+
+#[test]
+fn attention_shaped_plans_emit_their_composition() {
+    let module = attention_plan().emit_stablehlo().expect("the plan emits");
     for expected in [
         "stablehlo.dot_general",
         "stablehlo.transpose",
@@ -92,4 +104,50 @@ fn fused_plans_decline_with_the_group_count() {
     // cannot raise yet.
     let plan = network.compile([convolved.symbol()], []);
     assert_eq!(plan.emit_stablehlo(), Err(EmitError::Fused { groups: 1 }));
+}
+
+/// Returns the external validator command, if one is available: the
+/// `POORGRAD_STABLEHLO_VALIDATOR` environment variable names a command
+/// invoked as `command <file>` (such as `tools/validate-stablehlo.py`
+/// under a Python with `jax` installed), and `stablehlo-opt` serves
+/// when it is on the path.
+fn validator() -> Option<Vec<String>> {
+    if let Ok(command) = std::env::var("POORGRAD_STABLEHLO_VALIDATOR") {
+        return Some(command.split_whitespace().map(str::to_string).collect());
+    }
+    let probe = Command::new("stablehlo-opt").arg("--version").output();
+    if probe.is_ok_and(|output| output.status.success()) {
+        return Some(vec!["stablehlo-opt".to_string()]);
+    }
+    None
+}
+
+#[test]
+fn emitted_modules_parse_through_the_toolchain() {
+    // Tier-0 conformance: an external StableHLO parser must accept the
+    // emitted text. The toolchain lives outside the crate, so the test
+    // passes vacuously when no validator is available.
+    let Some(command) = validator() else {
+        eprintln!("no StableHLO validator available; skipping the round-trip");
+        return;
+    };
+    for (name, plan) in [("small", small_plan()), ("attention", attention_plan())] {
+        let module = plan.emit_stablehlo().expect("the plan emits");
+        let path = std::env::temp_dir().join(format!(
+            "poorgrad-emission-{name}-{}.mlir",
+            std::process::id()
+        ));
+        std::fs::write(&path, &module).expect("the module writes to the temp directory");
+        let output = Command::new(&command[0])
+            .args(&command[1..])
+            .arg(&path)
+            .output()
+            .expect("the validator command runs");
+        std::fs::remove_file(&path).expect("the temp module removes");
+        assert!(
+            output.status.success(),
+            "the {name} module failed to parse:\n{}\n{module}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 }
