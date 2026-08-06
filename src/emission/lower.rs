@@ -19,7 +19,9 @@ use std::fmt::{self, Display, Write};
 use crate::engine::Function;
 use crate::{Plan, Tensor};
 
-use super::builder::{Emittable, dense_literal, tensor_type};
+use super::builder::{
+    Emittable, dense_index_literal, dense_literal, index_tensor_type, tensor_type,
+};
 
 /// Why a plan declined to emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +33,8 @@ pub enum EmitError {
         /// How many groups the plan matched.
         groups: usize,
     },
-    /// A node's operation has no StableHLO lowering yet.
+    /// A node's operation has no StableHLO lowering; reserved for
+    /// future operations, since every current operation lowers.
     Unsupported {
         /// The node's plan index.
         node: usize,
@@ -94,8 +97,8 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     ///
     /// # Errors
     /// Returns [`EmitError::Fused`] when the plan matched window-GEMM
-    /// fusion groups, and [`EmitError::Unsupported`] for an operation
-    /// without a lowering (`unfold` — raising absorbs its chains later).
+    /// fusion groups; [`EmitError::Unsupported`] is reserved for future
+    /// operations without lowerings.
     pub fn emit_stablehlo(&self) -> Result<String, EmitError> {
         let groups = self.fusion_groups();
         if groups > 0 {
@@ -373,14 +376,64 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             Function::LogSoftmax(softmax) => {
                 self.lower_log_softmax(index, operand(0), softmax.axis, emitter);
             }
+            Function::Unfold(unfold) => {
+                // The completeness fallback the emission design names: the
+                // windows' start coordinates bake into a constant and one
+                // static gather reads them. Raising is the real path — a
+                // canonical im2col or pooling chain should become
+                // `convolution` or `reduce_window`, whose named kernels the
+                // target holds — because this lowering materializes the
+                // window view that fusion at home never materializes.
+                // Emitted for closure of the op set, not for production.
+                let source = operand(0);
+                let source_shape = &shapes[source];
+                let source_type = tensor_type::<Element>(source_shape);
+                let source_name = emitter.name(source).to_string();
+                let count = shape.axes()[unfold.axis];
+                let size = shape.axes()[unfold.axis + 1];
+                let coordinates: Vec<usize> = (0..count)
+                    .flat_map(|window| {
+                        (0..size)
+                            .map(move |position| window * unfold.step + position * unfold.dilation)
+                    })
+                    .collect();
+                let starts = format!("%v{index}_starts");
+                let starts_type = index_tensor_type(&[count, size, 1]);
+                emitter.line(format!(
+                    "{starts} = stablehlo.constant {} : {starts_type}",
+                    dense_index_literal(&[count, size, 1], &coordinates),
+                ));
+                // The two index batch dims land at the unfolded pair's
+                // positions; every other output dim carries a slice dim in
+                // order, with the gathered axis collapsed.
+                let offset_dims: Vec<usize> = (0..source_shape.rank() + 1)
+                    .filter(|&dim| dim != unfold.axis && dim != unfold.axis + 1)
+                    .collect();
+                let slice_sizes: Vec<String> = source_shape
+                    .axes()
+                    .iter()
+                    .enumerate()
+                    .map(|(dim, &extent)| {
+                        if dim == unfold.axis {
+                            "1".to_string()
+                        } else {
+                            extent.to_string()
+                        }
+                    })
+                    .collect();
+                emitter.line(format!(
+                    "{result} = \"stablehlo.gather\"({source_name}, {starts}) \
+                     <{{dimension_numbers = #stablehlo.gather<offset_dims = {offset_dims:?}, \
+                     collapsed_slice_dims = [{axis}], start_index_map = [{axis}], \
+                     index_vector_dim = 2>, indices_are_sorted = false, \
+                     slice_sizes = array<i64: {sizes}>}}> \
+                     : ({source_type}, {starts_type}) -> {result_type}",
+                    axis = unfold.axis,
+                    sizes = slice_sizes.join(", "),
+                ));
+            }
             Function::Parameter(_) | Function::Input(_) => {
                 unreachable!("arguments are named before lowering")
-            }
-            unsupported => {
-                return Err(EmitError::Unsupported {
-                    node: index,
-                    operation: unsupported.name(),
-                });
             }
         }
         emitter.names[index] = Some(result);

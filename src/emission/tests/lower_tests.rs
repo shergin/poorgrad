@@ -76,19 +76,25 @@ fn attention_shaped_plans_emit_their_composition() {
     assert!(module.contains("%arg1: tensor<2x3xf32>"));
 }
 
-#[test]
-fn unfold_declines_with_the_operation_name() {
+/// Compiles overlapping windows over a parameter: the static-gather
+/// completeness fallback for `unfold`.
+fn unfold_plan() -> Plan<Tensor<f32>> {
     let network = Network::new();
-    let x = network.parameter(Tensor::new([6], vec![1.0_f32; 6]));
-    let windows = x.unfold(0, 2, 2, 1).sum();
-    let plan = network.compile([windows.symbol()], []);
-    assert_eq!(
-        plan.emit_stablehlo(),
-        Err(EmitError::Unsupported {
-            node: 1,
-            operation: "Unfold"
-        })
+    let x = network.parameter(Tensor::new([8], vec![1.0_f32; 8]));
+    let windows = x.unfold(0, 3, 2, 1);
+    network.compile([windows.symbol()], [])
+}
+
+#[test]
+fn unfold_emits_a_static_gather() {
+    let module = unfold_plan().emit_stablehlo().expect("the plan emits");
+    assert!(module.contains("\"stablehlo.gather\""), "{module}");
+    // The window starts, spaced by the step, dilated within each row.
+    assert!(
+        module.contains("dense<[[[0], [1], [2]], [[2], [3], [4]], [[4], [5], [6]]]>"),
+        "{module}"
     );
+    assert!(module.contains("tensor<3x3x1xi64>"), "{module}");
 }
 
 #[test]
@@ -131,7 +137,11 @@ fn emitted_modules_parse_through_the_toolchain() {
         eprintln!("no StableHLO validator available; skipping the round-trip");
         return;
     };
-    for (name, plan) in [("small", small_plan()), ("attention", attention_plan())] {
+    for (name, plan) in [
+        ("small", small_plan()),
+        ("attention", attention_plan()),
+        ("unfold", unfold_plan()),
+    ] {
         let module = plan.emit_stablehlo().expect("the plan emits");
         let path = std::env::temp_dir().join(format!(
             "poorgrad-emission-{name}-{}.mlir",

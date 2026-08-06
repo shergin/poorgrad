@@ -109,6 +109,38 @@ fn nested<Element: Emittable>(axes: &[usize], elements: &[Element]) -> String {
     }
 }
 
+/// Returns the MLIR tensor type of an `i64` index tensor over `axes`:
+/// the element type static gathers carry their coordinates in.
+pub(crate) fn index_tensor_type(axes: &[usize]) -> String {
+    let mut dimensions = String::new();
+    for extent in axes {
+        dimensions.push_str(&extent.to_string());
+        dimensions.push('x');
+    }
+    format!("tensor<{dimensions}i64>")
+}
+
+/// Returns the dense literal of `indices` in row-major `axes`, in the
+/// nested-bracket form.
+pub(crate) fn dense_index_literal(axes: &[usize], indices: &[usize]) -> String {
+    format!("dense<{}>", nested_indices(axes, indices))
+}
+
+/// Renders `indices` as nested brackets following `axes`, one bracket
+/// level per axis.
+fn nested_indices(axes: &[usize], indices: &[usize]) -> String {
+    match axes.split_first() {
+        None => indices[0].to_string(),
+        Some((&extent, rest)) => {
+            let stride = indices.len() / extent;
+            let rows: Vec<String> = (0..extent)
+                .map(|row| nested_indices(rest, &indices[row * stride..(row + 1) * stride]))
+                .collect();
+            format!("[{}]", rows.join(", "))
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/builder_tests.rs"]
 mod tests;
