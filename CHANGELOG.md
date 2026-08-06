@@ -7,6 +7,90 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- StableHLO emission, the crate's first exit to the XLA world:
+  `Plan::emit_stablehlo` serializes a forward plan as a textual
+  StableHLO module — parameters then inputs as `@main`'s arguments,
+  the readable set as the result list, leaves as dense constants.
+  Lowering is near-1:1 over the whole op set; the fused
+  `log_softmax` decomposes into its stable shift form, the one-hot
+  `gather` becomes a `dot_general` against the selection (which
+  crosses the boundary as its dense matrix), and `unfold` lowers to
+  a static gather as a documented completeness fallback. Matched
+  window-GEMM fusion groups raise to `stablehlo.convolution` — the
+  pattern library earning twice, fused executor at home and the
+  richer op abroad. A typed builder owns every fragment of MLIR
+  syntax; nothing heavier than string building enters the crate.
+- Emission conformance, two tiers riding external toolchains the
+  crate never links: `POORGRAD_STABLEHLO_VALIDATOR` names a parser
+  and `POORGRAD_STABLEHLO_EVALUATOR` an executor (scripts under
+  `tools/` serve both from any Python with `jax`), and the suite's
+  round-trip and execution tests check every emitted module against
+  the plan's own results, passing vacuously without a toolchain.
+  Verified beyond the reference interpreter on real backends:
+  compiled XLA-CPU runs the emitted batch-8 CNN probe eleven times
+  faster than the plan (0.24 against 2.6 ms), and Apple's
+  experimental `jax-metal` plugin runs all five conformance modules
+  on the GPU within the oracle envelope. Numbers and readings in
+  ACCELERATION.md.
+- `broadcast_to` and `broadcast_pair`: explicit broadcasting under
+  the right-aligned NumPy rule as composites over the named
+  expansions — the target shape is always written, never inferred
+  by an operator, and the gradient is the chain rule over the
+  existing adjoints.
+- `concat` and `stack`, the designed route: `concat` sums each
+  value zero-padded to the combined extent at its offset (each
+  operand's gradient is its own `narrow` window back), `stack`
+  lifts through `unsqueeze`. Consumer-shaped tests close the
+  transformer rung's other gaps by composition: masked axis-aware
+  softmax is a broadcast additive mask before the existing axis
+  softmax, and multi-head attention is a loop of rank-2 heads
+  joined by `concat` — no batched matmul.
+- The `makemore_transformer` example — the attention act: a
+  one-block pre-norm transformer over eight characters of context.
+  The batch packs its samples into one token row so each head's
+  attention is a single rank-2 matmul pair under a block-diagonal
+  causal mask (the sequence-packing idiom); heads join through
+  `concat`, prediction rows come back through a one-hot `gather`,
+  and `RmsNorm` feeds both residual branches. Mean minibatch loss
+  2.205 against the MLP act's 2.2450, on a 179-node tape, 5000
+  steps in 12 s.
+- Elementwise map kernels on the `metal` backend: `exp`, `ln`,
+  `sqrt`, and `tanh` as one-thread-per-element GPU kernels in the
+  same compiled library, pooled buffers, and poison contract as the
+  GEMM path. Measured on the M1 Pro, the GPU passes the scalar path
+  near 128k elements and vForce near 512k (2.7 against 1.2 Gelem/s
+  at 8M), so the map chain runs Metal first — the reverse of the
+  GEMM order — with a size gate that adapts to whether `accelerate`
+  is compiled behind it.
+- The `broadcast` bench group, measuring elementwise operations
+  over broadcast views against their materialized twins.
+
+### Changed
+
+- Broadcast views compute at slice speed: binary elementwise
+  operations walk same-shape dense operands by innermost runs (unit
+  stride as a slice, zero stride held for the run), and elementwise
+  maps over a broadcast view transform only the distinct elements
+  and keep the layout — a view in, a view out, and the backend seam
+  reads the contiguous window. Bias-style adds over 2M elements
+  went from 0.17 to 7.6 Gelem/s; a transcendental over a broadcast
+  row computes its 1k distinct elements instead of 2M.
+- Reshapes that only insert or remove extent-1 axes keep strided
+  views as views, so a multi-axis `broadcast_to` records no
+  intermediate copy: squeeze and unsqueeze of a broadcast view are
+  layout edits, not materializations.
+
+### Fixed
+
+- A transposed view's elementwise map could reach the backend seam
+  through the new window path (its window is exactly as wide as its
+  volume), silently replacing the documented bitwise scalar
+  fallback for non-contiguous views under `accelerate`. The window
+  path now requires a strictly narrower window: only broadcast
+  views, which compute fewer elements, earn staying views.
+
 ## [0.7.0] - 2026-08-04
 
 ### Added

@@ -94,6 +94,22 @@ cargo run --release --features accelerate,metal --example throughput
 What each build supports, how routing and determinism work, and
 every measured number: [ACCELERATION.md](ACCELERATION.md).
 
+## Emission
+
+A compiled forward plan is a closed, pure tensor function, and
+`Plan::emit_stablehlo` writes it down as a textual StableHLO module
+— the exchange dialect of the XLA world. The whole op set lowers,
+matched convolution chains raise to `stablehlo.convolution`, and
+every emitted module is checked twice against toolchains the crate
+never links: an external parser must accept the text, and the
+StableHLO reference interpreter must reproduce the interpreter's
+own results (`tools/`, driven by two environment variables the test
+suite honors). Measured where it matters: the same tape serves a
+convolutional forward eleven times faster by handing the emitted
+plan to XLA-CPU, while training, inspection, and the determinism
+contract stay at home. The numbers and their readings:
+[ACCELERATION.md](ACCELERATION.md).
+
 ## Where it fits
 
 - **Rust services that learn in production.** Train, fine-tune, or
@@ -347,6 +363,15 @@ term and its mapping to the Rust types — is collected in
   shallow depth the final loss matches the plain MLP, as it should:
   the norm buys robustness to initialization, not loss:
   `cargo run --release --example makemore_mlp_batchnorm`.
+- [`makemore_transformer`](examples/makemore/transformer.rs) — the
+  attention act: a one-block pre-norm transformer over eight
+  characters of context. The batch packs its samples into one token
+  row so each head's attention is a single rank-2 matmul pair under
+  a block-diagonal causal mask; heads join through `concat`,
+  prediction rows come back through a one-hot `gather`, and
+  `RmsNorm` feeds both residual branches. Beats the MLP acts'
+  loss on the same last-position metric:
+  `cargo run --release --example makemore_transformer`.
 - [`makemore_mlp_parallel`](examples/makemore/mlp_parallel.rs) — the
   same model trained data parallel: each step fans its minibatch out as
   eight shard-sized runs on the shared network and averages the
