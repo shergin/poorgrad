@@ -85,6 +85,104 @@ fn mean_along_rejects_an_axis_out_of_rank() {
 }
 
 #[test]
+fn broadcast_to_prepends_leading_axes() {
+    let network = Network::new();
+    let row = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let grid = row.broadcast_to([2, 3]);
+    assert_eq!(grid.shape(), Shape::new([2, 3]));
+    let loss = grid.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(grid).to_vec(),
+        &[1.0, 2.0, 3.0, 1.0, 2.0, 3.0]
+    );
+
+    // Each source element feeds both rows, so its gradient is the count of
+    // rows it was repeated across.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(row).to_vec(), &[2.0, 2.0, 2.0]);
+}
+
+#[test]
+fn broadcast_to_expands_interior_unit_axes() {
+    let network = Network::new();
+    let column = network.leaf(Tensor::new([2, 1, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let grid = column.broadcast_to([2, 3, 2]);
+    assert_eq!(grid.shape(), Shape::new([2, 3, 2]));
+    let loss = grid.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(grid).to_vec(),
+        &[1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 3.0, 4.0, 3.0, 4.0, 3.0, 4.0]
+    );
+
+    // The extent-one axis is repeated three times.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(column).to_vec(), &[3.0, 3.0, 3.0, 3.0]);
+}
+
+#[test]
+fn broadcast_to_expands_several_axes() {
+    let network = Network::new();
+    let row = network.leaf(Tensor::new([1, 3], [1.0_f64, 2.0, 3.0]));
+    let block = row.broadcast_to([2, 2, 3]);
+    assert_eq!(block.shape(), Shape::new([2, 2, 3]));
+    let loss = block.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(block).to_vec(), [1.0, 2.0, 3.0].repeat(4));
+
+    // The source feeds all four repeated rows.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(row).to_vec(), &[4.0, 4.0, 4.0]);
+}
+
+#[test]
+fn broadcast_to_is_identity_on_an_equal_shape() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let same = x.broadcast_to([2, 2]);
+    assert_eq!(same.shape(), Shape::new([2, 2]));
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(same).to_vec(), &[1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+#[should_panic(expected = "cannot align")]
+fn broadcast_to_rejects_an_incompatible_axis() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    x.broadcast_to([2, 4]);
+}
+
+#[test]
+fn broadcast_pair_lifts_both_operands_to_the_common_shape() {
+    let network = Network::new();
+    // Outer sum of a column and a row: [2, 1] against [1, 3] gives [2, 3].
+    let column = network.leaf(Tensor::new([2, 1], [1.0_f64, 2.0]));
+    let row = network.leaf(Tensor::new([1, 3], [10.0_f64, 20.0, 30.0]));
+    let (left, right) = column.broadcast_pair(row);
+    assert_eq!(left.shape(), Shape::new([2, 3]));
+    assert_eq!(right.shape(), Shape::new([2, 3]));
+    let sum = left + right;
+    let loss = sum.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(sum).to_vec(),
+        &[11.0, 21.0, 31.0, 12.0, 22.0, 32.0]
+    );
+
+    let gradients = evaluation.backward(loss);
+    // The column repeats across three columns, the row across two rows.
+    assert_eq!(gradients.of(column).to_vec(), &[3.0, 3.0]);
+    assert_eq!(gradients.of(row).to_vec(), &[2.0, 2.0, 2.0]);
+}
+
+#[test]
 fn logsumexp_gradient_is_the_softmax() {
     let network = Network::new();
     let x = network.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));

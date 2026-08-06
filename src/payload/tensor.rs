@@ -772,7 +772,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// order.
     ///
     /// A contiguous dense tensor and a constant reshape into an O(1) view
-    /// over the same buffer; a strided view is first materialized.
+    /// over the same buffer, and so does a strided view when only extent-1
+    /// axes are inserted or removed; any other strided reshape is first
+    /// materialized.
     ///
     /// # Panics
     /// Panics if `shape`'s volume differs from `self`'s.

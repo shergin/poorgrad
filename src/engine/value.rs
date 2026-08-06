@@ -229,6 +229,14 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// Records the explicit broadcast of this single-value payload across
     /// `reference`'s shape on the same network and returns a proxy to it.
     ///
+    /// This is the narrowest expansion opcode: the operand must hold
+    /// exactly one element, and the target shape always comes from a
+    /// reference value, never from an alignment rule. For a source of any
+    /// broadcastable shape, use the composite
+    /// [`broadcast_to`](Self::broadcast_to), which applies the
+    /// right-aligned NumPy rule over this opcode and
+    /// [`broadcast_along`](Self::broadcast_along).
+    ///
     /// # Panics
     /// Panics if the values belong to different networks or this value's
     /// shape does not contain exactly one element.
@@ -241,6 +249,11 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// `reference`'s shape on the same network and returns a proxy to
     /// it; this value's shape must equal `reference`'s with that axis
     /// removed.
+    ///
+    /// This opcode widens exactly one named axis and never infers an
+    /// alignment. To widen several axes at once, or to expand under the
+    /// right-aligned NumPy rule, use the composite
+    /// [`broadcast_to`](Self::broadcast_to).
     ///
     /// # Panics
     /// Panics if the values belong to different networks, `axis` is out of

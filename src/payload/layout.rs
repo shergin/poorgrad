@@ -147,16 +147,55 @@ impl Layout {
         }
     }
 
-    /// Returns a contiguous layout for `shape` over the same buffer region,
-    /// preserving the offset, or `None` when this layout is not contiguous
-    /// and the reshape must therefore copy.
+    /// Returns a layout for `shape` over the same buffer region, preserving
+    /// the offset, or `None` when the reshape must copy.
+    ///
+    /// A contiguous layout reaches any shape with freshly computed row-major
+    /// strides. A strided layout survives only a reshape that inserts or
+    /// removes extent-1 axes -- a squeeze or unsqueeze -- since such axes
+    /// never advance the buffer and the remaining axes keep their strides.
     ///
     /// The caller guarantees `shape` has the same volume.
     pub(crate) fn reshape(&self, shape: Shape) -> Option<Layout> {
-        if !self.is_contiguous() {
+        if self.is_contiguous() {
+            let strides = Self::contiguous_strides(&shape);
+            return Some(Layout {
+                shape,
+                strides,
+                offset: self.offset,
+            });
+        }
+        self.unit_axis_view(shape)
+    }
+
+    /// Returns the view of a reshape that only inserts or removes extent-1
+    /// axes, or `None` when the non-unit extents differ in sequence.
+    ///
+    /// Each non-unit target axis takes the stride of its matching non-unit
+    /// source axis, and a unit axis takes stride 0, which no index ever
+    /// applies.
+    fn unit_axis_view(&self, shape: Shape) -> Option<Layout> {
+        let mut source = self
+            .shape
+            .axes()
+            .iter()
+            .zip(&self.strides)
+            .filter(|&(&extent, _)| extent != 1);
+        let mut strides = Strides::new();
+        for &extent in shape.axes() {
+            if extent == 1 {
+                strides.push(0);
+                continue;
+            }
+            let (&matched, &stride) = source.next()?;
+            if matched != extent {
+                return None;
+            }
+            strides.push(stride);
+        }
+        if source.next().is_some() {
             return None;
         }
-        let strides = Self::contiguous_strides(&shape);
         Some(Layout {
             shape,
             strides,

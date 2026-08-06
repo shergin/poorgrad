@@ -86,6 +86,34 @@ fn reshape_of_a_strided_layout_requires_a_copy() {
 }
 
 #[test]
+fn reshape_of_a_strided_layout_drops_a_unit_axis_in_place() {
+    let spread = Layout::contiguous(Shape::new([1, 3])).broadcast_along(0, &Shape::new([5, 1, 3]));
+    let squeezed = spread
+        .reshape(Shape::new([5, 3]))
+        .expect("a unit-axis reshape keeps the view");
+    assert_eq!(squeezed.shape(), &Shape::new([5, 3]));
+    assert_eq!(squeezed.strides(), &[0, 1]);
+    assert_eq!(squeezed.offset(), 0);
+}
+
+#[test]
+fn reshape_of_a_strided_layout_inserts_a_unit_axis_in_place() {
+    let spread = Layout::contiguous(Shape::new([2, 3])).broadcast_along(0, &Shape::new([4, 2, 3]));
+    let unsqueezed = spread
+        .reshape(Shape::new([4, 2, 1, 3]))
+        .expect("a unit-axis reshape keeps the view");
+    assert_eq!(unsqueezed.shape(), &Shape::new([4, 2, 1, 3]));
+    assert_eq!(unsqueezed.strides(), &[0, 3, 0, 1]);
+}
+
+#[test]
+fn reshape_of_a_strided_layout_still_copies_when_non_unit_axes_change() {
+    let spread = Layout::contiguous(Shape::new([2, 3])).broadcast_along(0, &Shape::new([4, 2, 3]));
+    assert!(spread.reshape(Shape::new([4, 6])).is_none());
+    assert!(spread.reshape(Shape::new([2, 4, 3])).is_none());
+}
+
+#[test]
 fn permute_reorders_axes_and_strides() {
     let permuted = Layout::contiguous(Shape::new([2, 3, 4])).permute(&[2, 0, 1]);
     assert_eq!(permuted.shape(), &Shape::new([4, 2, 3]));

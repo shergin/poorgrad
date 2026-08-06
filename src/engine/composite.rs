@@ -16,7 +16,7 @@
 //! it earns a `Function` variant the moment floating point breaks the
 //! composed form, the way `log_softmax` did.
 
-use crate::{Elementary, Tensorial};
+use crate::{Elementary, Shape, Tensorial};
 
 use super::Value;
 
@@ -73,6 +73,128 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         assert!(axis < shape.rank(), "mean_along axis {axis} is out of rank");
         let extent = shape.axes()[axis];
         self.sum_along(axis) / Data::counted(shape.without_axis(axis), extent)
+    }
+
+    /// Records this value broadcast to `shape` under the right-aligned
+    /// NumPy and TensorFlow rule, and returns a proxy to it.
+    ///
+    /// The two shapes align from the trailing axis: the target's rank must
+    /// be at least this value's, and each source axis must either match its
+    /// aligned target axis or have extent one, in which case it is repeated
+    /// to the target extent. It composes the shape-changing primitives -- a
+    /// right-aligning `reshape` that prepends the missing leading axes, then
+    /// one `broadcast_along` per repeated axis, or a single `broadcast_like`
+    /// when the source holds one element -- so the gradient is the chain
+    /// rule over their adjoints: the incoming gradient summed back over
+    /// every repeated axis.
+    ///
+    /// # Panics
+    /// Panics if `shape`'s rank is smaller than this value's, or a source
+    /// axis neither matches its aligned target axis nor has extent one.
+    pub fn broadcast_to(self, shape: impl Into<Shape>) -> Self {
+        let target = shape.into();
+        let source = self.shape();
+        if source == target {
+            return self;
+        }
+        assert!(
+            target.rank() >= source.rank(),
+            "broadcast to {target} from {source} lowers the rank"
+        );
+        let offset = target.rank() - source.rank();
+        for (axis, &extent) in source.axes().iter().enumerate() {
+            let aligned = target.axes()[offset + axis];
+            assert!(
+                extent == aligned || extent == 1,
+                "broadcast to {target} from {source} cannot align source axis \
+                 {axis} of extent {extent} to extent {aligned}"
+            );
+        }
+        // A single-element source reaches any shape in one node; the
+        // reference operand carries only the target shape.
+        if source.volume() == 1 {
+            let reference = self.literal(Data::counted(target, 0));
+            return self.broadcast_like(reference);
+        }
+        // Right-align the source under the target by prepending unit axes, so
+        // every axis is then either already matched or an extent-one axis to
+        // repeat.
+        let mut current = if offset == 0 {
+            self
+        } else {
+            let mut axes = vec![1; offset];
+            axes.extend_from_slice(source.axes());
+            self.reshape(axes)
+        };
+        for axis in 0..target.rank() {
+            let aligned = target.axes()[axis];
+            if current.shape().axes()[axis] == aligned {
+                continue;
+            }
+            // The only remaining mismatch is an extent-one axis; drop it and
+            // repeat it to the target extent through the axis-wise adjoint,
+            // whose reference is the current shape with this axis widened.
+            let mut axes = current.shape().axes().to_vec();
+            axes[axis] = aligned;
+            let reference = self.literal(Data::counted(Shape::new(axes), 0));
+            current = current.squeeze(axis).broadcast_along(axis, reference);
+        }
+        current
+    }
+
+    /// Records both values broadcast to their common shape under the
+    /// right-aligned NumPy and TensorFlow rule, and returns the two proxies
+    /// in the operand order.
+    ///
+    /// The common shape takes the larger extent on every axis after trailing
+    /// alignment; a value already at that shape is returned unchanged. It is
+    /// the ergonomic entry for elementwise operations over unequal shapes:
+    /// `let (left, right) = left.broadcast_pair(right)` yields operands that
+    /// `add`, `mul`, and the other strict elementwise ops accept directly.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks or their shapes do
+    /// not broadcast against each other.
+    pub fn broadcast_pair(self, other: Self) -> (Self, Self) {
+        let common = broadcasted_shape(&self.shape(), &other.shape());
+        (
+            self.broadcast_to(common.clone()),
+            other.broadcast_to(common),
+        )
+    }
+}
+
+/// Returns the shape two operands broadcast to under the right-aligned rule:
+/// the larger extent on every axis after aligning both from the trailing
+/// axis, where a missing leading axis counts as extent one.
+///
+/// # Panics
+/// Panics if an aligned axis pair differs with neither extent one.
+fn broadcasted_shape(left: &Shape, right: &Shape) -> Shape {
+    let rank = left.rank().max(right.rank());
+    let mut axes = Vec::with_capacity(rank);
+    for offset in 0..rank {
+        let left_extent = extent_from_end(left, offset);
+        let right_extent = extent_from_end(right, offset);
+        assert!(
+            left_extent == right_extent || left_extent == 1 || right_extent == 1,
+            "broadcast of {left} and {right} cannot align extents \
+             {left_extent} and {right_extent}"
+        );
+        axes.push(left_extent.max(right_extent));
+    }
+    axes.reverse();
+    Shape::new(axes)
+}
+
+/// Returns the extent `offset` axes in from the trailing axis of `shape`, or
+/// one when the offset reaches past the leading axis.
+fn extent_from_end(shape: &Shape, offset: usize) -> usize {
+    let rank = shape.rank();
+    if offset < rank {
+        shape.axes()[rank - 1 - offset]
+    } else {
+        1
     }
 }
 

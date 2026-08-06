@@ -552,6 +552,17 @@ fn reshape_of_a_strided_view_materializes_in_order() {
 }
 
 #[test]
+fn reshape_of_a_broadcast_view_keeps_the_view() {
+    let row = Tensor::new([1, 3], [1.0_f64, 2.0, 3.0]);
+    let like = Tensor::filled([5, 1, 3], 0.0);
+    let squeezed = row.broadcast_along(0, &like).reshape(Shape::new([5, 3]));
+    // The reshape drops only a unit axis, so the stride-0 view survives
+    // instead of materializing a contiguous copy.
+    assert!(squeezed.as_slice().is_none());
+    assert_eq!(squeezed.to_vec(), [1.0, 2.0, 3.0].repeat(5));
+}
+
+#[test]
 #[should_panic(expected = "changes the number of elements")]
 fn reshape_rejects_volume_changes() {
     Tensor::new([2, 3], vec![1.0_f64; 6]).reshape(Shape::new([2, 2]));
