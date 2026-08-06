@@ -14,6 +14,7 @@ pub use evaluation::Evaluation;
 pub use field::{Field, Gradients};
 pub use network::Network;
 pub use plan::Plan;
+pub(crate) use plan::WindowProduct;
 pub use symbol::Symbol;
 pub use value::Value;
 

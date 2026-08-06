@@ -16,8 +16,8 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::Function;
-use crate::{Plan, Tensor};
+use crate::engine::{Function, WindowProduct};
+use crate::{Plan, Shape, Tensor};
 
 use super::builder::{
     Emittable, dense_index_literal, dense_literal, index_tensor_type, tensor_type,
@@ -26,13 +26,6 @@ use super::builder::{
 /// Why a plan declined to emit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitError {
-    /// The plan matched window-GEMM fusion groups, whose chains skip
-    /// materialization; emitting them as the richer convolution op is
-    /// the raising story, which has not landed.
-    Fused {
-        /// How many groups the plan matched.
-        groups: usize,
-    },
     /// A node's operation has no StableHLO lowering; reserved for
     /// future operations, since every current operation lowers.
     Unsupported {
@@ -46,11 +39,6 @@ pub enum EmitError {
 impl Display for EmitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            EmitError::Fused { groups } => write!(
-                formatter,
-                "the plan matched {groups} window-gemm fusion groups, which emission \
-                 does not raise yet; compile the graph without a fusing posture"
-            ),
             EmitError::Unsupported { node, operation } => write!(
                 formatter,
                 "node {node} records {operation}, which has no StableHLO lowering yet"
@@ -95,16 +83,16 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     /// self-contained interchange text; parsing, bytecode serialization,
     /// and execution belong to toolchains outside the crate.
     ///
+    /// A matched window-GEMM fusion group raises: the im2col chain
+    /// never crosses the boundary, and the group's matmul node emits
+    /// `stablehlo.convolution` from the source and kernel directly —
+    /// the pattern library's second life, recovering the richer op the
+    /// target holds a named kernel for.
+    ///
     /// # Errors
-    /// Returns [`EmitError::Fused`] when the plan matched window-GEMM
-    /// fusion groups; [`EmitError::Unsupported`] is reserved for future
-    /// operations without lowerings.
+    /// [`EmitError::Unsupported`] is reserved for future operations
+    /// without lowerings; every current operation lowers.
     pub fn emit_stablehlo(&self) -> Result<String, EmitError> {
-        let groups = self.fusion_groups();
-        if groups > 0 {
-            return Err(EmitError::Fused { groups });
-        }
-
         let shapes = self.shapes();
         let wanted = self.wanted();
         let tensor = |index: usize| tensor_type::<Element>(&shapes[index]);
@@ -133,7 +121,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         }
 
         for (index, &wanted_node) in wanted.iter().enumerate() {
-            if !wanted_node || emitter.names[index].is_some() {
+            // A fusion interior is replaced wholesale by its group's
+            // raised convolution, exactly as runs replace it with the
+            // fused call.
+            if !wanted_node || self.fused_interiors()[index] || emitter.names[index].is_some() {
                 continue;
             }
             self.lower(index, &mut emitter)?;
@@ -172,6 +163,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
 
     /// Lowers node `index` into `emitter`, naming its result.
     fn lower(&self, index: usize, emitter: &mut Emitter) -> Result<(), EmitError> {
+        if let Some(group) = self.fusion_group(index) {
+            self.raise_convolution(index, group, emitter);
+            return Ok(());
+        }
         let shapes = self.shapes();
         let shape = &shapes[index];
         let result = format!("%v{index}");
@@ -438,6 +433,64 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         }
         emitter.names[index] = Some(result);
         Ok(())
+    }
+
+    /// Writes the raise of one window-GEMM fusion group: the flat GEMM
+    /// kernel reshapes back to `[channels, height, width, filters]`,
+    /// one `stablehlo.convolution` reads the rank-4 source directly
+    /// (the folded symmetric pads ride as window padding), and the
+    /// `[batch, out_h, out_w, filters]` result flattens to the group's
+    /// matmul shape, so downstream nodes see exactly the recorded form.
+    fn raise_convolution(&self, index: usize, group: &WindowProduct, emitter: &mut Emitter) {
+        let shapes = self.shapes();
+        let source_axes = shapes[group.source].axes();
+        let (batch, channels, height, width) = (
+            source_axes[0],
+            source_axes[1],
+            source_axes[2],
+            source_axes[3],
+        );
+        let filters = shapes[group.kernel].axes()[1];
+        let out_height = (height + 2 * group.padding - group.kernel_height) / group.stride + 1;
+        let out_width = (width + 2 * group.padding - group.kernel_width) / group.stride + 1;
+        assert_eq!(
+            shapes[index].axes(),
+            [batch * out_height * out_width, filters],
+            "the fused matmul's shape disagrees with the group's geometry"
+        );
+
+        let kernel = format!("%v{index}_kernel");
+        let kernel_type = tensor_type::<Element>(&Shape::new([
+            channels,
+            group.kernel_height,
+            group.kernel_width,
+            filters,
+        ]));
+        emitter.line(format!(
+            "{kernel} = stablehlo.reshape {} : ({}) -> {kernel_type}",
+            emitter.name(group.kernel),
+            tensor_type::<Element>(&shapes[group.kernel]),
+        ));
+        let windows = format!("%v{index}_windows");
+        let windows_type =
+            tensor_type::<Element>(&Shape::new([batch, out_height, out_width, filters]));
+        emitter.line(format!(
+            "{windows} = stablehlo.convolution({}, {kernel}) \
+             dim_numbers = [b, f, 0, 1]x[i, 0, 1, o]->[b, 0, 1, f], \
+             window = {{stride = [{stride}, {stride}], \
+             pad = [[{pad}, {pad}], [{pad}, {pad}]]}} \
+             {{batch_group_count = 1 : i64, feature_group_count = 1 : i64}} \
+             : ({}, {kernel_type}) -> {windows_type}",
+            emitter.name(group.source),
+            tensor_type::<Element>(&shapes[group.source]),
+            stride = group.stride,
+            pad = group.padding,
+        ));
+        emitter.line(format!(
+            "%v{index} = stablehlo.reshape {windows} : ({windows_type}) -> {}",
+            tensor_type::<Element>(&shapes[index]),
+        ));
+        emitter.names[index] = Some(format!("%v{index}"));
     }
 
     /// Writes the compact reduce of `source` over `axes` with the named

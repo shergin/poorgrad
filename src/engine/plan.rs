@@ -518,6 +518,19 @@ impl<Data: Differentiable> Plan<Data> {
         self.fused.iter().flatten().count()
     }
 
+    /// Returns the window-GEMM fusion group rooted at node `index`, if
+    /// its im2col chain matched.
+    pub(crate) fn fusion_group(&self, index: usize) -> Option<&WindowProduct> {
+        self.fused[index].as_ref()
+    }
+
+    /// Returns which nodes are fusion-group interiors: skipped by runs
+    /// and replaced wholesale by the fused call — or by the raised
+    /// operation, when a plan consumer emits instead of executing.
+    pub(crate) fn fused_interiors(&self) -> &[bool] {
+        &self.fused_interior
+    }
+
     /// Simulates a run's live volume under `releases`, returning the
     /// peak and where it occurs, plus the retain-all total.
     fn live_story(&self, releases: &[SmallVec<[usize; 2]>]) -> (usize, usize, usize) {

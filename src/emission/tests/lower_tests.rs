@@ -2,8 +2,6 @@ use std::process::Command;
 
 use crate::{Differentiable, Network, Shape, Tensor, concat};
 
-use super::EmitError;
-
 /// One emitted module with the payloads and oracle results the
 /// conformance tests replay: the arguments in the module's own order
 /// (parameters then inputs, each in recording order) and the readable
@@ -138,19 +136,60 @@ fn unfold_emits_a_static_gather() {
     assert!(module.contains("tensor<3x3x1xi64>"), "{module}");
 }
 
-#[test]
-fn fused_plans_decline_with_the_group_count() {
+/// Builds a padded strided convolution through the facade: the
+/// forward-only plan fuses the im2col chain, and emission raises the
+/// group to `stablehlo.convolution`.
+fn convolution_case() -> Case {
     use crate::conv2d;
 
     let network = Network::new();
-    let image = network.parameter(Tensor::new([1, 1, 4, 4], vec![1.0_f32; 16]));
-    let kernel = network.parameter(Tensor::new([1, 1, 2, 2], vec![1.0_f32; 4]));
-    let bias = network.parameter(Tensor::new([1], vec![0.0_f32]));
-    let convolved = conv2d(image, kernel, bias, 1, 0).sum();
-    // Forward-only plans always fuse the im2col chain, which emission
-    // cannot raise yet.
+    let image = Tensor::new(
+        [1, 2, 4, 4],
+        (0..32)
+            .map(|index| index as f32 / 8.0 - 2.0)
+            .collect::<Vec<_>>(),
+    );
+    let image_value = network.parameter(image.clone());
+    let weights = Tensor::new(
+        [2, 2, 2, 2],
+        (0..16)
+            .map(|index| index as f32 / 4.0 - 2.0)
+            .collect::<Vec<_>>(),
+    );
+    let weights_value = network.parameter(weights.clone());
+    let bias = Tensor::new([2], [0.25_f32, -0.5]);
+    let bias_value = network.parameter(bias.clone());
+    let convolved = conv2d(image_value, weights_value, bias_value, 2, 1);
     let plan = network.compile([convolved.symbol()], []);
-    assert_eq!(plan.emit_stablehlo(), Err(EmitError::Fused { groups: 1 }));
+    assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
+    let evaluation = plan.forward(&network, []);
+    Case {
+        name: "convolution",
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![image, weights, bias],
+        expected: vec![evaluation.of(network.resolve(convolved.symbol())).to_vec()],
+    }
+}
+
+#[test]
+fn fused_plans_raise_to_convolution() {
+    let module = convolution_case().module;
+    assert!(
+        module.contains("stablehlo.convolution"),
+        "missing the raised convolution:\n{module}"
+    );
+    assert!(
+        module.contains("dim_numbers = [b, f, 0, 1]x[i, 0, 1, o]->[b, 0, 1, f]"),
+        "{module}"
+    );
+    assert!(
+        module.contains("window = {stride = [2, 2], pad = [[1, 1], [1, 1]]}"),
+        "{module}"
+    );
+    // The im2col chain never crosses the boundary: no gathered
+    // windows, and the symmetric pads ride as window padding.
+    assert!(!module.contains("stablehlo.gather"), "{module}");
+    assert!(!module.contains("stablehlo.pad "), "{module}");
 }
 
 /// Returns an external command from `variable`, or the named binary
@@ -182,7 +221,12 @@ fn emitted_modules_parse_through_the_toolchain() {
         eprintln!("no StableHLO validator available; skipping the round-trip");
         return;
     };
-    for case in [small_case(), attention_case(), unfold_case()] {
+    for case in [
+        small_case(),
+        attention_case(),
+        unfold_case(),
+        convolution_case(),
+    ] {
         let path = temp_file(&format!("parse-{}.mlir", case.name), &case.module);
         let output = Command::new(&command[0])
             .args(&command[1..])
@@ -233,7 +277,12 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         eprintln!("no StableHLO evaluator available; skipping the execution check");
         return;
     };
-    for case in [small_case(), attention_case(), unfold_case()] {
+    for case in [
+        small_case(),
+        attention_case(),
+        unfold_case(),
+        convolution_case(),
+    ] {
         let module_path = temp_file(&format!("eval-{}.mlir", case.name), &case.module);
         let lines: Vec<String> = case.arguments.iter().map(evaluator_line).collect();
         let arguments_path = temp_file(&format!("eval-{}-arguments", case.name), &lines.join("\n"));
