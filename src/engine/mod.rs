@@ -9,6 +9,7 @@ mod symbol;
 mod tape;
 mod value;
 
+pub use composite::{concat, stack};
 pub use evaluation::Evaluation;
 pub use field::{Field, Gradients};
 pub use network::Network;

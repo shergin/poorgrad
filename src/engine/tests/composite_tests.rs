@@ -1,4 +1,4 @@
-use crate::{Network, Shape, Tensor};
+use crate::{Network, Shape, Tensor, concat, stack};
 
 #[test]
 fn abs_composes_from_maximum() {
@@ -193,5 +193,166 @@ fn logsumexp_gradient_is_the_softmax() {
     let expected = [0.25, 0.75];
     for (computed, expected) in gradients.of(x).to_vec().into_iter().zip(expected) {
         assert!((computed - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn concat_joins_values_along_the_leading_axis() {
+    let network = Network::new();
+    let top = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let bottom = network.leaf(Tensor::new([1, 2], [5.0_f64, 6.0]));
+    let joined = concat(&[top, bottom], 0);
+    assert_eq!(joined.shape(), Shape::new([3, 2]));
+
+    let weights = network.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let loss = (joined * weights).sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(joined).to_vec(),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+
+    // Each operand's gradient is the weight window it occupies.
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(top).to_vec(), &[1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(gradients.of(bottom).to_vec(), &[5.0, 6.0]);
+}
+
+#[test]
+fn concat_joins_values_along_an_interior_axis() {
+    let network = Network::new();
+    let left = network.leaf(Tensor::new([2, 1], [1.0_f64, 4.0]));
+    let right = network.leaf(Tensor::new([2, 2], [2.0_f64, 3.0, 5.0, 6.0]));
+    let joined = concat(&[left, right], 1);
+    assert_eq!(joined.shape(), Shape::new([2, 3]));
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(joined).to_vec(),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+}
+
+#[test]
+fn concat_of_a_single_value_is_the_value_itself() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let joined = concat(&[x], 0);
+    assert_eq!(joined.shape(), Shape::new([2]));
+
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(joined).to_vec(), &[1.0, 2.0]);
+}
+
+#[test]
+#[should_panic(expected = "out of rank")]
+fn concat_rejects_an_axis_out_of_rank() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    concat(&[x, x], 1);
+}
+
+#[test]
+#[should_panic(expected = "equal shapes off the axis")]
+fn concat_rejects_mismatched_shapes_off_the_axis() {
+    let network = Network::new();
+    let x = network.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
+    let y = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
+    concat(&[x, y], 0);
+}
+
+#[test]
+fn stack_lifts_values_onto_a_new_axis() {
+    let network = Network::new();
+    let first = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let second = network.leaf(Tensor::new([3], [4.0_f64, 5.0, 6.0]));
+
+    let rows = stack(&[first, second], 0);
+    assert_eq!(rows.shape(), Shape::new([2, 3]));
+    let columns = stack(&[first, second], 1);
+    assert_eq!(columns.shape(), Shape::new([3, 2]));
+    let loss = rows.sum();
+
+    let evaluation = network.forward();
+    assert_eq!(
+        evaluation.of(rows).to_vec(),
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    );
+    assert_eq!(
+        evaluation.of(columns).to_vec(),
+        &[1.0, 4.0, 2.0, 5.0, 3.0, 6.0]
+    );
+
+    let gradients = evaluation.backward(loss);
+    assert_eq!(gradients.of(first).to_vec(), &[1.0, 1.0, 1.0]);
+    assert_eq!(gradients.of(second).to_vec(), &[1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn masked_softmax_composes_with_a_broadcast_mask() {
+    // The transformer rung's "masked axis-aware softmax" gap closes by
+    // composition: an additive mask spread over the scores, then the
+    // existing axis softmax. No dedicated operation is required.
+    let network = Network::new();
+    let scores = network.leaf(Tensor::new([2, 3], [1.0_f64, 1.0, 9.0, 2.0, 2.0, 9.0]));
+    let mask = network.leaf(Tensor::new([3], [0.0_f64, 0.0, f64::NEG_INFINITY]));
+    let probabilities = (scores + mask.broadcast_to([2, 3])).softmax(1);
+    let loss = probabilities.narrow(1, 0, 1).sum();
+
+    let evaluation = network.forward();
+    let computed = evaluation.of(probabilities).to_vec();
+    let expected = [0.5, 0.5, 0.0, 0.5, 0.5, 0.0];
+    for (computed, expected) in computed.into_iter().zip(expected) {
+        assert!((computed - expected).abs() < 1e-12);
+    }
+
+    // Row-wise softmax gradient of the first probability: p0 * (1 - p0)
+    // for itself, -p0 * p1 for its live neighbor, zero for the masked
+    // lane.
+    let gradients = evaluation.backward(loss);
+    let expected = [0.25, -0.25, 0.0, 0.25, -0.25, 0.0];
+    for (computed, expected) in gradients.of(scores).to_vec().into_iter().zip(expected) {
+        assert!((computed - expected).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn attention_heads_compose_with_a_loop_and_concat() {
+    // The rung's head story without batched matmul: each head is a
+    // rank-2 attention recorded in a loop, and `concat` joins the head
+    // outputs along the feature axis.
+    let network = Network::new();
+    let causal = network.leaf(Tensor::new([2, 2], [0.0_f64, f64::NEG_INFINITY, 0.0, 0.0]));
+    let mut heads = Vec::new();
+    let mut leaves = Vec::new();
+    for seed in 0..2 {
+        let shift = seed as f64;
+        let query = network.leaf(Tensor::new([2, 2], [shift, 1.0, 0.0, 1.0]));
+        let key = network.leaf(Tensor::new([2, 2], [1.0_f64, 0.0, shift, 1.0]));
+        let value = network.leaf(Tensor::new([2, 2], [1.0 + shift, 2.0, 3.0, 4.0 + shift]));
+        let weights = (query.matmul(key.transpose()) + causal).softmax(1);
+        heads.push(weights.matmul(value));
+        leaves.push((query, key, value));
+    }
+    let output = concat(&heads, 1);
+    assert_eq!(output.shape(), Shape::new([2, 4]));
+    let loss = output.sum();
+
+    let evaluation = network.forward();
+    // The causal mask pins the first token to its own value row in every
+    // head.
+    let computed = evaluation.of(output).to_vec();
+    assert!((computed[0] - 1.0).abs() < 1e-12);
+    assert!((computed[1] - 2.0).abs() < 1e-12);
+    assert!((computed[2] - 2.0).abs() < 1e-12);
+    assert!((computed[3] - 2.0).abs() < 1e-12);
+
+    // Every head's projections receive gradient through the concat.
+    let gradients = evaluation.backward(loss);
+    for (query, key, value) in leaves {
+        assert!(gradients.of(query).to_vec().iter().any(|&g| g != 0.0));
+        assert_eq!(gradients.of(value).to_vec().len(), 4);
+        let _ = key;
     }
 }

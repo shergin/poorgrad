@@ -164,6 +164,71 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     }
 }
 
+/// Records the concatenation of `values` along `axis` and returns a proxy
+/// to it: each value is padded with zeros to the combined extent at its
+/// running offset, and the pads are summed.
+///
+/// This is the designed route for sequence stacking and head
+/// concatenation; a dedicated variadic opcode earns its node only if the
+/// zero-padded intermediates ever measure. The gradient of each operand
+/// is the incoming gradient narrowed back to its own window, through
+/// `pad`'s adjoint.
+///
+/// # Panics
+/// Panics if `values` is empty, the values belong to different networks,
+/// `axis` is out of rank, or the shapes disagree anywhere but `axis`.
+pub fn concat<'network, Data: Tensorial>(
+    values: &[Value<'network, Data>],
+    axis: usize,
+) -> Value<'network, Data> {
+    let first = values.first().expect("concat requires at least one value");
+    let reference = first.shape();
+    assert!(
+        axis < reference.rank(),
+        "concat axis {axis} is out of rank for {reference}"
+    );
+    for value in &values[1..] {
+        let shape = value.shape();
+        assert_eq!(
+            shape.without_axis(axis),
+            reference.without_axis(axis),
+            "concat along axis {axis} requires equal shapes off the axis, \
+             got {shape} against {reference}"
+        );
+    }
+    if values.len() == 1 {
+        return *first;
+    }
+    let combined: usize = values.iter().map(|value| value.shape().axes()[axis]).sum();
+    let mut offset = 0;
+    let mut total: Option<Value<'network, Data>> = None;
+    for &value in values {
+        let padded = value.pad(axis, offset, combined);
+        offset += value.shape().axes()[axis];
+        total = Some(match total {
+            Some(sum) => sum + padded,
+            None => padded,
+        });
+    }
+    total.expect("concat combines at least one value")
+}
+
+/// Records the stacking of `values` along a new axis at `axis` and returns
+/// a proxy to it: each value gains an extent-1 axis there (`unsqueeze`)
+/// and the lifted values concatenate.
+///
+/// # Panics
+/// Panics if `values` is empty, the values belong to different networks,
+/// `axis` exceeds the values' rank, or the shapes differ.
+pub fn stack<'network, Data: Tensorial>(
+    values: &[Value<'network, Data>],
+    axis: usize,
+) -> Value<'network, Data> {
+    let lifted: Vec<Value<'network, Data>> =
+        values.iter().map(|&value| value.unsqueeze(axis)).collect();
+    concat(&lifted, axis)
+}
+
 /// Returns the shape two operands broadcast to under the right-aligned rule:
 /// the larger extent on every axis after aligning both from the trailing
 /// axis, where a missing leading axis counts as extent one.

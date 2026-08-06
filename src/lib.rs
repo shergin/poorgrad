@@ -58,7 +58,7 @@ mod neural;
 mod payload;
 
 pub use backend::{Backend, BackendUnavailable};
-pub use engine::{Evaluation, Field, Gradients, Network, Plan, Symbol, Value};
+pub use engine::{Evaluation, Field, Gradients, Network, Plan, Symbol, Value, concat, stack};
 pub use neural::{
     Activation, BatchNorm, Conv2d, Layer, LayerNorm, Mlp, Neuron, Normalization, RmsNorm,
     average_pool, conv2d, cross_entropy, init, max_pool,
