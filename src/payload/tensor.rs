@@ -1151,7 +1151,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                             break;
                         }
                         let rest = position - reach;
-                        if rest % step != 0 {
+                        if !rest.is_multiple_of(step) {
                             continue;
                         }
                         let window = rest / step;

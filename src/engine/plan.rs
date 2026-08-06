@@ -127,8 +127,8 @@ fn match_window_products<Data: Differentiable>(
 ) -> (Vec<Option<WindowProduct>>, Vec<bool>) {
     let length = functions.len();
     let mut consumers = vec![0usize; length];
-    for index in 0..length {
-        if !wanted[index] {
+    for (index, &wanted_node) in wanted.iter().enumerate() {
+        if !wanted_node {
             continue;
         }
         let links = operands.get(index).expect("plan columns are fixed");
@@ -197,24 +197,25 @@ fn match_window_products<Data: Differentiable>(
         let mut padding = 0;
         // Symmetric zero pads fold into the fused call; anything else
         // simply leaves the pad output as the (materialized) source.
-        if let Some(Function::Pad(pad_w)) = functions.get(source) {
-            if interior_ok(source) && pad_w.axis == 3 {
-                let below = sole_operand(source);
-                if let Some(Function::Pad(pad_h)) = functions.get(below) {
-                    let base = sole_operand(below);
-                    let base_axes = shapes[base].axes();
-                    if interior_ok(below)
-                        && pad_h.axis == 2
-                        && base_axes.len() == 4
-                        && pad_h.start == pad_w.start
-                        && pad_h.full_extent == base_axes[2] + 2 * pad_h.start
-                        && pad_w.full_extent == base_axes[3] + 2 * pad_w.start
-                    {
-                        chain.push(source);
-                        chain.push(below);
-                        padding = pad_h.start;
-                        source = base;
-                    }
+        if let Some(Function::Pad(pad_w)) = functions.get(source)
+            && interior_ok(source)
+            && pad_w.axis == 3
+        {
+            let below = sole_operand(source);
+            if let Some(Function::Pad(pad_h)) = functions.get(below) {
+                let base = sole_operand(below);
+                let base_axes = shapes[base].axes();
+                if interior_ok(below)
+                    && pad_h.axis == 2
+                    && base_axes.len() == 4
+                    && pad_h.start == pad_w.start
+                    && pad_h.full_extent == base_axes[2] + 2 * pad_h.start
+                    && pad_w.full_extent == base_axes[3] + 2 * pad_w.start
+                {
+                    chain.push(source);
+                    chain.push(below);
+                    padding = pad_h.start;
+                    source = base;
                 }
             }
         }
@@ -411,8 +412,8 @@ impl<Data: Differentiable> Plan<Data> {
         let mut releases: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
         let mut frees: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
         let mut last_consumer: Vec<Option<usize>> = vec![None; length];
-        for index in 0..length {
-            if !wanted[index] {
+        for (index, &wanted_node) in wanted.iter().enumerate() {
+            if !wanted_node {
                 continue;
             }
             let links = snapshot
@@ -538,7 +539,7 @@ impl<Data: Differentiable> Plan<Data> {
         let mut peak: usize = 0;
         let mut peak_at: usize = 0;
         let mut total: usize = 0;
-        for index in 0..self.len() {
+        for (index, slots) in releases.iter().enumerate() {
             if !self.wanted[index] || self.fused_interior[index] {
                 continue;
             }
@@ -549,7 +550,7 @@ impl<Data: Differentiable> Plan<Data> {
                 peak = live;
                 peak_at = index;
             }
-            for &slot in &releases[index] {
+            for &slot in slots {
                 // Fusion interiors were never counted live: their
                 // slots hold placeholders from the start.
                 if self.fused_interior[slot] {
@@ -588,7 +589,7 @@ impl<Data: Differentiable> Plan<Data> {
         };
 
         let mut evaluated: usize = 0;
-        for index in 0..self.len() {
+        for (index, &released) in released_after.iter().enumerate() {
             if !self.wanted[index] {
                 continue;
             }
@@ -599,12 +600,12 @@ impl<Data: Differentiable> Plan<Data> {
             } else if self.readable[index] {
                 "kept".to_string()
             } else if self.dropped[index] {
-                match released_after[index] {
+                match released {
                     Some(consumer) => format!("dropped after {consumer} (remat)"),
                     None => "retained".to_string(),
                 }
             } else {
-                match released_after[index] {
+                match released {
                     Some(consumer) => format!("{release_word} {consumer}"),
                     None => "retained".to_string(),
                 }
@@ -629,7 +630,7 @@ impl<Data: Differentiable> Plan<Data> {
             self.readable.iter().filter(|&&readable| readable).count(),
         )
         .expect("writing to a string cannot fail");
-        let groups = self.fused.iter().flatten().count();
+        let groups = self.fusion_groups();
         if groups > 0 {
             writeln!(
                 lines,

@@ -6,7 +6,7 @@ use malevich::stat::Window;
 use malevich::{Frame, Line, Plot, Rule};
 
 /// What a uniform model costs on ten classes: `ln 10`.
-const UNIFORM_COST: f64 = 2.302585092994046;
+const UNIFORM_COST: f64 = std::f64::consts::LN_10;
 
 /// Renders the training curve for `losses`, one entry per step: the
 /// per-step minibatch loss, its rolling mean over a twentieth of the

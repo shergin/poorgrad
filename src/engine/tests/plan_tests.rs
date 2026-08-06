@@ -198,7 +198,7 @@ fn training_liveness_matches_the_interpreter_on_a_convnet() {
     // cross-entropy. Retention keeps what the derivative rules read
     // and frees the view chains and padded copies; the proof is
     // bitwise agreement of loss and every parameter gradient.
-    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+    use crate::{conv2d, cross_entropy, max_pool};
 
     let network = Network::new();
     let input = network.leaf(Tensor::new(
@@ -310,7 +310,7 @@ fn remat_matches_the_interpreter_on_a_convnet() {
     // A tiny threshold forces deep drop chains through the conv motif;
     // backward rematerializes them and must agree with the interpreter
     // bit for bit on the loss and every parameter gradient.
-    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+    use crate::{conv2d, cross_entropy, max_pool};
 
     let network = Network::new();
     let input = network.leaf(Tensor::new(
@@ -439,7 +439,7 @@ fn window_gemm_fusion_matches_the_interpreter() {
     // The conv facade's emission fuses; forward and backward stay
     // bitwise against the interpreter with the chain never
     // materialized.
-    use crate::{Tensorial, conv2d, cross_entropy, max_pool};
+    use crate::{conv2d, cross_entropy, max_pool};
 
     let network = Network::new();
     let input = network.leaf(Tensor::new(
@@ -483,7 +483,7 @@ fn window_gemm_fusion_matches_the_interpreter() {
 
 #[test]
 fn forward_only_plans_fuse_and_agree() {
-    use crate::{Tensorial, conv2d, max_pool};
+    use crate::{conv2d, max_pool};
 
     let network = Network::new();
     let input = network.leaf(Tensor::new(
@@ -547,7 +547,6 @@ fn kept_interiors_bar_fusion() {
 fn shared_windows_bar_fusion() {
     // A second consumer inside the chain bars fusion, and results
     // stay bitwise either way.
-    use crate::Tensorial;
 
     let network = Network::new();
     let x = network.leaf(Tensor::new(

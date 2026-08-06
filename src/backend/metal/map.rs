@@ -35,9 +35,7 @@ pub(super) fn executed(
 ) -> Result<Vec<f32>, String> {
     let count = elements.len();
     let source_buffer = context.pool.take(&context.device, size_of_val(elements))?;
-    let destination_buffer = context
-        .pool
-        .take(&context.device, count * size_of::<f32>())?;
+    let destination_buffer = context.pool.take(&context.device, size_of_val(elements))?;
 
     // SAFETY: the buffers are shared-mode with `contents()` valid for
     // their whole length, the pool sized each to at least the span

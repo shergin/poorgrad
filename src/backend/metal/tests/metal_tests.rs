@@ -162,7 +162,8 @@ fn maps_match_the_host_within_tolerance() {
     let positive: Vec<f32> = (0..3000)
         .map(|index| (index as f32 + 1.0) / 300.0)
         .collect();
-    let cases: [(MapOperation, &[f32], fn(f32) -> f32); 4] = [
+    type MapCase<'elements> = (MapOperation, &'elements [f32], fn(f32) -> f32);
+    let cases: [MapCase; 4] = [
         (MapOperation::Exp, &signed, f32::exp),
         (MapOperation::Tanh, &signed, f32::tanh),
         (MapOperation::Ln, &positive, f32::ln),
