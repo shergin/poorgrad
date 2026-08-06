@@ -113,6 +113,29 @@ impl<Element> Tensor<Element> {
         }
     }
 
+    /// Returns the buffer window a strided dense view addresses together
+    /// with its layout rebased to the window start, or `None` when the
+    /// storage is not a strided view or walking the window would cost more
+    /// than a logical walk (a narrow view over a sliver of a large buffer).
+    ///
+    /// An elementwise transform commutes with any view, so a caller may
+    /// transform the window and keep the layout instead of materializing
+    /// the logical order. The window can include buffer elements the view
+    /// skips; the transform visits them, and no logical access reads them.
+    fn strided_window(&self) -> Option<(&[Element], Layout)> {
+        let Storage::Dense { data, layout } = &self.storage else {
+            return None;
+        };
+        if layout.is_contiguous() || layout.span() > layout.volume() {
+            return None;
+        }
+        let start = layout.offset();
+        Some((
+            &data.as_slice()[start..start + layout.span()],
+            layout.rebased(),
+        ))
+    }
+
     /// Returns the elements in logical row-major order.
     ///
     /// A contiguous dense buffer iterates its slice directly; a strided
@@ -269,9 +292,12 @@ impl<Element: Differentiable> Tensor<Element> {
     /// A constant maps in place to another constant; a contiguous
     /// dense buffer maps over its slice directly — bypassing the
     /// per-element iterator dispatch, which measured well below
-    /// memory speed — and everything else materializes through the
-    /// logical-order iterator. Every lane applies `transform` to the
-    /// same elements in the same order, so the lanes agree bitwise.
+    /// memory speed; a strided view maps its buffer window and keeps
+    /// the layout, so a broadcast view transforms only its distinct
+    /// elements and stays a view; and everything else materializes
+    /// through the logical-order iterator. A pure `transform` gives
+    /// every logical element the same value on every path, so the
+    /// lanes agree bitwise.
     fn map(&self, transform: impl Fn(&Element) -> Element) -> Self {
         if let Storage::Constant { shape, value } = &self.storage {
             return Self::constant(shape.clone(), transform(value));
@@ -282,6 +308,14 @@ impl<Element: Differentiable> Tensor<Element> {
                 elements.iter().map(transform).collect(),
             );
         }
+        if let Some((window, layout)) = self.strided_window() {
+            return Self {
+                storage: Storage::Dense {
+                    data: Arc::new(window.iter().map(transform).collect()),
+                    layout,
+                },
+            };
+        }
         Self::dense(
             self.logical_shape().clone(),
             self.iter().map(transform).collect(),
@@ -291,10 +325,12 @@ impl<Element: Differentiable> Tensor<Element> {
     /// Combines two tensors element by element with `combine`.
     ///
     /// Two constants combine into a constant in O(1); contiguous
-    /// dense buffers combine slice to slice, a dense-and-constant
-    /// pair maps the slice against the single value, and everything
-    /// else goes through the logical-order iterators. Every lane
-    /// hands `combine` the same pairs in the same order, so the
+    /// dense buffers combine slice to slice; a dense-and-constant
+    /// pair maps the dense operand against the single value; two
+    /// dense buffers whose innermost strides are unit or zero
+    /// combine run by run as slices; and everything else goes
+    /// through the logical-order iterators. A pure `combine` hands
+    /// every logical pair the same value on every path, so the
     /// lanes agree bitwise.
     ///
     /// # Panics
@@ -319,21 +355,29 @@ impl<Element: Differentiable> Tensor<Element> {
                     .collect(),
             );
         }
-        if let (Some(left), Storage::Constant { value: right, .. }) =
-            (self.as_slice(), &other.storage)
+        if let (Storage::Dense { .. }, Storage::Constant { value: right, .. }) =
+            (&self.storage, &other.storage)
         {
-            return Self::dense(
-                self.logical_shape().clone(),
-                left.iter().map(|left| combine(left, right)).collect(),
-            );
+            return self.map(|left| combine(left, right));
         }
-        if let (Storage::Constant { value: left, .. }, Some(right)) =
-            (&self.storage, other.as_slice())
+        if let (Storage::Constant { value: left, .. }, Storage::Dense { .. }) =
+            (&self.storage, &other.storage)
         {
-            return Self::dense(
-                self.logical_shape().clone(),
-                right.iter().map(|right| combine(left, right)).collect(),
-            );
+            return other.map(|right| combine(left, right));
+        }
+        if let (
+            Storage::Dense {
+                data: left,
+                layout: left_layout,
+            },
+            Storage::Dense {
+                data: right,
+                layout: right_layout,
+            },
+        ) = (&self.storage, &other.storage)
+            && let Some(combined) = zipped_runs(left, left_layout, right, right_layout, &combine)
+        {
+            return Self::dense(self.logical_shape().clone(), combined);
         }
         Self::dense(
             self.logical_shape().clone(),
@@ -343,6 +387,62 @@ impl<Element: Differentiable> Tensor<Element> {
                 .collect(),
         )
     }
+}
+
+/// Combines two same-shape dense buffers by innermost-axis runs, or
+/// declines with `None` when either innermost stride exceeds one.
+///
+/// A unit stride walks a run as a slice and a zero stride holds one
+/// element for the whole run, so every accepted case combines slices or
+/// a slice against a held element — the loop shapes vectorization needs,
+/// where the logical-order odometer defeats it. Both operands advance
+/// run by run through their outer-axis offsets in logical order; a
+/// zero-by-zero run computes its one value and repeats it.
+fn zipped_runs<Element: Clone>(
+    left: &[Element],
+    left_layout: &Layout,
+    right: &[Element],
+    right_layout: &Layout,
+    combine: impl Fn(&Element, &Element) -> Element,
+) -> Option<Vec<Element>> {
+    let left_stride = left_layout.inner_stride();
+    let right_stride = right_layout.inner_stride();
+    if left_stride > 1 || right_stride > 1 {
+        return None;
+    }
+    let extent = left_layout.inner_extent();
+    let mut combined = Vec::with_capacity(left_layout.volume());
+    for (left_start, right_start) in left_layout.run_offsets().zip(right_layout.run_offsets()) {
+        match (left_stride, right_stride) {
+            (1, 1) => combined.extend(
+                left[left_start..left_start + extent]
+                    .iter()
+                    .zip(&right[right_start..right_start + extent])
+                    .map(|(left, right)| combine(left, right)),
+            ),
+            (1, 0) => {
+                let held = &right[right_start];
+                combined.extend(
+                    left[left_start..left_start + extent]
+                        .iter()
+                        .map(|left| combine(left, held)),
+                );
+            }
+            (0, 1) => {
+                let held = &left[left_start];
+                combined.extend(
+                    right[right_start..right_start + extent]
+                        .iter()
+                        .map(|right| combine(held, right)),
+                );
+            }
+            _ => {
+                let value = combine(&left[left_start], &right[right_start]);
+                combined.extend(std::iter::repeat_n(value, extent));
+            }
+        }
+    }
+    Some(combined)
 }
 
 /// Returns the shape with its two axes swapped, matching the payload
@@ -527,17 +627,29 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
 }
 
 impl<Element: Elementary> Tensor<Element> {
-    /// Applies one elementwise transcendental: the backend seam
-    /// first for a contiguous dense buffer, the scalar `fallback`
-    /// everywhere else (strided views, constants, declined maps).
+    /// Applies one elementwise transcendental: the backend seam first
+    /// for a contiguous dense buffer or for a strided view's buffer
+    /// window — which keeps the view, so a broadcast operand hands the
+    /// backend only its distinct elements — and the scalar `fallback`
+    /// everywhere else (constants, declined maps).
     fn mapped(&self, operation: MapOperation, fallback: impl Fn(&Element) -> Element) -> Self {
-        let seam = self
+        if let Some(mapped) = self
             .as_slice()
-            .and_then(|elements| Element::map(operation, elements));
-        match seam {
-            Some(mapped) => Self::dense(self.logical_shape().clone(), mapped),
-            None => self.map(fallback),
+            .and_then(|elements| Element::map(operation, elements))
+        {
+            return Self::dense(self.logical_shape().clone(), mapped);
         }
+        if let Some((window, layout)) = self.strided_window()
+            && let Some(mapped) = Element::map(operation, window)
+        {
+            return Self {
+                storage: Storage::Dense {
+                    data: Arc::new(mapped),
+                    layout,
+                },
+            };
+        }
+        self.map(fallback)
     }
 }
 

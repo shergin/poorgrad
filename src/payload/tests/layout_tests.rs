@@ -114,6 +114,39 @@ fn reshape_of_a_strided_layout_still_copies_when_non_unit_axes_change() {
 }
 
 #[test]
+fn span_measures_the_addressed_window() {
+    let contiguous = Layout::contiguous(Shape::new([2, 3]));
+    assert_eq!(contiguous.span(), 6);
+
+    // A broadcast axis adds nothing to the window; the span stays the
+    // source's six elements while the volume grows to twenty-four.
+    let spread = contiguous.broadcast_along(0, &Shape::new([4, 2, 3]));
+    assert_eq!(spread.span(), 6);
+    assert_eq!(spread.volume(), 24);
+    assert_eq!(spread.rebased().offset(), 0);
+}
+
+#[test]
+fn run_offsets_walk_the_outer_axes_in_logical_order() {
+    let contiguous = Layout::contiguous(Shape::new([2, 2, 3]));
+    let offsets: Vec<usize> = contiguous.run_offsets().collect();
+    assert_eq!(offsets, [0, 3, 6, 9]);
+
+    let spread = Layout::contiguous(Shape::new([2, 3])).broadcast_along(0, &Shape::new([2, 2, 3]));
+    let offsets: Vec<usize> = spread.run_offsets().collect();
+    assert_eq!(offsets, [0, 3, 0, 3]);
+}
+
+#[test]
+fn run_offsets_of_rank_zero_yield_the_single_run() {
+    let scalar = Layout::contiguous(Shape::scalar());
+    let offsets: Vec<usize> = scalar.run_offsets().collect();
+    assert_eq!(offsets, [0]);
+    assert_eq!(scalar.inner_extent(), 1);
+    assert_eq!(scalar.inner_stride(), 1);
+}
+
+#[test]
 fn permute_reorders_axes_and_strides() {
     let permuted = Layout::contiguous(Shape::new([2, 3, 4])).permute(&[2, 0, 1]);
     assert_eq!(permuted.shape(), &Shape::new([4, 2, 3]));

@@ -563,6 +563,87 @@ fn reshape_of_a_broadcast_view_keeps_the_view() {
 }
 
 #[test]
+fn arithmetic_over_spread_views_matches_the_materialized_twins() {
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let row_spread = Tensor::new([3], [10.0_f64, 20.0, 30.0]).broadcast_along(0, &matrix);
+    let column_spread = Tensor::new([2], [100.0_f64, 200.0]).broadcast_along(1, &matrix);
+    let materialized = |view: &Tensor<f64>| Tensor::new([2, 3], view.to_vec());
+
+    // A unit-stride run against a stride-0 run, both ways around, and a
+    // stride-0 pair: each takes the run path and must agree bitwise with
+    // the same operation over materialized operands.
+    assert_eq!(
+        matrix.clone() + row_spread.clone(),
+        matrix.clone() + materialized(&row_spread)
+    );
+    assert_eq!(
+        column_spread.clone() * matrix.clone(),
+        materialized(&column_spread) * matrix.clone()
+    );
+    assert_eq!(
+        column_spread.clone() + row_spread.clone(),
+        materialized(&column_spread) + materialized(&row_spread)
+    );
+    assert_eq!(
+        row_spread.clone() * row_spread.clone(),
+        materialized(&row_spread) * materialized(&row_spread)
+    );
+}
+
+#[test]
+fn arithmetic_over_transposed_views_matches_the_materialized_twins() {
+    // Inner strides above one decline the run path; the odometer
+    // fallback must still answer.
+    let matrix = Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    let transposed = matrix.transpose();
+    let materialized = Tensor::new([3, 2], transposed.to_vec());
+    assert_eq!(
+        transposed.clone() + transposed.clone(),
+        materialized.clone() + materialized
+    );
+}
+
+#[test]
+fn map_of_a_broadcast_view_keeps_the_view() {
+    let row = Tensor::new([3], [1.0_f64, 2.0, 3.0]);
+    let like = Tensor::filled([4, 3], 0.0);
+    let spread = row.broadcast_along(0, &like);
+    let negated = -spread.clone();
+    // The map transforms the three distinct elements and keeps the
+    // stride-0 layout instead of materializing twelve.
+    assert!(negated.as_slice().is_none());
+    assert_eq!(negated.to_vec(), [-1.0, -2.0, -3.0].repeat(4));
+
+    let exponentials = spread.exp();
+    assert!(exponentials.as_slice().is_none());
+    assert_eq!(exponentials.to_vec(), row.exp().to_vec().repeat(4));
+}
+
+#[test]
+fn map_of_a_narrow_sliver_falls_back_to_the_logical_walk() {
+    // Narrowing the inner axis leaves a window wider than the volume, so
+    // the map materializes in logical order instead of walking it.
+    let matrix = Tensor::new(
+        [3, 4],
+        (0..12).map(|index| index as f64).collect::<Vec<_>>(),
+    );
+    let sliver = matrix.narrow(1, 1, 2);
+    let negated = -sliver;
+    assert!(negated.as_slice().is_some());
+    assert_eq!(negated.to_vec(), vec![-1.0, -2.0, -5.0, -6.0, -9.0, -10.0]);
+}
+
+#[test]
+fn zip_of_a_spread_view_and_a_constant_keeps_the_view() {
+    let row = Tensor::new([3], [1.0_f64, 2.0, 3.0]);
+    let like = Tensor::filled([4, 3], 0.0);
+    let spread = row.broadcast_along(0, &like);
+    let shifted = spread + Tensor::filled([4, 3], 10.0);
+    assert!(shifted.as_slice().is_none());
+    assert_eq!(shifted.to_vec(), [11.0, 12.0, 13.0].repeat(4));
+}
+
+#[test]
 #[should_panic(expected = "changes the number of elements")]
 fn reshape_rejects_volume_changes() {
     Tensor::new([2, 3], vec![1.0_f64; 6]).reshape(Shape::new([2, 2]));

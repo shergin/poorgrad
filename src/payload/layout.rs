@@ -147,6 +147,58 @@ impl Layout {
         }
     }
 
+    /// Returns the width of the buffer window this layout addresses: one
+    /// past the distance from its first to its last logical element.
+    ///
+    /// A whole-window walk visits `span()` buffer elements where a logical
+    /// walk visits `volume()`, so a caller trades one for the other by
+    /// comparing the two; a broadcast view's span never exceeds its volume.
+    pub(crate) fn span(&self) -> usize {
+        let furthest: usize = self
+            .shape
+            .axes()
+            .iter()
+            .zip(&self.strides)
+            .map(|(&extent, &stride)| (extent - 1) * stride)
+            .sum();
+        furthest + 1
+    }
+
+    /// Returns the layout with its offset rebased to zero, for addressing
+    /// a fresh buffer that holds exactly the addressed window.
+    pub(crate) fn rebased(&self) -> Self {
+        Self {
+            shape: self.shape.clone(),
+            strides: self.strides.clone(),
+            offset: 0,
+        }
+    }
+
+    /// Returns the extent of the innermost axis: the length of one
+    /// logical run. A rank-0 layout answers 1, its whole volume.
+    pub(crate) fn inner_extent(&self) -> usize {
+        self.shape.axes().last().copied().unwrap_or(1)
+    }
+
+    /// Returns the stride of the innermost axis: how a logical run steps
+    /// through the buffer. A rank-0 layout answers 1, the unit step its
+    /// single-element run never takes.
+    pub(crate) fn inner_stride(&self) -> usize {
+        self.strides.last().copied().unwrap_or(1)
+    }
+
+    /// Returns an iterator over the storage offsets at which each
+    /// innermost-axis run begins, in logical order.
+    pub(crate) fn run_offsets(&self) -> RunOffsets<'_> {
+        let outer_rank = self.rank().saturating_sub(1);
+        RunOffsets {
+            layout: self,
+            coordinates: std::iter::repeat_n(0, outer_rank).collect(),
+            offset: self.offset,
+            remaining: self.shape.axes()[..outer_rank].iter().product(),
+        }
+    }
+
     /// Returns a layout for `shape` over the same buffer region, preserving
     /// the offset, or `None` when the reshape must copy.
     ///
@@ -260,6 +312,44 @@ impl Layout {
             strides,
             offset: self.offset,
         }
+    }
+}
+
+/// Iterator over the storage offsets at which each innermost-axis run of a
+/// [`Layout`] begins, in logical order: an odometer over the outer axes,
+/// mirroring the element iterator's walk one run at a time.
+pub(crate) struct RunOffsets<'layout> {
+    layout: &'layout Layout,
+    coordinates: Strides,
+    offset: usize,
+    remaining: usize,
+}
+
+impl Iterator for RunOffsets<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        if self.remaining == 0 {
+            return None;
+        }
+        let start = self.offset;
+        self.remaining -= 1;
+        if self.remaining > 0 {
+            let axes = self.layout.shape.axes();
+            // Advance the odometer: step the innermost outer axis, carrying
+            // into the axes above it and adjusting the offset by the stride
+            // of whichever axis moved.
+            for axis in (0..self.coordinates.len()).rev() {
+                self.coordinates[axis] += 1;
+                if self.coordinates[axis] < axes[axis] {
+                    self.offset += self.layout.strides[axis];
+                    break;
+                }
+                self.offset -= (axes[axis] - 1) * self.layout.strides[axis];
+                self.coordinates[axis] = 0;
+            }
+        }
+        Some(start)
     }
 }
 
