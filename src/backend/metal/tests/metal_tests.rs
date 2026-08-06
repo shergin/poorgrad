@@ -1,8 +1,8 @@
-use crate::GemmTask;
+use crate::{GemmTask, MapOperation};
 
 use super::context::{Context, SetupError};
 use super::gemm::{Kernel, executed};
-use super::{gemm_f32, initialized};
+use super::{gemm_f32, initialized, map_f32};
 
 /// Returns the context, or `None` on machines without a Metal
 /// device — the virtualized CI runners — where the GPU tests skip
@@ -151,4 +151,54 @@ fn the_chain_routes_large_products_here() {
     let chain_bits: Vec<u32> = through_chain.iter().map(|value| value.to_bits()).collect();
     let direct_bits: Vec<u32> = direct.iter().map(|value| value.to_bits()).collect();
     assert_eq!(chain_bits, direct_bits);
+}
+
+#[test]
+fn maps_match_the_host_within_tolerance() {
+    let Some(context) = device() else { return };
+    let signed: Vec<f32> = (0..3000)
+        .map(|index| (index as f32 - 1500.0) / 300.0)
+        .collect();
+    let positive: Vec<f32> = (0..3000)
+        .map(|index| (index as f32 + 1.0) / 300.0)
+        .collect();
+    let cases: [(MapOperation, &[f32], fn(f32) -> f32); 4] = [
+        (MapOperation::Exp, &signed, f32::exp),
+        (MapOperation::Tanh, &signed, f32::tanh),
+        (MapOperation::Ln, &positive, f32::ln),
+        (MapOperation::Sqrt, &positive, f32::sqrt),
+    ];
+    for (operation, elements, host) in cases {
+        let mapped =
+            super::map::executed(context, operation, elements).expect("the dispatch succeeds");
+        for (&element, &actual) in elements.iter().zip(&mapped) {
+            let expected = host(element);
+            let tolerance = 8.0 * f32::EPSILON * (1.0 + expected.abs());
+            assert!(
+                (actual - expected).abs() <= tolerance,
+                "{operation:?}({element}) = {actual} differs from {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn small_maps_decline_before_touching_the_device() {
+    // The threshold gate answers before any Metal state is built, so
+    // this holds on every machine.
+    assert_eq!(map_f32(MapOperation::Exp, &[1.0_f32; 16]), None);
+}
+
+#[test]
+fn large_maps_run_through_the_module_entry() {
+    let Some(context) = device() else { return };
+    let elements: Vec<f32> = (0..super::MAP_THRESHOLD)
+        .map(|index| (index % 100) as f32 / 50.0 - 1.0)
+        .collect();
+    let through_entry = map_f32(MapOperation::Tanh, &elements).expect("the entry accepts");
+    let direct = super::map::executed(context, MapOperation::Tanh, &elements)
+        .expect("the dispatch succeeds");
+    let entry_bits: Vec<u32> = through_entry.iter().map(|value| value.to_bits()).collect();
+    let direct_bits: Vec<u32> = direct.iter().map(|value| value.to_bits()).collect();
+    assert_eq!(entry_bits, direct_bits);
 }

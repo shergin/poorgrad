@@ -16,12 +16,13 @@
 
 mod context;
 mod gemm;
+mod map;
 mod pool;
 
 use std::sync::OnceLock;
 
-use crate::GemmTask;
 use crate::backend::BackendUnavailable;
+use crate::{GemmTask, MapOperation};
 
 use self::context::{Context, SetupError};
 
@@ -30,6 +31,17 @@ use self::context::{Context, SetupError};
 /// the comparison that matters, since Accelerate leads the chain
 /// wherever it is compiled in. The crossover sits near 256-square.
 const FLOP_THRESHOLD: usize = 1 << 25;
+
+/// Below this many elements the ~100 us dispatch outweighs the GPU's
+/// edge over the next map rung. Measured on the M1 Pro (tanh): the
+/// GPU passes the scalar path near 128k elements and Accelerate's
+/// vForce near 512k, so the gate adapts to which rung stands behind
+/// it; above the gate the GPU reaches 2.7 Gelem/s where vForce holds
+/// 1.2 and the scalar path 0.4.
+#[cfg(all(feature = "accelerate", target_os = "macos"))]
+const MAP_THRESHOLD: usize = 1 << 19;
+#[cfg(not(all(feature = "accelerate", target_os = "macos")))]
+const MAP_THRESHOLD: usize = 1 << 17;
 
 static CONTEXT: OnceLock<Result<Context, SetupError>> = OnceLock::new();
 static POISON: OnceLock<String> = OnceLock::new();
@@ -80,6 +92,25 @@ pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
     let context = context().ok()?;
     match gemm::executed(context, task, gemm::Kernel::Specialized) {
         Ok(product) => Some(product),
+        Err(reason) => {
+            // A numerics library degrades to slow, never to wrong:
+            // one runtime failure disables the backend for good.
+            let _ = POISON.set(reason);
+            None
+        }
+    }
+}
+
+/// It runs an `f32` elementwise map on the GPU, or declines with
+/// `None`: below the threshold, beyond `u32` extents, or with the
+/// module poisoned or unavailable.
+pub(super) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
+    if elements.len() < MAP_THRESHOLD || elements.len() > u32::MAX as usize {
+        return None;
+    }
+    let context = context().ok()?;
+    match map::executed(context, operation, elements) {
+        Ok(mapped) => Some(mapped),
         Err(reason) => {
             // A numerics library degrades to slow, never to wrong:
             // one runtime failure disables the backend for good.

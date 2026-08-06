@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use poorgrad::Tensor;
+use poorgrad::{Elementary, Tensor};
 
 /// Builds a `[len]` tensor with a deterministic, cheap fill.
 fn filled(len: usize, seed: u64) -> Tensor<f32> {
@@ -44,6 +44,12 @@ fn elementwise(criterion: &mut Criterion) {
     group.throughput(Throughput::Elements(len as u64));
     group.bench_function("f32/negate-2m", |bencher| {
         bencher.iter(|| -left.clone());
+    });
+    // The transcendental seam: scalar without features, vForce under
+    // `accelerate`, the GPU under `metal` at this size.
+    group.throughput(Throughput::Elements(len as u64));
+    group.bench_function("f32/tanh-2m", |bencher| {
+        bencher.iter(|| left.tanh());
     });
 
     let left = Tensor::new([len / 4], vec![0.5_f64; len / 4]);

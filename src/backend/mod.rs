@@ -88,6 +88,14 @@ pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 /// It offers an `f32` elementwise map to every compiled backend,
 /// answering `None` when none accepts.
 pub(crate) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
+    // Metal leads the map chain, the reverse of the gemm order: the
+    // measured map crossover has the GPU ahead of vForce from 512k
+    // elements, and its size gate hands everything smaller to the
+    // arms behind it.
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    if let Some(mapped) = metal::map_f32(operation, elements) {
+        return Some(mapped);
+    }
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if let Some(mapped) = accelerate::map_f32(operation, elements) {
         return Some(mapped);

@@ -47,8 +47,8 @@ impl fmt::Display for SetupError {
     }
 }
 
-/// The backend's one-time state: the device and queue, the two
-/// compiled pipelines, and the buffer pool.
+/// The backend's one-time state: the device and queue, the compiled
+/// pipelines, and the buffer pool.
 ///
 /// Built lazily on the first eligible task or `status` call; any
 /// failure is the `SetupError` the diagnostics report.
@@ -57,6 +57,9 @@ pub(super) struct Context {
     pub(super) queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pub(super) naive: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pub(super) tiled: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    /// The elementwise map pipelines, indexed by
+    /// [`map_pipeline_index`](super::map::map_pipeline_index).
+    pub(super) maps: [Retained<ProtocolObject<dyn MTLComputePipelineState>>; 4],
     library: Retained<ProtocolObject<dyn MTLLibrary>>,
     specialized: Mutex<HashMap<ShapeKey, Retained<ProtocolObject<dyn MTLComputePipelineState>>>>,
     pub(super) pool: Pool,
@@ -82,7 +85,11 @@ impl Context {
         let queue = device
             .newCommandQueue()
             .ok_or_else(|| SetupError::Failed("no command queue".to_string()))?;
-        let source = NSString::from_str(include_str!("shaders/gemm.metal"));
+        let source = NSString::from_str(concat!(
+            include_str!("shaders/gemm.metal"),
+            "\n",
+            include_str!("shaders/map.metal"),
+        ));
         let options = MTLCompileOptions::new();
         #[allow(deprecated)]
         options.setFastMathEnabled(false);
@@ -91,6 +98,12 @@ impl Context {
             .map_err(|error| SetupError::Failed(error.localizedDescription().to_string()))?;
         let naive = pipeline(&device, &library, "gemm_naive_f32").map_err(SetupError::Failed)?;
         let tiled = pipeline(&device, &library, "gemm_tiled_f32").map_err(SetupError::Failed)?;
+        let maps = [
+            pipeline(&device, &library, "map_exp_f32").map_err(SetupError::Failed)?,
+            pipeline(&device, &library, "map_ln_f32").map_err(SetupError::Failed)?,
+            pipeline(&device, &library, "map_sqrt_f32").map_err(SetupError::Failed)?,
+            pipeline(&device, &library, "map_tanh_f32").map_err(SetupError::Failed)?,
+        ];
         if tiled.maxTotalThreadsPerThreadgroup() < 128 {
             return Err(SetupError::Failed(
                 "the tiled kernel needs 128 threads per threadgroup".to_string(),
@@ -101,6 +114,7 @@ impl Context {
             queue,
             naive,
             tiled,
+            maps,
             library,
             specialized: Mutex::new(HashMap::new()),
             pool: Pool::new(),
