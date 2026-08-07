@@ -3,6 +3,11 @@
 //! reader for the safetensors format — an 8-byte little-endian header
 //! length, a JSON header mapping tensor names to dtype, shape, and
 //! byte offsets, then the raw data section.
+//!
+//! The cache lives outside the repository, under
+//! `$XDG_CACHE_HOME/poorgrad/gpt2` (`~/.cache` by default), so every
+//! checkout and worktree shares one 548 MB download and git never
+//! sees it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -21,14 +26,23 @@ pub fn cached_text(name: &str) -> String {
     std::fs::read_to_string(&path).expect("the cached file reads")
 }
 
+/// Returns the machine-level cache directory, shared by every
+/// checkout and worktree.
+pub fn cache_directory() -> PathBuf {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME").expect("a home directory");
+            Path::new(&home).join(".cache")
+        });
+    let directory = base.join("poorgrad").join("gpt2");
+    std::fs::create_dir_all(&directory).expect("the cache directory exists");
+    directory
+}
+
 /// Returns the cache path of `name`, downloading on first use.
 fn cached(name: &str) -> PathBuf {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("examples")
-        .join("gpt2")
-        .join("data");
-    std::fs::create_dir_all(&directory).expect("the cache directory exists");
-    let path = directory.join(name);
+    let path = cache_directory().join(name);
     if !path.exists() {
         download(name, &path);
     }

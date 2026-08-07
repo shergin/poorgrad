@@ -35,7 +35,6 @@ mod tokenizer;
 mod weights;
 
 use std::io::{Read, Write};
-use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
@@ -273,10 +272,7 @@ struct XlaServer {
 impl XlaServer {
     /// Emits the plan, stages the arguments, and starts the server.
     fn new(model: &Model) -> Self {
-        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("examples")
-            .join("gpt2")
-            .join("data");
+        let directory = weights::cache_directory();
         let module_path = directory.join("gpt2-plan.mlir");
         let static_path = directory.join("gpt2-static.bin");
         let manifest_path = directory.join("gpt2-manifest.json");
