@@ -395,6 +395,8 @@ term and its mapping to the Rust types — is collected in
   StableHLO and serves generation through a resident XLA process —
   measured faster than the tape and reproducing its text:
   `cargo run --release --features accelerate --example gpt2 -- "Once upon a time" 40 xla`.
+  The full guide — engines, setup, the Metal cautionary tale — is
+  [examples/gpt2/README.md](examples/gpt2/README.md).
 - [`throughput`](examples/throughput.rs) — the acceleration ladder
   measured on a wide dense model: raw 2048-square products and whole
   training steps, with the dimensions shrinking eightfold when no
