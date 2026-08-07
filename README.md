@@ -4,9 +4,12 @@
   <img src="poorgrad.png" alt="poorgrad logo" width="480">
 </p>
 
-**A fully concurrent, thread-safe autograd engine, written the way Rust
-wants it written. CPU-only by default; teraflop-class when you flip a
-flag. Small enough to audit; deterministic enough to ship.**
+**An autodiff compiler stack in miniature, written the way Rust wants
+it written: record a graph once, inspect every node, lower it to a
+plan you can read, verify every optimization against the interpreter
+that ships inside — and emit StableHLO when you want the XLA world's
+muscle. Small enough to learn from; rigorous enough to catch a vendor
+compiler computing GPT-2 wrong.**
 
 `poorgrad` begins from
 [Karpathy's `micrograd`](https://github.com/karpathy/micrograd) and then
@@ -14,6 +17,15 @@ takes the road the others don't: no `Rc<RefCell<...>>`, no single-threaded
 assumption, no graph rebuilt on every pass, and a payload generic over
 scalars and tensors alike. Sharing a computation graph across threads is
 not a feature bolted on with locks; it is what the types guarantee.
+
+Where micrograd teaches autodiff by being small, `poorgrad` also
+teaches what an ML compiler does. Eager frameworks hide the graph —
+the schedule is the program; lazy frameworks hide the schedule — the
+graph is whatever the scheduler did. `poorgrad` shows both and lets
+you diff them: the tape is the specification, a compiled `Plan` is
+the schedule, `Plan::describe()` prints every decision — dead-node
+elimination, buffer liveness, fusion, rematerialization — and one
+assert checks any of them against the interpreter, bit for bit.
 
 The discipline is the product: three dependencies,
 `#![forbid(unsafe_code)]` unless you opt into the FFI backends —
@@ -104,24 +116,36 @@ every emitted module is checked twice against toolchains the crate
 never links: an external parser must accept the text, and the
 StableHLO reference interpreter must reproduce the interpreter's
 own results (`tools/`, driven by two environment variables the test
-suite honors). Measured where it matters: the same tape serves a
+suite honors).
+
+On the emitted path, performance is XLA's and correctness is still
+ours to check. Measured both ways: the same tape serves a
 convolutional forward eleven times faster by handing the emitted
-plan to XLA-CPU, while training, inspection, and the determinism
-contract stay at home. The numbers and their readings:
-[ACCELERATION.md](ACCELERATION.md).
+plan to XLA-CPU, and the `gpt2` example generates at 132 ms/token
+through XLA against the tape's 195, reproducing its text exactly —
+while Apple's experimental Metal plugin ran the same module at 26
+ms/token and *wrong*, a verdict provable because the tape, XLA-CPU,
+and the reference interpreter agree with each other. Training,
+inspection, and the determinism contract stay at home. The numbers
+and their readings: [ACCELERATION.md](ACCELERATION.md).
 
 ## Where it fits
 
-- **Rust services that learn in production.** Train, fine-tune, or
-  calibrate dense models inside the process that serves them —
-  personalization weights, ranking adjustments, anomaly
-  thresholds — without a Python runtime, a framework heavier than
-  the service, or a model file crossing a process boundary.
-- **Serving and training the same network, concurrently.** Runs
-  never lock the graph: one shared network answers inference on
-  every thread while a training loop steps generations in the
-  background, and moving to the next generation is swapping a
-  value — snapshot isolation, for models.
+- **Learning what an ML compiler does.** The examples are a
+  curriculum: chained scalar expressions, the makemore acts, LeNet
+  on MNIST, a VGG-style convnet on CIFAR-10, a one-block
+  transformer, and GPT-2 with the released weights — every stage of
+  the stack (recording, differentiation, plans, fusion,
+  rematerialization, emission) landed with a consumer that uses it
+  and a measured number that grades it.
+  [TERMINOLOGY.md](TERMINOLOGY.md) keeps the vocabulary honest, and
+  `Plan::describe()` makes optimization something you read, not
+  something you trust.
+- **Systems research at legible scale.** The IR is ~30 documented
+  operations; a new pass, transform, or numeric idea can be tried
+  in a day and graded against a built-in bitwise oracle on real
+  consumers. The stack is small enough to hold in your head and
+  rigorous enough that a disagreement means something.
 - **Reproducibility as a requirement, not a hope.** No `rand`, no
   clocks, seeds all the way down: a model trained in CI is
   evidence, a rerun experiment is a checksum, and a regression
@@ -132,11 +156,21 @@ contract stay at home. The numbers and their readings:
   curve fitting, and gradient-based optimization where `f32`
   rounding is a liability. Accelerated `f64` is the exception, not
   the rule, in ML stacks.
-- **Parallel what-ifs on O(1) forks.** Forking a network copies
-  nothing, so training several learning rates or data shards in
-  parallel over shared structure is the
+- **Rust services that learn in production.** Train, fine-tune, or
+  calibrate dense models inside the process that serves them,
+  without a Python runtime or a model file crossing a process
+  boundary. Runs never lock the graph: one shared network answers
+  inference on every thread while a training loop steps generations
+  in the background, and parallel what-ifs ride O(1) forks — the
   [threaded example](examples/gradient_descent.rs), not an
   architecture project.
+
+What it is not: a competitor to the big frameworks. Frontier-scale
+model work wants GPUs, dynamic shapes, and Python, and chasing that
+is how small projects die; `poorgrad` keeps ~30 operations
+impeccable instead of two thousand current. When a workload
+outgrows the interpreter, emission hands it to an industrial
+compiler — and the oracle goes along to check the work.
 
 ## A taste
 
