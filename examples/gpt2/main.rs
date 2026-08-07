@@ -5,23 +5,41 @@
 //! under a causal mask leaf, `concat` joining the heads, and a GELU
 //! MLP (the tanh approximation the checkpoint was trained with, held
 //! as scalar leaves — float constants are caller territory). The
-//! token and position embeddings arrive by `gather` and `narrow`, and
-//! the tied language-model head is the embedding table transposed.
-//! One forward-only plan at a fixed context serves every generation
-//! step: the token window and the prediction row's one-hot extraction
-//! are per-run inputs, so generating never regrows the tape.
+//! embedded token window arrives as a per-run input (the vocabulary
+//! lookup is loop-land data preparation, a row copy), positions by
+//! `narrow`, and the tied language-model head is the embedding table
+//! transposed. One forward-only plan at a fixed context serves every
+//! generation step, so generating never regrows the tape.
+//!
+//! The same plan powers two engines. `tape` (the default) runs it on
+//! poorgrad's own interpreter. `xla` emits it as StableHLO and holds
+//! a serving process (`tools/serve-stablehlo-xla.py`) that compiles
+//! it once, keeps the 124M parameters resident, and answers each
+//! step over binary pipes — the parameters cross the boundary once,
+//! each step ships only the embedded window. `POORGRAD_XLA_PYTHON`
+//! names the Python (any with `jax`; default `python3`), and
+//! `JAX_PLATFORMS` picks the XLA backend. Stated as measured: XLA-CPU
+//! serves at 132 ms/token against the tape's 194 and reproduces its
+//! text; `JAX_PLATFORMS=METAL` under a `jax-metal` environment runs
+//! at 26 ms/token but miscomputes this module (Apple's experimental
+//! plugin; the small conformance modules pass, this one does not) —
+//! caught precisely because the tape, XLA-CPU, and the reference
+//! interpreter agree with each other.
 //!
 //! The checkpoint (548 MB) and tokenizer download and cache on first
 //! run. Run with:
-//! `cargo run --release --features accelerate --example gpt2 -- "prompt"`
+//! `cargo run --release --features accelerate --example gpt2 -- "prompt" 40 xla`
 
 mod json;
 mod tokenizer;
 mod weights;
 
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use poorgrad::{LayerNorm, Network, Plan, Symbol, Tensor, Value, concat};
+use poorgrad::{Differentiable, LayerNorm, Network, Plan, Symbol, Tensor, Value, concat};
 
 use tokenizer::Tokenizer;
 use weights::{Weights, cached_text};
@@ -46,6 +64,34 @@ const VOCABULARY_LEN: usize = 50257;
 
 /// The end-of-text token that opens and closes generation.
 const END_OF_TEXT: usize = 50256;
+
+/// The recording-ordered parameter payloads, mirrored as the emitted
+/// module's leading arguments.
+type Recorder = Vec<Tensor<f32>>;
+
+/// Registers `tensor` as a parameter and records its payload in the
+/// module-argument order.
+fn parameter<'network>(
+    network: &'network Network<Tensor<f32>>,
+    recorder: &mut Recorder,
+    tensor: Tensor<f32>,
+) -> Value<'network, Tensor<f32>> {
+    recorder.push(tensor.clone());
+    network.parameter(tensor)
+}
+
+/// Builds a `LayerNorm`, recording its scale and shift in the
+/// module-argument order the facade registers them.
+fn layer_norm(
+    network: &Network<Tensor<f32>>,
+    recorder: &mut Recorder,
+    scale: Tensor<f32>,
+    shift: Tensor<f32>,
+) -> LayerNorm<Tensor<f32>> {
+    recorder.push(scale.clone());
+    recorder.push(shift.clone());
+    LayerNorm::new(network, scale, shift, Tensor::filled([], 1e-5_f32))
+}
 
 /// The GELU tanh approximation's constants as scalar leaves, shared
 /// by every block.
@@ -92,30 +138,34 @@ struct Block<'network> {
 }
 
 impl<'network> Block<'network> {
-    fn new(network: &'network Network<Tensor<f32>>, weights: &Weights, layer: usize) -> Self {
-        let epsilon = Tensor::filled([], 1e-5_f32);
+    fn new(
+        network: &'network Network<Tensor<f32>>,
+        recorder: &mut Recorder,
+        weights: &Weights,
+        layer: usize,
+    ) -> Self {
         let tensor = |suffix: &str| weights.tensor(&format!("h.{layer}.{suffix}"));
         Self {
-            attention_norm: LayerNorm::new(
+            attention_norm: layer_norm(
                 network,
+                recorder,
                 tensor("ln_1.weight"),
                 tensor("ln_1.bias"),
-                epsilon.clone(),
             ),
-            attention_weights: network.parameter(tensor("attn.c_attn.weight")),
-            attention_bias: network.parameter(tensor("attn.c_attn.bias")),
-            projection_weights: network.parameter(tensor("attn.c_proj.weight")),
-            projection_bias: network.parameter(tensor("attn.c_proj.bias")),
-            hidden_norm: LayerNorm::new(
+            attention_weights: parameter(network, recorder, tensor("attn.c_attn.weight")),
+            attention_bias: parameter(network, recorder, tensor("attn.c_attn.bias")),
+            projection_weights: parameter(network, recorder, tensor("attn.c_proj.weight")),
+            projection_bias: parameter(network, recorder, tensor("attn.c_proj.bias")),
+            hidden_norm: layer_norm(
                 network,
+                recorder,
                 tensor("ln_2.weight"),
                 tensor("ln_2.bias"),
-                epsilon,
             ),
-            up_weights: network.parameter(tensor("mlp.c_fc.weight")),
-            up_bias: network.parameter(tensor("mlp.c_fc.bias")),
-            down_weights: network.parameter(tensor("mlp.c_proj.weight")),
-            down_bias: network.parameter(tensor("mlp.c_proj.bias")),
+            up_weights: parameter(network, recorder, tensor("mlp.c_fc.weight")),
+            up_bias: parameter(network, recorder, tensor("mlp.c_fc.bias")),
+            down_weights: parameter(network, recorder, tensor("mlp.c_proj.weight")),
+            down_bias: parameter(network, recorder, tensor("mlp.c_proj.bias")),
         }
     }
 
@@ -155,23 +205,26 @@ impl<'network> Block<'network> {
     }
 }
 
-/// The compiled model: the sampling plan and its feed symbols.
+/// The compiled model: the sampling plan, its feed symbols, and the
+/// module-argument payloads.
 struct Model {
     plan: Plan<Tensor<f32>>,
-    tokens: Symbol,
+    stream: Symbol,
     extraction: Symbol,
     logits: Symbol,
+    arguments: Recorder,
 }
 
 /// Records GPT-2 from the checkpoint and compiles the sampling plan.
 fn model(network: &Network<Tensor<f32>>, weights: &Weights) -> Model {
-    let embeddings = network.parameter(weights.tensor("wte.weight"));
-    let positions = network.parameter(weights.tensor("wpe.weight"));
-    let final_norm = LayerNorm::new(
+    let mut recorder = Recorder::new();
+    let embeddings = parameter(network, &mut recorder, weights.tensor("wte.weight"));
+    let positions = parameter(network, &mut recorder, weights.tensor("wpe.weight"));
+    let final_norm = layer_norm(
         network,
+        &mut recorder,
         weights.tensor("ln_f.weight"),
         weights.tensor("ln_f.bias"),
-        Tensor::filled([], 1e-5_f32),
     );
     let gelu = Gelu::new(network);
     let scale = network.leaf(Tensor::filled([], 1.0 / (HEAD_DIM as f32).sqrt()));
@@ -186,17 +239,13 @@ fn model(network: &Network<Tensor<f32>>, weights: &Weights) -> Model {
         .collect();
     let mask = network.leaf(Tensor::new([CONTEXT_LEN, CONTEXT_LEN], mask_elements));
     let blocks: Vec<Block> = (0..LAYER_COUNT)
-        .map(|layer| Block::new(network, weights, layer))
+        .map(|layer| Block::new(network, &mut recorder, weights, layer))
         .collect();
 
-    let tokens = network.input(Tensor::selection(
-        vec![END_OF_TEXT; CONTEXT_LEN],
-        VOCABULARY_LEN,
-        1.0_f32,
-    ));
+    let embedded = network.input(Tensor::filled([CONTEXT_LEN, EMBED_DIM], 0.0_f32));
     let extraction = network.input(Tensor::selection(vec![0], CONTEXT_LEN, 1.0_f32));
 
-    let mut stream = embeddings.gather(tokens) + positions.narrow(0, 0, CONTEXT_LEN);
+    let mut stream = embedded + positions.narrow(0, 0, CONTEXT_LEN);
     for block in &blocks {
         stream = block.express(network, stream, mask, scale, &gelu);
     }
@@ -206,9 +255,101 @@ fn model(network: &Network<Tensor<f32>>, weights: &Weights) -> Model {
 
     Model {
         plan: network.compile([logits.symbol()], []),
-        tokens: tokens.symbol(),
+        stream: embedded.symbol(),
         extraction: extraction.symbol(),
         logits: logits.symbol(),
+        arguments: recorder,
+    }
+}
+
+/// The XLA serving process: the emitted plan compiled once, the
+/// parameters resident, one execution per written step.
+struct XlaServer {
+    child: Child,
+    requests: ChildStdin,
+    responses: ChildStdout,
+}
+
+impl XlaServer {
+    /// Emits the plan, stages the arguments, and starts the server.
+    fn new(model: &Model) -> Self {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("gpt2")
+            .join("data");
+        let module_path = directory.join("gpt2-plan.mlir");
+        let static_path = directory.join("gpt2-static.bin");
+        let manifest_path = directory.join("gpt2-manifest.json");
+
+        std::fs::write(
+            &module_path,
+            model.plan.emit_stablehlo().expect("the plan emits"),
+        )
+        .expect("the module writes");
+        let mut arguments = Vec::new();
+        for tensor in &model.arguments {
+            let axes = tensor.shape().axes().to_vec();
+            arguments.extend((axes.len() as u32).to_le_bytes());
+            for extent in axes {
+                arguments.extend((extent as u32).to_le_bytes());
+            }
+            for element in tensor.to_vec() {
+                arguments.extend(element.to_le_bytes());
+            }
+        }
+        std::fs::write(&static_path, arguments).expect("the arguments write");
+        std::fs::write(
+            &manifest_path,
+            format!("{{\"dynamic\": [[{CONTEXT_LEN}, {EMBED_DIM}], [1, {CONTEXT_LEN}]]}}"),
+        )
+        .expect("the manifest writes");
+
+        let python = std::env::var("POORGRAD_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let mut command: Vec<String> = python.split_whitespace().map(str::to_string).collect();
+        command.push("tools/serve-stablehlo-xla.py".to_string());
+        let mut child = Command::new(&command[0])
+            .args(&command[1..])
+            .arg(&module_path)
+            .arg(&static_path)
+            .arg(&manifest_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("the serving process starts; is `jax` installed for it?");
+        let requests = child.stdin.take().expect("the server's input pipes");
+        let responses = child.stdout.take().expect("the server's output pipes");
+        Self {
+            child,
+            requests,
+            responses,
+        }
+    }
+
+    /// Executes one step and returns the logits.
+    fn step(&mut self, stream: &[f32], extraction: &[f32]) -> Vec<f32> {
+        let mut request = Vec::with_capacity(4 * (stream.len() + extraction.len()));
+        for &value in stream.iter().chain(extraction) {
+            request.extend(value.to_le_bytes());
+        }
+        self.requests
+            .write_all(&request)
+            .expect("the request writes");
+        self.requests.flush().expect("the request flushes");
+        let mut response = vec![0u8; 4 * VOCABULARY_LEN];
+        self.responses
+            .read_exact(&mut response)
+            .expect("the server answers; see its standard error");
+        response
+            .chunks_exact(4)
+            .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four bytes")))
+            .collect()
+    }
+}
+
+impl Drop for XlaServer {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -250,6 +391,9 @@ fn main() {
         .nth(2)
         .map(|argument| argument.parse().expect("a token count"))
         .unwrap_or(40);
+    let engine = std::env::args()
+        .nth(3)
+        .unwrap_or_else(|| "tape".to_string());
 
     let loading = Instant::now();
     let tokenizer = Tokenizer::new(&cached_text("vocab.json"), &cached_text("merges.txt"));
@@ -280,40 +424,64 @@ fn main() {
         recording.elapsed().as_secs_f64()
     );
 
+    // The vocabulary lookup is data preparation: the window embeds by
+    // row copies from the table, and the plan adds the positions.
+    let table = weights.tensor("wte.weight").to_vec();
+    let embedded = |window: &[usize]| {
+        let mut stream = vec![0.0_f32; CONTEXT_LEN * EMBED_DIM];
+        for (row, &token) in window.iter().enumerate() {
+            stream[row * EMBED_DIM..(row + 1) * EMBED_DIM]
+                .copy_from_slice(&table[token * EMBED_DIM..(token + 1) * EMBED_DIM]);
+        }
+        stream
+    };
+
+    let mut server = match engine.as_str() {
+        "tape" => None,
+        "xla" => {
+            println!("starting the XLA server (compiling the emitted plan) ...");
+            let mut server = XlaServer::new(&model);
+            // One warmup step absorbs the server's compile, keeping
+            // the per-token figure the steady state.
+            let extraction = Tensor::selection(vec![0], CONTEXT_LEN, 1.0_f32);
+            server.step(&embedded(&window), &extraction.to_vec());
+            Some(server)
+        }
+        other => panic!("unknown engine `{other}`; use `tape` or `xla`"),
+    };
+
     print!("{prompt}");
     let mut state: u64 = 7;
     let generation = Instant::now();
     for _ in 0..count {
-        let mut padded = window.clone();
-        padded.resize(CONTEXT_LEN, END_OF_TEXT);
-        let evaluation = model.plan.forward(
-            &network,
-            [
-                (
-                    model.tokens,
-                    Tensor::selection(padded, VOCABULARY_LEN, 1.0_f32),
-                ),
-                (
-                    model.extraction,
-                    Tensor::selection(vec![window.len() - 1], CONTEXT_LEN, 1.0_f32),
-                ),
-            ],
-        );
-        let logits = evaluation.of(network.resolve(model.logits)).to_vec();
+        let stream = embedded(&window);
+        let extraction = Tensor::selection(vec![window.len() - 1], CONTEXT_LEN, 1.0_f32);
+        let logits = match &mut server {
+            Some(server) => server.step(&stream, &extraction.to_vec()),
+            None => {
+                let evaluation = model.plan.forward(
+                    &network,
+                    [
+                        (model.stream, Tensor::new([CONTEXT_LEN, EMBED_DIM], stream)),
+                        (model.extraction, extraction),
+                    ],
+                );
+                evaluation.of(network.resolve(model.logits)).to_vec()
+            }
+        };
         let token = draw(&logits, 0.9, 40, &mut state);
         if token == END_OF_TEXT {
             break;
         }
         window.push(token);
         print!("{}", tokenizer.decode(&[token]));
-        use std::io::Write;
         std::io::stdout().flush().expect("stdout flushes");
     }
     let elapsed = generation.elapsed().as_secs_f64();
     let generated = window.len() - 1 - tokenizer.encode(&prompt).len();
     println!();
     println!(
-        "generated {generated} tokens in {elapsed:.1}s ({:.0} ms/token)",
+        "generated {generated} tokens on the {engine} engine in {elapsed:.1}s ({:.0} ms/token)",
         elapsed / generated.max(1) as f64 * 1e3
     );
 }

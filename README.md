@@ -390,8 +390,11 @@ term and its mapping to the Rust types — is collected in
   the transposed embedding table, and one fixed-context sampling
   plan fed the token window per step. The checkpoint and tokenizer
   (byte-level BPE, hand-rolled, dependency-free like every reader in
-  the examples) download and cache on first run:
-  `cargo run --release --features accelerate --example gpt2 -- "Once upon a time"`.
+  the examples) download and cache on first run. A third argument
+  picks the engine: `tape` runs the plan at home, `xla` emits it as
+  StableHLO and serves generation through a resident XLA process —
+  measured faster than the tape and reproducing its text:
+  `cargo run --release --features accelerate --example gpt2 -- "Once upon a time" 40 xla`.
 - [`throughput`](examples/throughput.rs) — the acceleration ladder
   measured on a wide dense model: raw 2048-square products and whole
   training steps, with the dimensions shrinking eightfold when no
