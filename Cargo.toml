@@ -116,6 +116,10 @@ path = "examples/mnist/main.rs"
 name = "cifar10"
 path = "examples/cifar10/main.rs"
 
+[[example]]
+name = "gpt2"
+path = "examples/gpt2/main.rs"
+
 [[bench]]
 name = "record"
 harness = false

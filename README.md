@@ -383,6 +383,15 @@ term and its mapping to the Rust types — is collected in
   and after training by a hand-rolled labeled scatter chart: watch the
   vowels drift into their own cluster:
   `cargo run --release --example makemore_embedding_map`.
+- [`gpt2`](examples/gpt2/main.rs) — text generation with OpenAI's
+  released GPT-2 (124M) weights, the whole model recorded from the
+  existing op surface: twelve pre-norm blocks of per-head attention
+  under a causal mask, GELU held as scalar leaves, the tied head as
+  the transposed embedding table, and one fixed-context sampling
+  plan fed the token window per step. The checkpoint and tokenizer
+  (byte-level BPE, hand-rolled, dependency-free like every reader in
+  the examples) download and cache on first run:
+  `cargo run --release --features accelerate --example gpt2 -- "Once upon a time"`.
 - [`throughput`](examples/throughput.rs) — the acceleration ladder
   measured on a wide dense model: raw 2048-square products and whole
   training steps, with the dimensions shrinking eightfold when no
