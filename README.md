@@ -165,12 +165,12 @@ and their readings: [ACCELERATION.md](ACCELERATION.md).
   [threaded example](examples/gradient_descent.rs), not an
   architecture project.
 
-What it is not: a competitor to the big frameworks. Frontier-scale
-model work wants GPUs, dynamic shapes, and Python, and chasing that
-is how small projects die; `poorgrad` keeps ~30 operations
-impeccable instead of two thousand current. When a workload
-outgrows the interpreter, emission hands it to an industrial
-compiler — and the oracle goes along to check the work.
+What it is not: a competitor to the big frameworks. Matching their
+operator counts, hardware matrices, and release cadence is how
+small projects die; `poorgrad` keeps ~30 operations impeccable
+instead of two thousand current. When a workload outgrows the
+interpreter, emission hands it to an industrial compiler — and the
+oracle goes along to check the work.
 
 ## A taste
 
