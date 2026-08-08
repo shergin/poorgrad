@@ -70,6 +70,24 @@ fn counted_spreads_the_count_across_the_shape() {
 }
 
 #[test]
+#[should_panic(expected = "at least one element")]
+fn counted_rejects_empty_shapes() {
+    Tensor::<f64>::counted(Shape::new([0]), 1);
+}
+
+#[test]
+#[should_panic(expected = "volume overflows")]
+fn counted_rejects_overflowing_shapes() {
+    Tensor::<f64>::counted(Shape::new([usize::MAX, 2]), 1);
+}
+
+#[test]
+#[should_panic(expected = "volume overflows")]
+fn selection_rejects_overflowing_shapes() {
+    Tensor::selection(vec![0_usize, 0], usize::MAX, 1.0_f64);
+}
+
+#[test]
 fn unfold_slides_overlapping_windows() {
     let tensor = Tensor::new([8], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
     let windows = tensor.unfold(0, 3, 2, 1);

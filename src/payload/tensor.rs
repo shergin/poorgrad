@@ -197,18 +197,7 @@ impl<Element: Differentiable> Tensor<Element> {
     /// an existing element; [`Differentiable`] provides shape-preserving
     /// identities rather than a nullary element constructor.
     pub fn new(shape: impl Into<Shape>, elements: impl Into<Vec<Element>>) -> Self {
-        let shape = shape.into();
-        let elements = elements.into();
-        assert_eq!(
-            shape.volume(),
-            elements.len(),
-            "tensor shape does not match its number of elements"
-        );
-        assert!(
-            !elements.is_empty(),
-            "tensors must hold at least one element"
-        );
-        Self::dense(shape, elements)
+        Self::dense(shape.into(), elements.into())
     }
 
     /// Creates a tensor of `shape` with every element set to `element`,
@@ -218,14 +207,24 @@ impl<Element: Differentiable> Tensor<Element> {
     /// Panics if the shape's volume overflows `usize` or the shape holds no
     /// elements, as documented on [`Tensor::new`].
     pub fn filled(shape: impl Into<Shape>, element: Element) -> Self {
-        let shape = shape.into();
-        assert!(shape.volume() > 0, "tensors must hold at least one element");
-        Self::constant(shape, element)
+        Self::constant(shape.into(), element)
     }
 
-    /// Builds a contiguous dense tensor of `shape` from `elements`, without
-    /// the public constructor's validation.
+    /// Builds a contiguous dense tensor of `shape` from `elements`.
+    ///
+    /// Every dense tensor is created here, so this is where the tensor
+    /// invariant is proven: the shape's volume is representable (checked
+    /// by [`Shape::volume`]), positive, and equal to the buffer length.
     fn dense(shape: Shape, elements: Vec<Element>) -> Self {
+        assert_eq!(
+            shape.volume(),
+            elements.len(),
+            "tensor shape does not match its number of elements"
+        );
+        assert!(
+            !elements.is_empty(),
+            "tensors must hold at least one element"
+        );
         Self {
             storage: Storage::Dense {
                 layout: Layout::contiguous(shape),
@@ -235,7 +234,12 @@ impl<Element: Differentiable> Tensor<Element> {
     }
 
     /// Builds a constant tensor of `shape` filled with `value`.
+    ///
+    /// Every constant tensor is created here, so the tensor invariant is
+    /// proven here as on [`Tensor::dense`]: a representable, positive
+    /// volume.
     fn constant(shape: Shape, value: Element) -> Self {
+        assert!(shape.volume() > 0, "tensors must hold at least one element");
         Self {
             storage: Storage::Constant { shape, value },
         }
@@ -251,14 +255,19 @@ impl<Element: Differentiable> Tensor<Element> {
     /// multiplicative identity, e.g. `1.0`); the zero is derived from it.
     ///
     /// # Panics
-    /// Panics if `vocab` is zero, `indices` is empty, or any index is not
-    /// below `vocab`.
+    /// Panics if `vocab` is zero, `indices` is empty, any index is not
+    /// below `vocab`, or the `[indices.len(), vocab]` volume overflows
+    /// `usize`.
     pub fn selection(indices: impl Into<Vec<usize>>, vocab: usize, one: Element) -> Self {
         let indices = indices.into();
         assert!(vocab > 0, "a selection needs a non-empty vocabulary");
         assert!(
             !indices.is_empty(),
             "tensors must hold at least one element"
+        );
+        assert!(
+            indices.len().checked_mul(vocab).is_some(),
+            "shape volume overflows `usize`"
         );
         for &index in &indices {
             assert!(
@@ -621,6 +630,10 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
 
     /// Returns the count spread across `shape`, stored as a constant;
     /// the element value comes from the element type's own `counted`.
+    ///
+    /// # Panics
+    /// Panics if the shape's volume overflows `usize` or the shape holds
+    /// no elements, as documented on [`Tensor::new`].
     fn counted(shape: Shape, count: usize) -> Self {
         Self::constant(shape, Element::counted(Shape::scalar(), count))
     }
