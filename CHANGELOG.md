@@ -7,6 +7,42 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `Value::logsumexp` as a fused operation: the max-shifted reduction
+  is finite for every finite operand, with the softmax as its
+  gradient, replacing the composition over `log_softmax` that
+  returned `inf` once finite logits differed by more than the
+  representable range. It lowers to StableHLO as its shift-form
+  decomposition and joins the emission conformance suite.
+
+### Changed
+
+- `cross_entropy` composes the expanded form
+  `((targets.sum_along(1) * logsumexp(logits)).sum() -
+  (targets * logits).sum()) / targets.sum()`: exact mathematics,
+  and no term can evaluate `0 * -inf` into `NaN` for finite extreme
+  logits. The targets' domain (finite, nonnegative, positive total
+  mass) is now documented. Loss values may differ from 0.8.0 in the
+  last bits, as any re-associated float expression may.
+
+### Fixed
+
+- The 0.7.0 deep-audit invariant batch: plans take one snapshot for
+  validation and execution and reject a shorter sibling that does
+  not contain their graph prefix; scalar payloads reject recorded
+  shapes they cannot carry, `backward` checks the recorded target
+  shape besides the payload's, and debug runs assert every rule's
+  output shape against the recorded column; `counted`, `selection`,
+  and the private constructors prove the tensor invariant at
+  construction; `scatter` validates the adjoint contract instead of
+  silently discarding gradient rows; a single-window `unfold` no
+  longer overflows its unused stride in debug builds; the backend
+  seams check the length of every `Elementary::map`/`gemm` answer;
+  and the CUDA pool loads `cudaFree`, frees above-cap buffers on
+  return, returns buffers through an RAII loan on every error path,
+  and caps its parked bytes.
+
 ## [0.8.0] - 2026-08-05
 
 ### Added
