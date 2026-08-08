@@ -9,6 +9,24 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Network::differentiate(loss, wrt)`: reverse-mode differentiation
+  as a tape-to-tape transform. Gradients record as ordinary computed
+  nodes — compilable, emittable, readable, and differentiable again
+  (higher-order derivatives work by re-application; relu Hessians
+  are exact zeros). The transform runs the engine's own derivative
+  rules over a recording payload, so derivative knowledge cannot
+  fork, and it mirrors the engine scan's seed and accumulation
+  order: a compiled plan over `[loss, gradients...]` reproduces
+  `Evaluation::backward` bitwise, held by per-variant closure tests.
+- `Value::step`, `Value::fold`, and `Value::scatter`: the three
+  adjoints that close the op set under differentiation (the
+  `maximum` family's locally constant mask, `unfold`'s adjoint, and
+  `gather`'s), each with its StableHLO lowering — `step` as
+  `compare` plus `select`, `scatter` and `fold` as contractions —
+  and emission conformance coverage, including a differentiated
+  module in the E2 shape verified against the reference
+  interpreter.
+
 - `Value::logsumexp` as a fused operation: the max-shifted reduction
   is finite for every finite operand, with the softmax as its
   gradient, replacing the composition over `log_softmax` that

@@ -97,6 +97,66 @@ fn cross_entropy_case() -> Case {
     }
 }
 
+/// Builds a differentiated module — the E2 shape: a loss over relu,
+/// windows, and an embedding gather, with its recorded gradients in
+/// the result list, exercising the `Step`, `Fold`, and `Scatter`
+/// lowerings the derivative rules introduce.
+fn gradient_case() -> Case {
+    let network = Network::new();
+    let signal = Tensor::new(
+        [8],
+        (0..8).map(|v| v as f32 * 0.6 - 2.1).collect::<Vec<_>>(),
+    );
+    let signal_value = network.parameter(signal.clone());
+    let mix = Tensor::new(
+        [3, 3],
+        (0..9).map(|v| v as f32 * 0.25 - 1.0).collect::<Vec<_>>(),
+    );
+    let mix_value = network.parameter(mix.clone());
+    let table = Tensor::new(
+        [3, 2],
+        (0..6).map(|v| v as f32 * 0.5 - 1.25).collect::<Vec<_>>(),
+    );
+    let table_value = network.parameter(table.clone());
+    let tokens = Tensor::selection(vec![0, 2, 0], 3, 1.0_f32);
+    let tokens_value = network.input(tokens.clone());
+
+    let windows = (signal_value.unfold(0, 3, 2, 1) * mix_value).relu().sum();
+    let lookup = table_value.gather(tokens_value).sum();
+    let loss = windows + lookup;
+    let gradients =
+        network.differentiate(loss.symbol(), [signal_value.symbol(), table_value.symbol()]);
+
+    // The module's result list follows recording order, so the
+    // expected vectors must too.
+    let mut readable: Vec<_> = std::iter::once(loss.symbol())
+        .chain(gradients.iter().copied())
+        .collect();
+    readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
+    let plan = network.compile(readable.clone(), []);
+    let evaluation = plan.forward(&network, []);
+    let dense_tokens = Tensor::new(Shape::new([3, 3]), tokens.to_vec());
+    Case {
+        name: "gradient",
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![signal, mix, table, dense_tokens],
+        expected: readable
+            .iter()
+            .map(|&symbol| evaluation.of(network.resolve(symbol)).to_vec())
+            .collect(),
+    }
+}
+
+#[test]
+fn differentiated_modules_carry_the_new_lowerings() {
+    let module = gradient_case().module;
+    assert!(module.contains("stablehlo.compare"), "{module}");
+    assert!(module.contains("stablehlo.select"), "{module}");
+    // Fold and scatter both lower to contractions; the fold carries
+    // its window-matrix constant and trailing transpose.
+    assert!(module.contains("_weights"), "{module}");
+}
+
 /// Builds overlapping windows over a parameter: the static-gather
 /// completeness fallback for `unfold`.
 fn unfold_case() -> Case {
@@ -308,6 +368,7 @@ fn emitted_modules_parse_through_the_toolchain() {
         small_case(),
         attention_case(),
         cross_entropy_case(),
+        gradient_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),
@@ -366,6 +427,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         small_case(),
         attention_case(),
         cross_entropy_case(),
+        gradient_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),

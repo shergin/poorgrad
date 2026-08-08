@@ -188,6 +188,23 @@ only when floating point breaks the composed form, as it did for
 `log_softmax` (the normalizer read back from one lane) returned `inf`
 once finite logits differed by more than the representable range.
 
+**Differentiate (gradient recording).** Reverse-mode differentiation
+as a tape-to-tape transform: `Network::differentiate(loss, wrt)`
+appends the gradient computation as ordinary computed nodes and
+returns one symbol per `wrt` entry, so gradients are first-class
+values — compilable, emittable, readable, and differentiable again
+for higher-order derivatives. The transform runs the very same
+derivative rules the engine's `backward` runs, over a recording
+`Trace` payload instead of buffers (the rules are generic over the
+payload traits, so interpretation and transformation are two
+payloads of one rule — derivative knowledge cannot fork). The
+recorded scan mirrors the engine's seed, ancestor masking, and
+accumulation order, so a compiled plan over `[loss, gradients...]`
+reproduces `Evaluation::backward` bitwise; per-variant closure tests
+hold that contract. In poorgrad: `Network::differentiate`, the
+`Trace` payload, and the closure suite in
+`engine/tests/differentiate_tests.rs`.
+
 **Symbol.** A detached, `Copy` name of a value: the identity that
 persists across time, while `Value` is that identity's state in one
 generation. Each generation acts as an environment;
@@ -449,8 +466,12 @@ written, and no operation aligns shapes implicitly. In poorgrad: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transpose`, `sum`, `sum_along`, `broadcast_like`,
 `broadcast_along`, `reshape`, `permute`, `narrow`, `gather`,
-`log_softmax`, `logsumexp`, and the `reshape`-based `squeeze` and
-`unsqueeze`.
+`scatter`, `fold`, `step`, `log_softmax`, `logsumexp`, and the
+`reshape`-based `squeeze` and `unsqueeze`. The last three adjoints
+(`scatter` to `gather`, `fold` to `unfold`, `step` as the `maximum`
+family's locally constant mask) close the op set under
+differentiation: every derivative rule's expansion is made of
+operations that themselves have rules.
 
 **Unfold (sliding windows) / fold.** The windowing pair behind
 convolution and pooling. `unfold(axis, size, step, dilation)` replaces
