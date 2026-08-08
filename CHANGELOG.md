@@ -27,6 +27,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   routes bitwise), at speed parity and a measurably lower memory
   peak, because forward-only liveness frees what the gradient
   computation no longer needs.
+- `Activation::gain` and `init::scaled`: the principled link between
+  a layer's nonlinearity and its initialization. Each activation
+  states the standard factor by which it shrinks a unit-variance
+  signal, and the gain-parameterized fan initializer compensates it —
+  `init::scaled(seed, activation.gain())` is the general form behind
+  the named classics, which stay frozen (`kaiming` is the relu gain;
+  seeded outputs never change).
 - `Activation::Sigmoid`, `Activation::LeakyRelu`, and
   `Activation::Elu`, with the public `Activation::express` that
   records each variant's expression: the new three are short

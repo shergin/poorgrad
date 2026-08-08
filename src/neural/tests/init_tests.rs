@@ -1,6 +1,7 @@
 use crate::{Shape, Tensor};
 
-use super::{kaiming, normal, uniform, xavier};
+use super::super::Activation;
+use super::{kaiming, normal, scaled, uniform, xavier};
 
 /// Returns the mean and standard deviation of `values`.
 fn moments(values: &[f64]) -> (f64, f64) {
@@ -130,4 +131,48 @@ fn seeded_streams_are_pinned_forever() {
             assert_eq!(single.to_bits(), (f64::from_bits(*bits) as f32).to_bits());
         }
     }
+}
+
+#[test]
+fn scaled_matches_the_gain_over_the_fan() {
+    // For 400 inputs and tanh's gain the deviation is `(5/3) / 20`.
+    let mut initializer = scaled::<f64>(7, Activation::Tanh.gain());
+    let weights = initializer(&Shape::new([400, 25]));
+    let (mean, deviation) = moments(&weights.to_vec());
+    assert!(mean.abs() < 0.01);
+    assert!((deviation - (5.0 / 3.0) / 20.0).abs() < 0.005);
+
+    let bias = initializer(&Shape::new([25]));
+    assert!(bias.to_vec().iter().all(|&value| value == 0.0));
+}
+
+#[test]
+fn scaled_at_relu_gain_matches_kaiming_statistically() {
+    // The named classic is `scaled` at `sqrt(2)`; the formulas round
+    // differently in the last bit, so the agreement is statistical,
+    // never bitwise — kaiming's seeded outputs stay frozen.
+    let weights = scaled::<f64>(7, Activation::Relu.gain())(&Shape::new([200, 50]));
+    let classic = kaiming::<f64>(7)(&Shape::new([200, 50]));
+    let (_, scaled_deviation) = moments(&weights.to_vec());
+    let (_, classic_deviation) = moments(&classic.to_vec());
+    assert!((scaled_deviation - classic_deviation).abs() < 0.005);
+}
+
+#[test]
+#[should_panic(expected = "rank-2 weights or rank-1 biases")]
+fn scaled_rejects_higher_ranks() {
+    scaled::<f64>(7, 1.0)(&Shape::new([2, 2, 2]));
+}
+
+#[test]
+fn gains_state_the_standard_factors() {
+    assert_eq!(Activation::Identity.gain(), 1.0);
+    assert_eq!(Activation::Sigmoid.gain(), 1.0);
+    assert_eq!(Activation::Tanh.gain(), 5.0 / 3.0);
+    assert_eq!(Activation::Relu.gain(), 2.0_f64.sqrt());
+    assert_eq!(Activation::Elu.gain(), 2.0_f64.sqrt());
+    // The leaky slope of 1/100 barely lowers relu's factor.
+    let leaky = Activation::LeakyRelu.gain();
+    assert!(leaky < 2.0_f64.sqrt());
+    assert!((leaky - (2.0 / 1.0001_f64).sqrt()).abs() < 1e-12);
 }

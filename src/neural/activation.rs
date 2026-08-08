@@ -40,6 +40,30 @@ pub enum Activation {
 }
 
 impl Activation {
+    /// Returns this activation's initialization gain: the factor by
+    /// which the nonlinearity shrinks the variance of a unit-variance
+    /// signal, compensated at initialization as
+    /// `deviation = gain / sqrt(fan_in)` — the general form behind
+    /// the named classics, served by
+    /// [`init::scaled`](super::init::scaled).
+    ///
+    /// The values are the standard ones: `Identity` and `Sigmoid`
+    /// pass variance through near the origin (gain one); `Tanh` uses
+    /// the conventional `5/3`; `Relu` halves the signal's variance,
+    /// compensated by `sqrt(2)` (He et al., 2015); `LeakyRelu`
+    /// generalizes it to `sqrt(2 / (1 + slope^2))` with this
+    /// variant's `1/100` slope; and `Elu` shares `Relu`'s gain,
+    /// which is how its paper trains (Clevert et al., 2015, uses He
+    /// initialization).
+    pub fn gain(self) -> f64 {
+        match self {
+            Activation::Identity | Activation::Sigmoid => 1.0,
+            Activation::Tanh => 5.0 / 3.0,
+            Activation::Relu | Activation::Elu => 2.0_f64.sqrt(),
+            Activation::LeakyRelu => (2.0 / (1.0 + 0.01_f64 * 0.01)).sqrt(),
+        }
+    }
+
     /// Records this activation's expression over `value` and returns
     /// the result: one node for the dedicated operations, a short
     /// composition for the rest.

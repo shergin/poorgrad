@@ -324,9 +324,11 @@ crate root keeps the public API flat. From tape to training:
   the mean negative log-likelihood of one-hot (or soft) targets, fed per
   run like any other input.
 - [`init`](src/neural/init.rs) — deterministic, explicitly seeded
-  initializer factories (`uniform`, `normal`, and the fan-aware `xavier`
-  and `kaiming`) producing the shape-to-payload closures `Layer` and `Mlp`
-  take, with no `rand` dependency: seeded runs stay bit-identical forever.
+  initializer factories (`uniform`, `normal`, the fan-aware `xavier`
+  and `kaiming`, and the gain-parameterized `scaled` behind them —
+  pair it with any `Activation::gain()`) producing the
+  shape-to-payload closures `Layer` and `Mlp` take, with no `rand`
+  dependency: seeded runs stay bit-identical forever.
 
 ## The name
 

@@ -152,6 +152,37 @@ pub fn kaiming<Element: Sample>(seed: u64) -> impl FnMut(&Shape) -> Tensor<Eleme
     }
 }
 
+/// Returns the fan-scaled initializer behind the named classics:
+/// rank-2 `[inputs, outputs]` weights are normal with deviation
+/// `gain / sqrt(inputs)`, and rank-1 shapes are zero — a bias
+/// identifies itself structurally by its rank.
+///
+/// The `gain` compensates what the layer's nonlinearity does to a
+/// unit-variance signal, and each [`Activation`](super::Activation)
+/// states its own through
+/// [`Activation::gain`](super::Activation::gain), so the principled
+/// pairing is one line: `init::scaled(seed, activation.gain())`.
+/// [`kaiming`] is this initializer at relu's gain of `sqrt(2)`, kept
+/// as the named classic (its historical formula rounds differently
+/// in the last bit, and seeded outputs stay bit-identical forever).
+///
+/// # Panics
+/// The returned initializer panics on a shape that is neither rank 2
+/// nor rank 1.
+pub fn scaled<Element: Sample>(seed: u64, gain: f64) -> impl FnMut(&Shape) -> Tensor<Element> {
+    let mut state = seed;
+    move |shape| match shape.rank() {
+        1 => Tensor::filled(shape, Element::from_sample(0.0)),
+        2 => {
+            let deviation = gain / (shape.axes()[0] as f64).sqrt();
+            drawn(shape, &mut state, |state| {
+                standard_normal(state) * deviation
+            })
+        }
+        _ => panic!("scaled initialization expects rank-2 weights or rank-1 biases, got {shape}"),
+    }
+}
+
 #[cfg(test)]
 #[path = "tests/init_tests.rs"]
 mod tests;
