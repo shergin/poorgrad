@@ -175,9 +175,8 @@ opcode mnemonics, each recording exactly one computed node (payload
 literals additionally record a leaf — data injection, not computation);
 [`composite.rs`](src/engine/composite.rs) holds the composites (`abs` as
 `maximum(-self)`, `softmax` as `exp(log_softmax)` — stable by inheritance,
-since log-probabilities cannot make `exp` overflow — `logsumexp`,
-recovered from the fused normalizer with the softmax as its composed
-gradient, and `mean_along`, `sum_along` divided by the reduced axis's
+since log-probabilities cannot make `exp` overflow — and `mean_along`,
+`sum_along` divided by the reduced axis's
 extent minted as a `counted` literal); and named formulas whose operands play distinct roles (a
 loss's logits and targets have no natural `self`) are free functions in
 domain modules. Composites compile against the public operation surface
@@ -185,7 +184,9 @@ alone — they need no privileged engine access — and once recorded they
 are indistinguishable from hand-written primitives, keeping the tape a
 uniform IR. A formula moves down a tier and earns a `Function` variant
 only when floating point breaks the composed form, as it did for
-`log_softmax`.
+`log_softmax` — and later for `logsumexp`, whose composition over
+`log_softmax` (the normalizer read back from one lane) returned `inf`
+once finite logits differed by more than the representable range.
 
 **Symbol.** A detached, `Copy` name of a value: the identity that
 persists across time, while `Value` is that identity's state in one
@@ -436,10 +437,11 @@ non-differentiability of the indices is a structural property of the
 operation, not a runtime flag. `max_along` is `sum_along`'s
 order-theoretic sibling — the same axis reduction, folding with the
 elementwise `maximum` — and serves stable normalization rather than
-recording: `log_softmax`, the one fused operation, shifts by the axis
-maximum before exponentiating (which no composition of recorded
-operations could do) and routes its gradient as
-`g - exp(output) * sum_along(g)`, recovering the probabilities from the
+recording: `log_softmax` and `logsumexp`, the two fused operations,
+shift by the axis maximum before exponentiating (which no composition
+of recorded operations could do); the former routes its gradient as
+`g - exp(output) * sum_along(g)` and the latter as the softmax
+`exp(operand - output)`, each recovering the probabilities from the
 node's own output. Broadcasting is explicit by design: a
 single value spread across a named reference's shape, or a payload
 repeated along one named axis of a reference — the axis is always
@@ -447,7 +449,8 @@ written, and no operation aligns shapes implicitly. In poorgrad: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transpose`, `sum`, `sum_along`, `broadcast_like`,
 `broadcast_along`, `reshape`, `permute`, `narrow`, `gather`,
-`log_softmax`, and the `reshape`-based `squeeze` and `unsqueeze`.
+`log_softmax`, `logsumexp`, and the `reshape`-based `squeeze` and
+`unsqueeze`.
 
 **Unfold (sliding windows) / fold.** The windowing pair behind
 convolution and pooling. `unfold(axis, size, step, dilation)` replaces
@@ -655,10 +658,14 @@ per occurrence, while the rule reaches its zero at run time through
 recorded operations, not as a primitive: its gradient falls out of the
 chain rule with no dedicated backward rule. A formula earns a fused
 `Function` variant only where composition cannot express it — the
-cross-entropy loss
-`-(targets * log_softmax(logits)).sum() / targets.sum()` keeps only
-`log_softmax` fused (for the stabilizing max shift) and stays composition
-everywhere else. The normalizer is the targets' total mass — the batch
+cross-entropy loss composes the expanded form
+`((targets.sum_along(1) * logsumexp(logits)).sum() - (targets *
+logits).sum()) / targets.sum()`, keeping only `logsumexp` fused (for
+the stabilizing max shift) and staying composition everywhere else;
+the expansion is exact mathematics, and it is the stable spelling
+because no term multiplies a zero target by an infinite
+log-probability. Target weights must be finite and nonnegative with
+positive total mass. The normalizer is the targets' total mass — the batch
 size for one-hot targets, so the reduction is the standard mean, while
 soft or weighted targets normalize by their own weight. The same one-hot
 `Selection` that feeds an embedding gather serves as the targets, fed per

@@ -14,18 +14,29 @@ use crate::{Tensorial, Value};
 /// Records the cross-entropy loss of `logits` against `targets` on their
 /// network and returns the rank-0 loss value.
 ///
-/// It composes the mean negative log-likelihood
-/// `-(targets * log_softmax(logits)).sum() / targets.sum()`. The fused
-/// [`Value::log_softmax`] carries the numerical stability, and the
-/// normalizer is the targets' total mass: the batch size for one-hot
-/// targets — the standard mean reduction — while soft or weighted targets
-/// normalize by their own weight.
+/// It composes the mean negative log-likelihood in the expanded form
+/// `((targets.sum_along(1) * logsumexp(logits)).sum()
+/// - (targets * logits).sum()) / targets.sum()`. The expansion is exact
+/// mathematics — each row's `-t . (x - lse)` distributed — and it is the
+/// stable spelling: the fused [`Value::logsumexp`] is finite for every
+/// finite logit, and no term ever multiplies a zero target by an
+/// infinite log-probability (the `0 * -inf = NaN` a
+/// `targets * log_softmax` product produces once finite logits differ
+/// by more than the representable range). The normalizer is the
+/// targets' total mass: the batch size for one-hot targets — the
+/// standard mean reduction — while soft or weighted targets normalize
+/// by their own weight.
 ///
 /// # Parameters
 /// - `logits`: The unnormalized class scores, rank 2 `[batch, classes]`.
 /// - `targets`: The target distribution per sample, shaped like `logits`.
 ///   Feed a one-hot [`Tensor::selection`](crate::Tensor::selection) as a
 ///   per-run input so one recorded graph serves any batch of labels.
+///   Target weights must be finite and nonnegative with a strictly
+///   positive total mass; outside that domain the "mean negative
+///   log-likelihood" has no interpretation and the result follows IEEE
+///   arithmetic (an all-zero target tensor, for instance, divides zero
+///   by zero into `NaN`).
 ///
 /// # Panics
 /// Panics if the values belong to different networks, `logits` is not
@@ -46,8 +57,9 @@ pub fn cross_entropy<'network, Data: Tensorial>(
         "cross-entropy targets {targets_shape} must be shaped like the logits {logits_shape}"
     );
 
-    let likelihood = (targets * logits.log_softmax(1)).sum();
-    -likelihood / targets.sum()
+    let normalizers = (targets.sum_along(1) * logits.logsumexp(1)).sum();
+    let alignment = (targets * logits).sum();
+    (normalizers - alignment) / targets.sum()
 }
 
 #[cfg(test)]

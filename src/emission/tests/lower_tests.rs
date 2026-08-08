@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::{Differentiable, Network, Shape, Tensor, concat};
+use crate::{Differentiable, Network, Shape, Tensor, concat, cross_entropy};
 
 /// One emitted module with the payloads and oracle results the
 /// conformance tests replay: the arguments in the module's own order
@@ -67,6 +67,33 @@ fn attention_case() -> Case {
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![table, dense_tokens],
         expected: vec![evaluation.of(network.resolve(output.symbol())).to_vec()],
+    }
+}
+
+/// Builds a cross-entropy loss over the fused `log_sum_exp`: the
+/// stable expanded form the loss composes, exercising the newest
+/// lowering end to end.
+fn cross_entropy_case() -> Case {
+    let network = Network::new();
+    let logits = Tensor::new(
+        [2, 3],
+        (0..6)
+            .map(|index| index as f32 * 0.7 - 2.0)
+            .collect::<Vec<_>>(),
+    );
+    let logits_value = network.parameter(logits.clone());
+    let targets = Tensor::selection(vec![0, 2], 3, 1.0_f32);
+    let targets_value = network.input(targets.clone());
+    let loss = cross_entropy(logits_value, targets_value);
+    let plan = network.compile([loss.symbol()], []);
+    let evaluation = plan.forward(&network, []);
+    // The one-hot selection crosses the boundary as its dense matrix.
+    let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
+    Case {
+        name: "cross-entropy",
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![logits, dense_targets],
+        expected: vec![evaluation.of(network.resolve(loss.symbol())).to_vec()],
     }
 }
 
@@ -280,6 +307,7 @@ fn emitted_modules_parse_through_the_toolchain() {
     for case in [
         small_case(),
         attention_case(),
+        cross_entropy_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),
@@ -337,6 +365,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
     for case in [
         small_case(),
         attention_case(),
+        cross_entropy_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),

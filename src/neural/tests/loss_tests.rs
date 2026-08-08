@@ -86,3 +86,50 @@ fn rejects_mismatched_targets() {
     let targets = network.input(Tensor::selection(vec![0usize], 3, 1.0));
     cross_entropy(logits, targets);
 }
+
+#[test]
+fn extreme_finite_logits_keep_the_loss_and_gradients_finite() {
+    // Finite logits whose difference overflows the representable range,
+    // with the correct class overwhelmingly likely: the loss is exactly
+    // zero and no gradient lane may turn NaN — in either class order,
+    // for either selected class.
+    for (row, class) in [([-1.0e308_f64, 1.0e308], 1_usize), ([1.0e308, -1.0e308], 0)] {
+        let network = Network::new();
+        let logits = network.parameter(Tensor::new([1, 2], row));
+        let targets = network.input(Tensor::selection(vec![class], 2, 1.0));
+
+        let loss = cross_entropy(logits, targets);
+        let evaluation = network.forward();
+        assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+
+        let gradients = evaluation.backward(loss);
+        for gradient in gradients.of(logits).to_vec() {
+            assert!(gradient.is_finite());
+        }
+    }
+}
+
+#[test]
+fn extreme_finite_logits_keep_the_loss_finite_f32() {
+    let network = Network::new();
+    let logits = network.leaf(Tensor::new([1, 2], [-3.0e38_f32, 3.0e38]));
+    let targets = network.input(Tensor::selection(vec![1_usize], 2, 1.0));
+
+    let loss = cross_entropy(logits, targets);
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+}
+
+#[test]
+fn zero_target_lanes_contribute_exact_zero() {
+    let network = Network::new();
+    // A dense soft target with an explicit zero lane against the logit
+    // whose log-probability underflows to -inf: the zero lane must
+    // contribute zero, never `0 * -inf = NaN`.
+    let logits = network.leaf(Tensor::new([1, 2], [-1.0e308_f64, 1.0e308]));
+    let targets = network.input(Tensor::new([1, 2], [0.0_f64, 1.0]));
+
+    let loss = cross_entropy(logits, targets);
+    let evaluation = network.forward();
+    assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+}

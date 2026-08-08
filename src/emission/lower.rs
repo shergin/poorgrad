@@ -371,6 +371,9 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             Function::LogSoftmax(softmax) => {
                 self.lower_log_softmax(index, operand(0), softmax.axis, emitter);
             }
+            Function::LogSumExp(log_sum_exp) => {
+                self.lower_log_sum_exp(index, operand(0), log_sum_exp.axis, emitter);
+            }
             Function::Unfold(unfold) => {
                 // The completeness fallback the emission design names: the
                 // windows' start coordinates bake into a constant and one
@@ -516,6 +519,64 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             tensor_type::<Element>(&self.shapes()[source]),
             Element::ELEMENT,
             tensor_type::<Element>(&self.shapes()[index]),
+        ));
+    }
+
+    /// Writes the fused `log_sum_exp` as its stable decomposition: shift
+    /// by the axis maximum, exponentiate, reduce, and re-add the shift.
+    /// The target's rounding may differ from the fused interpreter rule,
+    /// which conformance absorbs in its envelopes.
+    fn lower_log_sum_exp(&self, index: usize, source: usize, axis: usize, emitter: &mut Emitter) {
+        let shapes = self.shapes();
+        let source_shape = &shapes[source];
+        let reduced_type = tensor_type::<Element>(&shapes[index]);
+        let full_type = tensor_type::<Element>(source_shape);
+        let dims: Vec<usize> = (0..source_shape.rank()).filter(|&a| a != axis).collect();
+        let source_name = emitter.name(source).to_string();
+
+        let seed = format!("%v{index}_low");
+        emitter.line(format!(
+            "{seed} = stablehlo.constant dense<{}> : tensor<{}>",
+            Element::NEGATIVE_INFINITY,
+            Element::ELEMENT,
+        ));
+        let peak = format!("%v{index}_peak");
+        emitter.line(format!(
+            "{peak} = stablehlo.reduce({source_name} init: {seed}) applies stablehlo.maximum \
+             across dimensions = [{axis}] : ({full_type}, tensor<{}>) -> {reduced_type}",
+            Element::ELEMENT,
+        ));
+        let spread_peak = format!("%v{index}_spread_peak");
+        emitter.line(format!(
+            "{spread_peak} = stablehlo.broadcast_in_dim {peak}, dims = {dims:?} \
+             : ({reduced_type}) -> {full_type}",
+        ));
+        let centered = format!("%v{index}_centered");
+        emitter.line(format!(
+            "{centered} = stablehlo.subtract {source_name}, {spread_peak} : {full_type}"
+        ));
+        let exponentials = format!("%v{index}_exp");
+        emitter.line(format!(
+            "{exponentials} = stablehlo.exponential {centered} : {full_type}"
+        ));
+        let zero = format!("%v{index}_zero");
+        emitter.line(format!(
+            "{zero} = stablehlo.constant dense<{}> : tensor<{}>",
+            Element::ZERO,
+            Element::ELEMENT,
+        ));
+        let total = format!("%v{index}_total");
+        emitter.line(format!(
+            "{total} = stablehlo.reduce({exponentials} init: {zero}) applies stablehlo.add \
+             across dimensions = [{axis}] : ({full_type}, tensor<{}>) -> {reduced_type}",
+            Element::ELEMENT,
+        ));
+        let normalizer = format!("%v{index}_normalizer");
+        emitter.line(format!(
+            "{normalizer} = stablehlo.log {total} : {reduced_type}"
+        ));
+        emitter.line(format!(
+            "%v{index} = stablehlo.add {peak}, {normalizer} : {reduced_type}"
         ));
     }
 

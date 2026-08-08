@@ -5,8 +5,8 @@ use static_assertions::assert_impl_all;
 
 use super::{
     Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, LogSoftmax,
-    MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute, Powf, Relu, Reshape,
-    Retention, Sqrt, Sub, Sum, SumAlong, Tanh, Transpose, Unfold,
+    LogSumExp, MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute, Powf, Relu,
+    Reshape, Retention, Sqrt, Sub, Sum, SumAlong, Tanh, Transpose, Unfold,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -48,6 +48,7 @@ pub(crate) enum Function<Data> {
     Unfold(Unfold),
     Gather(Gather),
     LogSoftmax(LogSoftmax),
+    LogSumExp(LogSumExp),
     Sqrt(Sqrt),
     Powf(Powf),
     Maximum(Maximum),
@@ -193,6 +194,11 @@ impl<Data> Function<Data> {
         Function::LogSoftmax(LogSoftmax { axis })
     }
 
+    /// Creates the fused log-sum-exp of the operand along `axis`.
+    pub(crate) fn log_sum_exp(axis: usize) -> Self {
+        Function::LogSumExp(LogSumExp { axis })
+    }
+
     /// Creates the square root of the single operand.
     pub(crate) fn sqrt() -> Self {
         Function::Sqrt(Sqrt)
@@ -240,6 +246,7 @@ impl<Data> Function<Data> {
             Function::Unfold(_) => "Unfold",
             Function::Gather(_) => "Gather",
             Function::LogSoftmax(_) => "LogSoftmax",
+            Function::LogSumExp(_) => "LogSumExp",
             Function::Sqrt(_) => "Sqrt",
             Function::Powf(_) => "Powf",
             Function::Maximum(_) => "Maximum",
@@ -285,6 +292,7 @@ impl<Data> Function<Data> {
             Function::Unfold(unfold) => unfold.retains(),
             Function::Gather(gather) => gather.retains(),
             Function::LogSoftmax(log_softmax) => log_softmax.retains(),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.retains(),
             Function::Sqrt(sqrt) => sqrt.retains(),
             Function::Powf(powf) => powf.retains(),
             Function::Maximum(maximum) => maximum.retains(),
@@ -320,6 +328,7 @@ impl<Data> Function<Data> {
             Function::Unfold(unfold) => unfold.arity(),
             Function::Gather(gather) => gather.arity(),
             Function::LogSoftmax(log_softmax) => log_softmax.arity(),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.arity(),
             Function::Sqrt(sqrt) => sqrt.arity(),
             Function::Powf(powf) => powf.arity(),
             Function::Maximum(maximum) => maximum.arity(),
@@ -365,6 +374,7 @@ impl<Data> Function<Data> {
             Function::Unfold(unfold) => unfold.infer_shape(operands),
             Function::Gather(gather) => gather.infer_shape(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.infer_shape(operands),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.infer_shape(operands),
             Function::Sqrt(sqrt) => sqrt.infer_shape(operands),
             Function::Powf(powf) => powf.infer_shape(operands),
             Function::Maximum(maximum) => maximum.infer_shape(operands),
@@ -412,6 +422,7 @@ impl<Data: Tensorial> Function<Data> {
             Function::Unfold(unfold) => unfold.forward(operands),
             Function::Gather(gather) => gather.forward(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.forward(operands),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.forward(operands),
             Function::Sqrt(sqrt) => sqrt.forward(operands),
             Function::Powf(powf) => powf.forward(operands),
             Function::Maximum(maximum) => maximum.forward(operands),
@@ -455,6 +466,7 @@ impl<Data: Tensorial> Function<Data> {
             Function::Unfold(unfold) => unfold.backward(operands, output, gradient),
             Function::Gather(gather) => gather.backward(operands, output, gradient),
             Function::LogSoftmax(log_softmax) => log_softmax.backward(operands, output, gradient),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.backward(operands, output, gradient),
             Function::Sqrt(sqrt) => sqrt.backward(operands, output, gradient),
             Function::Powf(powf) => powf.backward(operands, output, gradient),
             Function::Maximum(maximum) => maximum.backward(operands, output, gradient),

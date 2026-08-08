@@ -51,8 +51,11 @@ impl<Data: Tensorial> Operation<Data> for LogSoftmax {
     fn forward(&self, operands: &[&Data]) -> Data {
         let &operand = unary(operands);
         // Shifting by the axis maximum keeps every exponent at or below
-        // zero, so the sum cannot overflow; the shift cancels in the final
-        // subtraction, leaving the result exact.
+        // zero, so the sum cannot overflow; the shift cancels in the
+        // final subtraction, leaving the result stable (not exact: the
+        // shifted rounding differs from the unshifted ideal, and a
+        // difference beyond the representable range still underflows to
+        // `-inf` — the mathematically faithful log-probability).
         let peak = operand
             .max_along(self.axis)
             .broadcast_along(self.axis, operand);

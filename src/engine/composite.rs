@@ -44,23 +44,6 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.log_softmax(axis).exp()
     }
 
-    /// Records the log-sum-exp of this value along `axis` — the softmax
-    /// family's normalizer and a smooth maximum — and returns a proxy to
-    /// it; like `sum_along`, the reduced axis is removed.
-    ///
-    /// It is composed as `self - self.log_softmax(axis)`, which equals
-    /// the normalizer at every position along the axis, narrowed to one
-    /// lane. The composed gradient works out to exactly the softmax, the
-    /// known derivative of log-sum-exp.
-    ///
-    /// # Panics
-    /// Panics if `axis` is out of rank.
-    pub fn logsumexp(self, axis: usize) -> Self {
-        (self - self.log_softmax(axis))
-            .narrow(axis, 0, 1)
-            .squeeze(axis)
-    }
-
     /// Records the mean of this value along `axis` as the composition
     /// `self.sum_along(axis) / extent`, where the reduced axis's extent
     /// enters the graph as a [`counted`](crate::Differentiable::counted)

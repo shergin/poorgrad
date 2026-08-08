@@ -61,6 +61,22 @@ fn logsumexp_reduces_like_a_smooth_maximum() {
 }
 
 #[test]
+fn logsumexp_stays_finite_for_finite_extreme_logits() {
+    let network = Network::new();
+    // The finite difference overflows the representable range; the
+    // mathematical answer is approximately the maximum and must stay
+    // finite in either lane order.
+    for logits in [[-1.0e308_f64, 1.0e308], [1.0e308, -1.0e308]] {
+        let x = network.leaf(Tensor::new([2], logits));
+        let reduced = x.logsumexp(0);
+        let evaluation = network.forward();
+        let value = evaluation.of(reduced).to_vec()[0];
+        assert!(value.is_finite());
+        assert!((value - 1.0e308).abs() < 1.0e293);
+    }
+}
+
+#[test]
 fn mean_along_divides_by_the_axis_extent() {
     let network = Network::new();
     let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));

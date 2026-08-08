@@ -377,6 +377,24 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     pub fn log_softmax(self, axis: usize) -> Self {
         self.apply(Function::log_softmax(axis), &[self.id])
     }
+
+    /// Records the log-sum-exp of this value along `axis` on the same
+    /// network and returns a proxy to it: the softmax family's normalizer
+    /// and a smooth maximum; like `sum_along`, the reduced axis is
+    /// removed.
+    ///
+    /// It is a fused node for the same reason as
+    /// [`log_softmax`](Value::log_softmax): the stable form shifts by the
+    /// axis maximum, so the result is finite for every finite operand —
+    /// where the former composition over `log_softmax` returned `inf`
+    /// once finite logits differed by more than the representable range.
+    /// The gradient is the softmax.
+    ///
+    /// # Panics
+    /// Panics if `axis` is out of rank.
+    pub fn logsumexp(self, axis: usize) -> Self {
+        self.apply(Function::log_sum_exp(axis), &[self.id])
+    }
 }
 
 // Manual implementations avoid the `Data: Clone`/`Data: Copy` bounds a
