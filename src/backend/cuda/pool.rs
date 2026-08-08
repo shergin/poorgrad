@@ -8,25 +8,43 @@ use super::context::Api;
 /// power-of-two size class and are kept for reuse; larger ones are
 /// exact-sized and freed on return, so a one-off giant task cannot
 /// hoard VRAM.
-const CLASS_CAP: usize = 256 * 1024 * 1024;
+pub(super) const CLASS_CAP: usize = 256 * 1024 * 1024;
 
 /// The smallest class, so tiny buffers share one slot size.
 const CLASS_FLOOR: usize = 4096;
 
+/// Total bytes the pool may hold parked across every class; a give
+/// beyond it frees instead of parking. Four class caps hold a full
+/// three-buffer working set at the largest class with headroom; the
+/// constant is provisional until the first hardware measurement,
+/// like the flop threshold.
+pub(super) const PARKED_CAP: usize = 4 * CLASS_CAP;
+
 /// A size-classed pool of device buffers, the port of the metal
 /// pool onto `cudaMalloc`: taking rounds the request up to its
 /// class and reuses a parked buffer when one exists; giving parks
-/// the buffer again. Pooled buffers are never freed — the owning
-/// context lives in a process-wide static — which bounds VRAM held
-/// at the high-water mark of concurrent tasks.
+/// the buffer again, or frees it when the buffer is an above-cap
+/// one-off or the pool already holds [`PARKED_CAP`] parked bytes.
+/// VRAM held parked is therefore bounded by the cap, not by the
+/// variety of shapes the process ever ran.
 pub(super) struct Pool {
-    parked: Mutex<HashMap<usize, Vec<*mut c_void>>>,
+    parked: Mutex<Parked>,
+}
+
+/// The parked buffers by size class, with the running byte total
+/// the cap is enforced against.
+struct Parked {
+    classes: HashMap<usize, Vec<*mut c_void>>,
+    bytes: usize,
 }
 
 impl Pool {
     pub(super) fn new() -> Self {
         Self {
-            parked: Mutex::new(HashMap::new()),
+            parked: Mutex::new(Parked {
+                classes: HashMap::new(),
+                bytes: 0,
+            }),
         }
     }
 
@@ -34,14 +52,12 @@ impl Pool {
     /// parked one when the class has any.
     pub(super) fn take(&self, api: &Api, bytes: usize) -> Result<*mut c_void, String> {
         let class = class_of(bytes);
-        if let Some(buffer) = self
-            .parked
-            .lock()
-            .expect("the pool mutex is poisoned")
-            .get_mut(&class)
-            .and_then(Vec::pop)
         {
-            return Ok(buffer);
+            let mut parked = self.parked.lock().expect("the pool mutex is poisoned");
+            if let Some(buffer) = parked.classes.get_mut(&class).and_then(Vec::pop) {
+                parked.bytes -= class;
+                return Ok(buffer);
+            }
         }
         let mut buffer = std::ptr::null_mut();
         // SAFETY: the pointer addresses a live slot for the device
@@ -53,19 +69,26 @@ impl Pool {
         Ok(buffer)
     }
 
-    /// Parks a buffer taken for `bytes` back into its class.
-    ///
-    /// Beyond-cap buffers are exact-sized one-offs; parking them
-    /// under their exact size reuses them only for an identical
-    /// request, which is precisely the recurring-shape case worth
-    /// serving.
-    pub(super) fn give(&self, bytes: usize, buffer: *mut c_void) {
-        self.parked
-            .lock()
-            .expect("the pool mutex is poisoned")
-            .entry(class_of(bytes))
-            .or_default()
-            .push(buffer);
+    /// Returns a buffer taken for `bytes`: parked back into its
+    /// class for reuse, or freed when it is an above-cap exact-sized
+    /// one-off or parking it would push the pool past
+    /// [`PARKED_CAP`].
+    pub(super) fn give(&self, api: &Api, bytes: usize, buffer: *mut c_void) {
+        let class = class_of(bytes);
+        if class <= CLASS_CAP {
+            let mut parked = self.parked.lock().expect("the pool mutex is poisoned");
+            if parked.bytes + class <= PARKED_CAP {
+                parked.classes.entry(class).or_default().push(buffer);
+                parked.bytes += class;
+                return;
+            }
+        }
+        // SAFETY: the buffer came from `cudaMalloc` through `take`
+        // and no task references it any longer. The status goes
+        // unchecked because nothing here can recover a failed free:
+        // the buffer is lost to the process either way, and a broken
+        // runtime surfaces through the next call's own status.
+        let _ = unsafe { (api.free)(buffer) };
     }
 }
 

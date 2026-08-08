@@ -10,6 +10,38 @@ fn operation(operand: &Operand) -> i32 {
     if operand.transposed { OP_T } else { OP_N }
 }
 
+/// A device buffer on loan from the pool, returned on drop: the
+/// success path and every early error return alike, so no path
+/// leaks a device allocation. Returning after an error is sound
+/// because the caller poisons the module on any error and never
+/// issues another task, so an error-parked buffer is never handed
+/// out again.
+struct Loan<'context> {
+    context: &'context Context,
+    bytes: usize,
+    buffer: *mut c_void,
+}
+
+impl<'context> Loan<'context> {
+    /// Takes a buffer of at least `bytes` from the context's pool.
+    fn take(context: &'context Context, bytes: usize) -> Result<Self, String> {
+        let buffer = context.pool.take(&context.api, bytes)?;
+        Ok(Self {
+            context,
+            bytes,
+            buffer,
+        })
+    }
+}
+
+impl Drop for Loan<'_> {
+    fn drop(&mut self) {
+        self.context
+            .pool
+            .give(&self.context.api, self.bytes, self.buffer);
+    }
+}
+
 /// It runs one `f32` task on the GPU: pooled device buffers in, two
 /// host-to-device copies, one gemm call under the column-major
 /// swap, one device-to-host copy out.
@@ -34,11 +66,9 @@ pub(super) fn executed_f32(
     let volume = task.m() * task.n();
     let product_bytes = volume * size_of::<f32>();
 
-    // On any error below the caller poisons the backend forever, so
-    // buffers not returned to the pool are a one-time, bounded loss.
-    let a_device = context.pool.take(api, a_bytes)?;
-    let b_device = context.pool.take(api, b_bytes)?;
-    let product_device = context.pool.take(api, product_bytes)?;
+    let a_device = Loan::take(context, a_bytes)?;
+    let b_device = Loan::take(context, b_bytes)?;
+    let product_device = Loan::take(context, product_bytes)?;
 
     // SAFETY: each copy names a live host span of exactly the byte
     // count given and a device buffer the pool sized to at least
@@ -46,7 +76,7 @@ pub(super) fn executed_f32(
     // when the copy is complete.
     let status = unsafe {
         let status = (api.memcpy)(
-            a_device,
+            a_device.buffer,
             task.a().as_ptr().cast::<c_void>(),
             a_bytes,
             HOST_TO_DEVICE,
@@ -55,7 +85,7 @@ pub(super) fn executed_f32(
             status
         } else {
             (api.memcpy)(
-                b_device,
+                b_device.buffer,
                 task.b().as_ptr().cast::<c_void>(),
                 b_bytes,
                 HOST_TO_DEVICE,
@@ -85,12 +115,12 @@ pub(super) fn executed_f32(
             m,
             k,
             &one,
-            b_device.cast_const().cast::<f32>(),
+            b_device.buffer.cast_const().cast::<f32>(),
             b.leading,
-            a_device.cast_const().cast::<f32>(),
+            a_device.buffer.cast_const().cast::<f32>(),
             a.leading,
             &zero,
-            product_device.cast::<f32>(),
+            product_device.buffer.cast::<f32>(),
             n,
         )
     };
@@ -109,7 +139,7 @@ pub(super) fn executed_f32(
     let status = unsafe {
         (api.memcpy)(
             product.as_mut_ptr().cast::<c_void>(),
-            product_device.cast_const(),
+            product_device.buffer.cast_const(),
             product_bytes,
             DEVICE_TO_HOST,
         )
@@ -129,9 +159,6 @@ pub(super) fn executed_f32(
         ));
     }
 
-    context.pool.give(a_bytes, a_device);
-    context.pool.give(b_bytes, b_device);
-    context.pool.give(product_bytes, product_device);
     Ok(product)
 }
 
@@ -151,14 +178,14 @@ pub(super) fn executed_f64(
     let volume = task.m() * task.n();
     let product_bytes = volume * size_of::<f64>();
 
-    let a_device = context.pool.take(api, a_bytes)?;
-    let b_device = context.pool.take(api, b_bytes)?;
-    let product_device = context.pool.take(api, product_bytes)?;
+    let a_device = Loan::take(context, a_bytes)?;
+    let b_device = Loan::take(context, b_bytes)?;
+    let product_device = Loan::take(context, product_bytes)?;
 
     // SAFETY: identical to the `f32` twin's copy argument.
     let status = unsafe {
         let status = (api.memcpy)(
-            a_device,
+            a_device.buffer,
             task.a().as_ptr().cast::<c_void>(),
             a_bytes,
             HOST_TO_DEVICE,
@@ -167,7 +194,7 @@ pub(super) fn executed_f64(
             status
         } else {
             (api.memcpy)(
-                b_device,
+                b_device.buffer,
                 task.b().as_ptr().cast::<c_void>(),
                 b_bytes,
                 HOST_TO_DEVICE,
@@ -193,12 +220,12 @@ pub(super) fn executed_f64(
             m,
             k,
             &one,
-            b_device.cast_const().cast::<f64>(),
+            b_device.buffer.cast_const().cast::<f64>(),
             b.leading,
-            a_device.cast_const().cast::<f64>(),
+            a_device.buffer.cast_const().cast::<f64>(),
             a.leading,
             &zero,
-            product_device.cast::<f64>(),
+            product_device.buffer.cast::<f64>(),
             n,
         )
     };
@@ -214,7 +241,7 @@ pub(super) fn executed_f64(
     let status = unsafe {
         (api.memcpy)(
             product.as_mut_ptr().cast::<c_void>(),
-            product_device.cast_const(),
+            product_device.buffer.cast_const(),
             product_bytes,
             DEVICE_TO_HOST,
         )
@@ -234,8 +261,5 @@ pub(super) fn executed_f64(
         ));
     }
 
-    context.pool.give(a_bytes, a_device);
-    context.pool.give(b_bytes, b_device);
-    context.pool.give(product_bytes, product_device);
     Ok(product)
 }

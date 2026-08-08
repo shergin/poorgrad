@@ -15,8 +15,8 @@ use crate::{Tensorial, Value};
 /// network and returns the rank-0 loss value.
 ///
 /// It composes the mean negative log-likelihood in the expanded form
-/// `((targets.sum_along(1) * logsumexp(logits)).sum()
-/// - (targets * logits).sum()) / targets.sum()`. The expansion is exact
+/// `((targets.sum_along(1) * logsumexp(logits)).sum() -
+/// (targets * logits).sum()) / targets.sum()`. The expansion is exact
 /// mathematics — each row's `-t . (x - lse)` distributed — and it is the
 /// stable spelling: the fused [`Value::logsumexp`] is finite for every
 /// finite logit, and no term ever multiplies a zero target by an

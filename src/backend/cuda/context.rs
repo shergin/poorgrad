@@ -51,10 +51,12 @@ impl fmt::Display for SetupError {
 pub(super) struct Api {
     /// Held open so the copied function pointers stay valid; the
     /// context lives in a process-wide static and is never dropped,
-    /// so the libraries are never unloaded.
-    _cudart: Library,
-    _cublas: Library,
+    /// so the libraries are never unloaded. `None` only in the fake
+    /// test surface, whose pointers are Rust functions.
+    _cudart: Option<Library>,
+    _cublas: Option<Library>,
     pub(super) malloc: unsafe extern "C" fn(*mut *mut c_void, usize) -> i32,
+    pub(super) free: unsafe extern "C" fn(*mut c_void) -> i32,
     pub(super) memcpy: unsafe extern "C" fn(*mut c_void, *const c_void, usize, i32) -> i32,
     pub(super) device_synchronize: unsafe extern "C" fn() -> i32,
     get_error_string: unsafe extern "C" fn(i32) -> *const c_char,
@@ -93,6 +95,72 @@ pub(super) struct Api {
 }
 
 impl Api {
+    /// Builds an `Api` over test-provided allocation entry points,
+    /// with inert stubs everywhere else: the injectable surface the
+    /// pool accounting tests run against, no device required.
+    #[cfg(test)]
+    pub(super) fn fake(
+        malloc: unsafe extern "C" fn(*mut *mut c_void, usize) -> i32,
+        free: unsafe extern "C" fn(*mut c_void) -> i32,
+    ) -> Self {
+        unsafe extern "C" fn no_memcpy(_: *mut c_void, _: *const c_void, _: usize, _: i32) -> i32 {
+            0
+        }
+        unsafe extern "C" fn no_synchronize() -> i32 {
+            0
+        }
+        unsafe extern "C" fn fake_error(_: i32) -> *const c_char {
+            c"fake error".as_ptr()
+        }
+        unsafe extern "C" fn no_sgemm(
+            _: *mut c_void,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: *const f32,
+            _: *const f32,
+            _: i32,
+            _: *const f32,
+            _: i32,
+            _: *const f32,
+            _: *mut f32,
+            _: i32,
+        ) -> i32 {
+            0
+        }
+        unsafe extern "C" fn no_dgemm(
+            _: *mut c_void,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: i32,
+            _: *const f64,
+            _: *const f64,
+            _: i32,
+            _: *const f64,
+            _: i32,
+            _: *const f64,
+            _: *mut f64,
+            _: i32,
+        ) -> i32 {
+            0
+        }
+        Self {
+            _cudart: None,
+            _cublas: None,
+            malloc,
+            free,
+            memcpy: no_memcpy,
+            device_synchronize: no_synchronize,
+            get_error_string: fake_error,
+            sgemm: no_sgemm,
+            dgemm: no_dgemm,
+        }
+    }
+
     /// Renders a `cudaError_t` through the runtime's own message
     /// table.
     pub(super) fn error_string(&self, status: i32) -> String {
@@ -187,6 +255,21 @@ impl Context {
             )));
         }
 
+        // Every symbol resolves before the handle is created, so a
+        // missing symbol cannot leak a live cuBLAS handle out of a
+        // partially failed setup.
+        let api = Api {
+            malloc: symbol(&cudart, b"cudaMalloc\0", "libcudart")?,
+            free: symbol(&cudart, b"cudaFree\0", "libcudart")?,
+            memcpy: symbol(&cudart, b"cudaMemcpy\0", "libcudart")?,
+            device_synchronize: symbol(&cudart, b"cudaDeviceSynchronize\0", "libcudart")?,
+            get_error_string,
+            sgemm: symbol(&cublas, b"cublasSgemm_v2\0", "libcublas")?,
+            dgemm: symbol(&cublas, b"cublasDgemm_v2\0", "libcublas")?,
+            _cudart: Some(cudart),
+            _cublas: Some(cublas),
+        };
+
         let mut handle = std::ptr::null_mut();
         // SAFETY: the pointer addresses a live slot for the handle.
         let status = unsafe { create(&mut handle) };
@@ -197,16 +280,6 @@ impl Context {
             )));
         }
 
-        let api = Api {
-            malloc: symbol(&cudart, b"cudaMalloc\0", "libcudart")?,
-            memcpy: symbol(&cudart, b"cudaMemcpy\0", "libcudart")?,
-            device_synchronize: symbol(&cudart, b"cudaDeviceSynchronize\0", "libcudart")?,
-            get_error_string,
-            sgemm: symbol(&cublas, b"cublasSgemm_v2\0", "libcublas")?,
-            dgemm: symbol(&cublas, b"cublasDgemm_v2\0", "libcublas")?,
-            _cudart: cudart,
-            _cublas: cublas,
-        };
         Ok(Self {
             api,
             handle,

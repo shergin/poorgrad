@@ -242,8 +242,8 @@ fn broadcast_strides_decline_before_any_device_work() {
 fn repeated_products_answer_bitwise_identically() {
     // cuBLAS selects a deterministic kernel for a fixed shape on a
     // fixed device and library version; per the house rule its
-    // run-to-run determinism is verified, not assumed. The observed
-    // answer is recorded in notes/cuda-backend.md.
+    // run-to-run determinism is verified, not assumed — this test is
+    // that verification, still awaiting its first hardware run.
     let Some(context) = device() else { return };
     let size = 1024;
     let left = varied(size, size, 5);
@@ -294,4 +294,82 @@ fn training_runs_through_the_backend_end_to_end() {
         last_loss.is_finite() && last_loss < first_loss * 0.5,
         "training through the backend did not converge: {first_loss} -> {last_loss}"
     );
+}
+
+/// The counters and stub entry points of the fake allocation API:
+/// pointers are opaque tokens minted from a counter, never
+/// dereferenced by the pool.
+mod fake {
+    use std::ffi::c_void;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    pub static ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+    pub static FREES: AtomicUsize = AtomicUsize::new(0);
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+
+    pub unsafe extern "C" fn malloc(slot: *mut *mut c_void, _bytes: usize) -> i32 {
+        ALLOCATIONS.fetch_add(1, Ordering::SeqCst);
+        let token = NEXT.fetch_add(1, Ordering::SeqCst);
+        // SAFETY: the caller passes a live slot for the pointer.
+        unsafe { *slot = token as *mut c_void };
+        0
+    }
+
+    pub unsafe extern "C" fn free(_buffer: *mut c_void) -> i32 {
+        FREES.fetch_add(1, Ordering::SeqCst);
+        0
+    }
+}
+
+#[test]
+fn the_pool_accounts_for_every_buffer() {
+    use std::sync::atomic::Ordering;
+
+    use super::context::Api;
+    use super::pool::{CLASS_CAP, PARKED_CAP, Pool};
+
+    let api = Api::fake(fake::malloc, fake::free);
+    let pool = Pool::new();
+    let allocations = || fake::ALLOCATIONS.load(Ordering::SeqCst);
+    let frees = || fake::FREES.load(Ordering::SeqCst);
+
+    // A pooled class parks on give and is reused by the next take.
+    let small = pool.take(&api, 1000).expect("the fake malloc succeeds");
+    assert_eq!((allocations(), frees()), (1, 0));
+    pool.give(&api, 1000, small);
+    let again = pool.take(&api, 1000).expect("the parked buffer returns");
+    assert_eq!(again, small, "the parked buffer is the one reused");
+    assert_eq!((allocations(), frees()), (1, 0));
+    pool.give(&api, 1000, again);
+
+    // An above-cap buffer is an exact-sized one-off: freed on give,
+    // so the next identical request allocates anew.
+    let giant = pool
+        .take(&api, CLASS_CAP + 1)
+        .expect("the fake malloc succeeds");
+    pool.give(&api, CLASS_CAP + 1, giant);
+    assert_eq!((allocations(), frees()), (2, 1));
+    let giant = pool
+        .take(&api, CLASS_CAP + 1)
+        .expect("the fake malloc succeeds");
+    pool.give(&api, CLASS_CAP + 1, giant);
+    assert_eq!((allocations(), frees()), (3, 2));
+
+    // Parking stops at the global cap: gives beyond it free instead,
+    // so parked bytes can never exceed `PARKED_CAP`.
+    let fits = PARKED_CAP / CLASS_CAP;
+    let buffers: Vec<_> = (0..fits + 2)
+        .map(|_| {
+            pool.take(&api, CLASS_CAP)
+                .expect("the fake malloc succeeds")
+        })
+        .collect();
+    let allocated = allocations();
+    for buffer in buffers {
+        pool.give(&api, CLASS_CAP, buffer);
+    }
+    // One small class is already parked, so its bytes count against
+    // the cap too; at least the overflow gives must have freed.
+    assert_eq!(allocations(), allocated);
+    assert!(frees() >= 2 + 2, "gives beyond the cap free their buffers");
 }
