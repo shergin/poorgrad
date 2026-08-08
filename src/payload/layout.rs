@@ -305,8 +305,27 @@ impl Layout {
         unfolded.insert(axis + 1, size);
         let mut strides = self.strides.clone();
         let along = strides[axis];
-        strides[axis] = step * along;
-        strides.insert(axis + 1, dilation * along);
+        // An extent-1 axis never advances the buffer, so its stride is
+        // canonically 0 rather than a product that may overflow for a
+        // large-but-unused `step` (the single-window case); a stride that
+        // is actually applied must multiply without wrapping in every
+        // build profile.
+        strides[axis] = if count == 1 {
+            0
+        } else {
+            step.checked_mul(along)
+                .expect("unfold stride overflows `usize`")
+        };
+        strides.insert(
+            axis + 1,
+            if size == 1 {
+                0
+            } else {
+                dilation
+                    .checked_mul(along)
+                    .expect("unfold stride overflows `usize`")
+            },
+        );
         Layout {
             shape: Shape::new(unfolded),
             strides,

@@ -88,6 +88,17 @@ fn selection_rejects_overflowing_shapes() {
 }
 
 #[test]
+fn unfold_single_window_accepts_any_step() {
+    // The contract permits any positive step; with one window the start
+    // stride is never applied, so even a step whose stride product would
+    // overflow must behave identically in debug and release builds.
+    let tensor = Tensor::new([1, 2], [1.0_f64, 2.0]);
+    let windows = tensor.unfold(0, 1, usize::MAX, 1);
+    assert_eq!(windows.shape(), Shape::new([1, 1, 2]));
+    assert_eq!(windows.to_vec(), &[1.0, 2.0]);
+}
+
+#[test]
 fn unfold_slides_overlapping_windows() {
     let tensor = Tensor::new([8], (1..=8).map(|v| v as f64).collect::<Vec<_>>());
     let windows = tensor.unfold(0, 3, 2, 1);
