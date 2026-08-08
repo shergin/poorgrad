@@ -9,6 +9,34 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `Optimizer` trait with `Sgd`, `Adam`, and `AdamW`: a
+  training-step strategy is a uniform, object-safe slot the loop can
+  hand any implementation — deliberately an open trait, not a closed
+  enum, so custom optimizers have the same standing as the built-in
+  ones. Hyperparameters are single-value payloads written at the
+  call site; Adam carries its moments as `Field`s and its
+  bias-correction powers as payloads (exact, no `powf`); AdamW
+  applies decoupled decay under a structural default policy (rank
+  two and above decays; biases and norm gains are spared) with a
+  `step_where` predicate override. Optimizer steps are pure field
+  algebra: identical runs are bit-identical, and fields from
+  `recorded_gradients` drive the same trajectory as the engine's
+  backward, held by tests.
+- `Network::update_each`: the identity-aware update — the rule
+  receives the parameter's `Value` besides its payloads, so
+  per-parameter policy (selective decay, clipping, logging) reads
+  the parameter's symbol, shape, or rank at the call site. `update`
+  now accepts `FnMut` and delegates to it.
+
+### Changed
+
+- `Field::scale` takes a single-value factor and spreads it to each
+  entry's shape through `broadcast_to`-style broadcasting — the
+  scalar arithmetic optimizer state needs. Scalar fields scale
+  exactly as before; tensor fields gain the case that previously
+  panicked. The factor is now passed by reference, and the method
+  requires the `Tensorial` payload contract.
+
 - `Network::differentiate(loss, wrt)`: reverse-mode differentiation
   as a tape-to-tape transform. Gradients record as ordinary computed
   nodes — compilable, emittable, readable, and differentiable again

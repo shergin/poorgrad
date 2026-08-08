@@ -663,6 +663,21 @@ averages them as plain payloads, and feeds the estimates to the
 inference expression per run — the same division of labor as minibatch
 assembly.
 
+**Optimizer.** A training-step strategy: how one generation's
+gradients become the next generation's parameters. The loop-land
+analogue of what `Activation` is to a layer — a uniform slot — kept
+an open, object-safe trait so custom optimizers are ordinary
+implementations, with `Field` algebra as the designed state carrier
+(moments are fields, carried across generations). `Sgd` is the
+stateless base case, `Adam` adds bias-corrected moments (powers
+carried as payloads, so steps are exact and deterministic), and
+`AdamW` adds decoupled weight decay under a structural policy: rank
+two and above decays, rank one is spared, decided through the
+identity-aware `Network::update_each`. The learning rate is a
+per-step argument — schedules stay caller-owned loop arithmetic. In
+poorgrad: the [`Optimizer`](src/neural/optimizer.rs) trait and
+[`Adam`/`AdamW`](src/neural/adam.rs).
+
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
 is what gives stacked neurons expressive power beyond affine maps. It is a
 graph operation like any other, so it participates in differentiation

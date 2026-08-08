@@ -413,7 +413,11 @@ impl<Data: Differentiable> Tape<Data> {
     /// Panics if `gradients` does not cover the whole tape, or if
     /// `rule` returns a payload whose shape differs from the
     /// parameter's recorded shape.
-    pub(crate) fn update(&self, gradients: &[Data], rule: impl Fn(&Data, &Data) -> Data) -> Self {
+    pub(crate) fn update(
+        &self,
+        gradients: &[Data],
+        mut rule: impl FnMut(ValueId, &Data, &Data) -> Data,
+    ) -> Self {
         let (functions, operands, shapes, parameters, inputs, chain, tip) = {
             let mut inner = self.lock();
             let tip = inner.share_tip();
@@ -434,7 +438,7 @@ impl<Data: Differentiable> Tape<Data> {
         );
         let mut payloads = Vec::with_capacity(parameters.payloads.len());
         for (payload, &node) in parameters.payloads.iter().zip(&parameters.nodes) {
-            let next = rule(payload, &gradients[node.index()]);
+            let next = rule(node, payload, &gradients[node.index()]);
             let declared = shapes.get(node.index()).expect("shapes cover the tape");
             assert_eq!(
                 &next.shape(),

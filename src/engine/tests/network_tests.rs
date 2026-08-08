@@ -203,7 +203,7 @@ fn momentum_descent_converges() {
         let loss = network.resolve(loss_symbol);
         let gradients = network.forward().backward(loss);
         let step = match velocity {
-            Some(previous) => previous.scale(0.5) + gradients,
+            Some(previous) => previous.scale(&0.5) + gradients,
             None => gradients,
         };
         network = network.update(&step, |parameter, direction| parameter - 0.1 * direction);

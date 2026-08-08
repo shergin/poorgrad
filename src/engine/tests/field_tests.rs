@@ -16,7 +16,7 @@ fn algebra_combines_elementwise() {
     assert_eq!(*combined.of(a), 4.0);
     assert_eq!(*combined.of(b), 3.0);
 
-    let result = combined.scale(2.0);
+    let result = combined.scale(&2.0);
     assert_eq!(*result.of(a), 8.0);
 
     let squared = d_product.zip(&d_product, |left, right| left * right);

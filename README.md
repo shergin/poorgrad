@@ -323,6 +323,14 @@ crate root keeps the public API flat. From tape to training:
   composed formula over the fused, numerically stable `Value::log_softmax`:
   the mean negative log-likelihood of one-hot (or soft) targets, fed per
   run like any other input.
+- [`Optimizer`](src/neural/optimizer.rs) — the training-step
+  strategy as an open, object-safe trait: `Sgd` (stateless), `Adam`
+  (moments as `Field`s, bias correction exact via carried powers),
+  and `AdamW` (decoupled decay, sparing rank-one parameters by
+  default, any other policy via a predicate). Steps are pure field
+  algebra, so identical runs are bit-identical, and gradients from
+  a compiled plan drive the same trajectory as the engine's
+  backward.
 - [`init`](src/neural/init.rs) — deterministic, explicitly seeded
   initializer factories (`uniform`, `normal`, the fan-aware `xavier`
   and `kaiming`, and the gain-parameterized `scaled` behind them —

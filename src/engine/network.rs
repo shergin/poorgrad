@@ -145,7 +145,34 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if `direction` belongs to a different network lineage or a
     /// divergent fork, is stale, or if `rule` returns a payload whose
     /// shape differs from the parameter's recorded shape.
-    pub fn update(&self, direction: &Field<Data>, rule: impl Fn(&Data, &Data) -> Data) -> Self {
+    pub fn update(
+        &self,
+        direction: &Field<Data>,
+        mut rule: impl FnMut(&Data, &Data) -> Data,
+    ) -> Self {
+        self.update_each(direction, move |_, current, direction| {
+            rule(current, direction)
+        })
+    }
+
+    /// Returns a new network generation like [`Network::update`], with
+    /// the parameter's own [`Value`] passed to the rule: the
+    /// identity-aware form, for per-parameter policy — an optimizer's
+    /// selective weight decay, per-parameter clipping, or logging —
+    /// decided from the parameter's symbol, shape, or rank at the call
+    /// site.
+    ///
+    /// The rule runs once per parameter, in parameter-store order (the
+    /// order the parameters were allocated); an `FnMut` rule may
+    /// observe that order, and it is part of the method's contract.
+    ///
+    /// # Panics
+    /// Panics as [`Network::update`] panics.
+    pub fn update_each(
+        &self,
+        direction: &Field<Data>,
+        mut rule: impl FnMut(Value<'_, Data>, &Data, &Data) -> Data,
+    ) -> Self {
         assert!(
             direction.lineage() == self.tape.lineage(),
             "field belongs to a different network lineage"
@@ -156,7 +183,11 @@ impl<Data: Differentiable> Network<Data> {
             "field belongs to a divergent fork of this network"
         );
         Self {
-            tape: self.tape.update(direction.as_slice(), rule),
+            tape: self
+                .tape
+                .update(direction.as_slice(), |node, current, direction| {
+                    rule(Value::bind(&self.tape, node), current, direction)
+                }),
         }
     }
 }

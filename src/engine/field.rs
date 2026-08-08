@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use static_assertions::assert_impl_all;
 
-use crate::Differentiable;
+use crate::{Differentiable, Tensorial};
 
 use super::{Lineage, Segment, Value, chains_agree};
 
@@ -74,18 +74,6 @@ impl<Data: Differentiable> Field<Data> {
             .expect("value was allocated after this field was produced")
     }
 
-    /// Returns a field with every entry multiplied by `factor`.
-    ///
-    /// The factor is passed directly to each payload's multiplication; no
-    /// broadcasting is performed.
-    ///
-    /// # Panics
-    /// For tensor payloads, panics if `factor` does not have the same shape as
-    /// every field entry.
-    pub fn scale(&self, factor: Data) -> Self {
-        self.map(|value| value.clone() * factor.clone())
-    }
-
     /// Returns a field with every entry passed through `transform`.
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
@@ -141,6 +129,23 @@ impl<Data: Differentiable> Field<Data> {
             chains_agree(&self.chain, &other.chain, self.values.len()),
             "fields belong to divergent forks of the network"
         );
+    }
+}
+
+impl<Data: Tensorial> Field<Data> {
+    /// Returns a field with every entry multiplied by the single-value
+    /// `factor`, spread to each entry's shape.
+    ///
+    /// It is the scalar arithmetic of optimizer state: bias-correction
+    /// and decay factors multiply every parameter's entry regardless of
+    /// its shape. For scalar payloads the spread is the identity, so
+    /// scalar fields scale exactly as they always did.
+    ///
+    /// # Panics
+    /// For tensor payloads, panics if `factor` holds more than one
+    /// value.
+    pub fn scale(&self, factor: &Data) -> Self {
+        self.map(|value| value.clone() * factor.broadcast_like(value))
     }
 }
 
