@@ -5,7 +5,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Evaluation, Field, Function, Symbol, Tape, Value, ValueId};
+use super::{Evaluation, Field, Function, Symbol, Tape, Trace, Value, ValueId};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
@@ -331,6 +331,110 @@ impl<Data: Tensorial> Network<Data> {
     }
 }
 
+impl<Data: Tensorial> Network<Data> {
+    /// Records the reverse-mode gradient of `loss` with respect to each
+    /// `wrt` entry as ordinary computed nodes on this network, and
+    /// returns their symbols in `wrt` order.
+    ///
+    /// It is `backward` as a tape-to-tape transform: the same reverse
+    /// scan the engine runs over payload buffers runs here over
+    /// recording [`Trace`] handles, applying the very same derivative
+    /// rules — so the recorded gradient and the engine's are one body
+    /// of knowledge, and a compiled plan over `[loss, gradients...]`
+    /// reproduces [`Evaluation::backward`] bitwise (same seed, same
+    /// accumulation order). Gradients become first-class values:
+    /// compilable, emittable, readable, and differentiable again for
+    /// higher-order derivatives.
+    ///
+    /// A `wrt` value that is not an ancestor of the loss answers a
+    /// recorded zero of its own shape, exactly as
+    /// [`Gradients`](super::Gradients) would. The transform reads graph
+    /// structure only, never payloads, so it is generation-independent
+    /// the way plans are; recording appends to the current tape and
+    /// leaves every existing node untouched.
+    ///
+    /// # Panics
+    /// Panics if `loss` is not a recorded scalar (reduce with `sum`
+    /// first) or any symbol belongs to a different lineage or a
+    /// divergent fork.
+    pub fn differentiate(
+        &self,
+        loss: Symbol,
+        wrt: impl IntoIterator<Item = Symbol>,
+    ) -> Vec<Symbol> {
+        let loss_value = self.resolve(loss);
+        assert_eq!(
+            loss_value.shape().rank(),
+            0,
+            "differentiate requires a scalar loss; reduce it with `sum` first"
+        );
+        let output_index = loss_value.id().index();
+        let snapshot = self.tape.snapshot();
+        let trace = |index: usize| Trace::of(Value::bind(&self.tape, ValueId(index)));
+
+        // The scan mirrors `Evaluation::backward` deliberately and
+        // exactly — the ones seed, the ancestor marking through `Some`
+        // cotangents, the zero-seeded accumulation in reverse scan
+        // order — because the bitwise parity contract welds the two:
+        // any change to either scan's arithmetic must reach both.
+        let mut cotangents: Vec<Option<Trace<'_, Data>>> = vec![None; output_index + 1];
+        cotangents[output_index] = Some(Trace::of(
+            loss_value.literal(Data::counted(loss_value.shape(), 1)),
+        ));
+        let mut ancestors = vec![false; output_index + 1];
+        ancestors[output_index] = true;
+        for index in (0..=output_index).rev() {
+            if !ancestors[index] {
+                continue;
+            }
+            let links = snapshot
+                .operands
+                .get(index)
+                .expect("snapshot cannot shrink")
+                .as_slice();
+            if links.is_empty() {
+                // Sources: leaves, parameters, and inputs, where
+                // gradients stop and get read out below.
+                continue;
+            }
+            let function = snapshot
+                .functions
+                .get(index)
+                .expect("snapshot cannot shrink");
+            let operand_traces: SmallVec<[Trace<'_, Data>; 2]> =
+                links.iter().map(|link| trace(link.index())).collect();
+            let operands: SmallVec<[&Trace<'_, Data>; 2]> = operand_traces.iter().collect();
+            let gradient = cotangents[index].expect("ancestors carry cotangents");
+            let recorded = function.backward(&operands, &trace(index), &gradient);
+            debug_assert_eq!(recorded.len(), links.len());
+            for (&link, cotangent) in links.iter().zip(recorded) {
+                if let Some(contribution) = cotangent {
+                    let slot = link.index();
+                    ancestors[slot] = true;
+                    let seeded = match cotangents[slot] {
+                        Some(existing) => existing,
+                        None => trace(slot).zero_like(),
+                    };
+                    cotangents[slot] = Some(seeded + contribution);
+                }
+            }
+        }
+
+        wrt.into_iter()
+            .map(|symbol| {
+                let value = self.resolve(symbol);
+                match cotangents.get(value.id().index()).copied().flatten() {
+                    Some(gradient) => gradient.value().symbol(),
+                    // A non-ancestor's gradient is a recorded zero of
+                    // its own shape, the tape twin of the zeros a
+                    // gradient field holds there.
+                    None => value.literal(Data::counted(value.shape(), 0)).symbol(),
+                }
+            })
+            .collect()
+    }
+}
+
 impl<Data: Differentiable> Clone for Network<Data> {
     /// Forks the network in O(1).
     ///
@@ -353,3 +457,7 @@ impl<Data: Differentiable> Default for Network<Data> {
 #[cfg(test)]
 #[path = "tests/network_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/differentiate_tests.rs"]
+mod differentiate_tests;

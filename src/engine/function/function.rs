@@ -483,12 +483,18 @@ impl<Data: Tensorial> Function<Data> {
     /// parameters, and inputs, where gradients stop and get read out.
     /// The engine accumulates the returned cotangents into its gradient
     /// buffer.
-    pub(crate) fn backward(
+    ///
+    /// The rule payload is a separate parameter from the tape's own
+    /// `Data` because the rules are pure trait polymorphism: the engine
+    /// applies them over payload buffers, and `differentiate` applies
+    /// the very same rules over recording [`Trace`](super::Trace)
+    /// handles — one source of derivative truth, two interpretations.
+    pub(crate) fn backward<Rule: Tensorial>(
         &self,
-        operands: &[&Data],
-        output: &Data,
-        gradient: &Data,
-    ) -> Cotangents<Data> {
+        operands: &[&Rule],
+        output: &Rule,
+        gradient: &Rule,
+    ) -> Cotangents<Rule> {
         match self {
             Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => Cotangents::new(),
             Function::Add(add) => add.backward(operands, output, gradient),

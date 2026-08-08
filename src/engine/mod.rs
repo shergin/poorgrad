@@ -7,6 +7,7 @@ mod network;
 mod plan;
 mod symbol;
 mod tape;
+mod trace;
 mod value;
 
 pub use composite::{concat, stack};
@@ -20,4 +21,5 @@ pub use value::Value;
 
 pub(crate) use function::Function;
 pub(crate) use tape::{Branch, Lineage, Operands, Segment, SlotId, Tape, chains_agree};
+pub(crate) use trace::Trace;
 pub(crate) use value::ValueId;
