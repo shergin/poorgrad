@@ -745,7 +745,16 @@ impl<Data: Tensorial> Plan<Data> {
                     .iter()
                     .map(|link| &values[link.index()])
                     .collect();
-                function.forward(&operands, snapshot.parameters.payloads(), &inputs)
+                let value = function.forward(&operands, snapshot.parameters.payloads(), &inputs);
+                // The same producing-node contract check the interpreter
+                // run makes: the rule's output must carry the plan's
+                // recorded shape for this slot.
+                debug_assert_eq!(
+                    value.shape(),
+                    self.shapes[index],
+                    "operation output shape disagrees with the recorded shape at node {index}"
+                );
+                value
             };
             values.push(value);
             // Liveness: this node was the last consumer of these

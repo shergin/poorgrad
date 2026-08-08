@@ -224,7 +224,15 @@ impl Tensorial for f32 {
         *self
     }
 
-    fn reshape(&self, _shape: Shape) -> Self {
+    fn reshape(&self, shape: Shape) -> Self {
+        // The one movement request a scalar graph can record (volumes
+        // match), so the capability mismatch is rejected here rather
+        // than silently breaking recorded/payload shape coherence.
+        assert_eq!(
+            shape.rank(),
+            0,
+            "a scalar payload cannot take shape {shape}"
+        );
         *self
     }
 
@@ -305,7 +313,15 @@ impl Tensorial for f64 {
         *self
     }
 
-    fn reshape(&self, _shape: Shape) -> Self {
+    fn reshape(&self, shape: Shape) -> Self {
+        // The one movement request a scalar graph can record (volumes
+        // match), so the capability mismatch is rejected here rather
+        // than silently breaking recorded/payload shape coherence.
+        assert_eq!(
+            shape.rank(),
+            0,
+            "a scalar payload cannot take shape {shape}"
+        );
         *self
     }
 

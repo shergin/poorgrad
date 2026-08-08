@@ -304,7 +304,16 @@ impl<Data: Tensorial> Network<Data> {
                     .iter()
                     .map(|link| &values[link.index()])
                     .collect();
-                function.forward(&operands, snapshot.parameters.payloads(), &inputs)
+                let value = function.forward(&operands, snapshot.parameters.payloads(), &inputs);
+                // The recorded shape is the type of this node; a payload
+                // whose rule answers a different shape has broken the
+                // operation contract at exactly this producing node.
+                debug_assert_eq!(
+                    value.shape(),
+                    self.tape.shape(ValueId(index)),
+                    "operation output shape disagrees with the recorded shape at node {index}"
+                );
+                value
             };
             values.push(value);
         }

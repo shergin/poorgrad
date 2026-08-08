@@ -172,6 +172,14 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             0,
             "backward requires a scalar target; reduce it with `sum` first"
         );
+        // Both views of the target's shape must agree: the payload above
+        // and the recorded column here, so a payload that ignored a
+        // recorded movement cannot smuggle a non-scalar target through.
+        assert_eq!(
+            output.shape().rank(),
+            0,
+            "backward requires a scalar target; reduce it with `sum` first"
+        );
 
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         gradients[output_index] = values[output_index].one_like();

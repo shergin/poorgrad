@@ -473,3 +473,16 @@ fn narrow_of_pad_roundtrips_the_value() {
     let gradients = evaluation.backward(loss);
     assert_eq!(gradients.of(x).to_vec(), &[1.0, 1.0, 1.0]);
 }
+
+#[test]
+#[should_panic(expected = "cannot take shape")]
+fn scalar_reshape_to_rank_one_is_rejected_at_forward() {
+    // Record-time inference cannot reject this (a rank-0 tensor may
+    // legitimately take shape [1]), so the scalar payload rejects the
+    // capability mismatch when the rule runs, keeping the recorded and
+    // payload views of every shape coherent.
+    let network = Network::new();
+    let x = network.leaf(2.0_f64);
+    let _reshaped = x.reshape([1]);
+    network.forward();
+}
