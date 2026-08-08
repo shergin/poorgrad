@@ -431,6 +431,17 @@ term and its mapping to the Rust types — is collected in
   `cargo run --release --features accelerate,metal --example throughput`
   (or `--features simd` off macOS).
 
+## Contributing
+
+Issues and pull requests are welcome — bug reports, feature ideas,
+questions, confusing-documentation reports (those are bugs too),
+and benchmark numbers from your machine all help. For larger
+changes, opening an issue first is appreciated: designs here are
+decided by measurement and written down before code, and a short
+conversation up front saves reworking a PR. CI expects `cargo fmt`,
+`cargo clippy --all-targets -- -D warnings`, and `cargo test` to
+pass; matching that locally is the whole checklist.
+
 ## License
 
 Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at
