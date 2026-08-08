@@ -268,3 +268,103 @@ fn nested_tensor_elements_multiply_on_the_slice_path() {
     let expected = reference(&left, &right);
     assert_eq!(product.to_vec(), expected);
 }
+
+/// A probe element whose backend answers are one element short, for
+/// asserting that the seam contract is checked rather than trusted.
+#[derive(Clone, Debug, PartialEq)]
+struct LyingProbe(f64);
+
+impl Add for LyingProbe {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        LyingProbe(self.0 + rhs.0)
+    }
+}
+
+impl Sub for LyingProbe {
+    type Output = Self;
+    fn sub(self, rhs: Self) -> Self {
+        LyingProbe(self.0 - rhs.0)
+    }
+}
+
+impl Mul for LyingProbe {
+    type Output = Self;
+    fn mul(self, rhs: Self) -> Self {
+        LyingProbe(self.0 * rhs.0)
+    }
+}
+
+impl Div for LyingProbe {
+    type Output = Self;
+    fn div(self, rhs: Self) -> Self {
+        LyingProbe(self.0 / rhs.0)
+    }
+}
+
+impl Neg for LyingProbe {
+    type Output = Self;
+    fn neg(self) -> Self {
+        LyingProbe(-self.0)
+    }
+}
+
+impl Differentiable for LyingProbe {
+    fn zero_like(&self) -> Self {
+        LyingProbe(0.0)
+    }
+    fn one_like(&self) -> Self {
+        LyingProbe(1.0)
+    }
+    fn counted(_shape: Shape, count: usize) -> Self {
+        LyingProbe(count as f64)
+    }
+    fn shape(&self) -> Shape {
+        Shape::scalar()
+    }
+}
+
+impl Elementary for LyingProbe {
+    fn exp(&self) -> Self {
+        LyingProbe(self.0.exp())
+    }
+    fn ln(&self) -> Self {
+        LyingProbe(self.0.ln())
+    }
+    fn sqrt(&self) -> Self {
+        LyingProbe(self.0.sqrt())
+    }
+    fn tanh(&self) -> Self {
+        LyingProbe(self.0.tanh())
+    }
+    fn powf(&self, exponent: Self) -> Self {
+        LyingProbe(self.0.powf(exponent.0))
+    }
+    fn maximum(&self, other: &Self) -> Self {
+        LyingProbe(self.0.max(other.0))
+    }
+    fn step(&self, threshold: &Self) -> Self {
+        LyingProbe(if self.0 >= threshold.0 { 1.0 } else { 0.0 })
+    }
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
+        Some(vec![LyingProbe(42.0); task.m() * task.n() - 1])
+    }
+    fn map(_operation: crate::MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
+        Some(vec![LyingProbe(42.0); elements.len() - 1])
+    }
+}
+
+#[test]
+#[should_panic(expected = "`Elementary::gemm` contract")]
+fn a_short_gemm_answer_panics_at_the_seam() {
+    let left = Tensor::new([2, 3], vec![LyingProbe(1.0); 6]);
+    let right = Tensor::new([3, 2], vec![LyingProbe(1.0); 6]);
+    left.matmul(&right);
+}
+
+#[test]
+#[should_panic(expected = "`Elementary::map` contract")]
+fn a_short_map_answer_panics_at_the_seam() {
+    let tensor = Tensor::new([4], vec![LyingProbe(1.0); 4]);
+    tensor.exp();
+}

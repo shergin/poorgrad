@@ -650,15 +650,24 @@ impl<Element: Elementary> Tensor<Element> {
     /// backend only its distinct elements — and the scalar `fallback`
     /// everywhere else (constants, declined maps).
     fn mapped(&self, operation: MapOperation, fallback: impl Fn(&Element) -> Element) -> Self {
-        if let Some(mapped) = self
-            .as_slice()
-            .and_then(|elements| Element::map(operation, elements))
+        if let Some(elements) = self.as_slice()
+            && let Some(mapped) = Element::map(operation, elements)
         {
+            assert_eq!(
+                mapped.len(),
+                elements.len(),
+                "the `Elementary::map` contract requires one output per input element"
+            );
             return Self::dense(self.logical_shape().clone(), mapped);
         }
         if let Some((window, layout)) = self.strided_window()
             && let Some(mapped) = Element::map(operation, window)
         {
+            assert_eq!(
+                mapped.len(),
+                window.len(),
+                "the `Elementary::map` contract requires one output per input element"
+            );
             return Self {
                 storage: Storage::Dense {
                     data: Arc::new(mapped),
@@ -734,7 +743,17 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             // Tier one is the element's acceleration seam (the
             // compiled backend chain); tier two the built-in slice
             // path. A declined task costs one call answering `None`.
-            let elements = Element::gemm(&task).unwrap_or_else(|| gemm::multiply(&task));
+            let elements = match Element::gemm(&task) {
+                Some(product) => {
+                    assert_eq!(
+                        product.len(),
+                        rows * columns,
+                        "the `Elementary::gemm` contract requires `rows * columns` elements"
+                    );
+                    product
+                }
+                None => gemm::multiply(&task),
+            };
             return Self::dense(Shape::new([rows, columns]), elements);
         }
 
