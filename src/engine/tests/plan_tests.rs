@@ -568,3 +568,46 @@ fn shared_windows_bar_fusion() {
     let interpreted = network.forward();
     assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
 }
+
+/// Compiles a plan whose last node is minted by `extend` on one fork,
+/// then calls it on the untouched, shorter sibling: the sibling's chain
+/// attributes the whole range to the same branches, but it does not
+/// carry the plan's nodes and must be rejected uniformly.
+fn shorter_sibling_is_rejected(extend: impl FnOnce(&Network<f64>) -> Symbol) {
+    let network = Network::new();
+    let x = network.leaf(2.0_f64);
+    let shared = x * x;
+    let sibling = network.clone();
+    let late = extend(&network);
+    let _ = shared;
+
+    let plan = network.compile([late], []);
+    plan.forward(&sibling, no_feeds());
+}
+
+#[test]
+#[should_panic(expected = "does not contain")]
+fn plans_reject_a_shorter_sibling_with_a_later_leaf() {
+    shorter_sibling_is_rejected(|network| network.leaf(3.0_f64).symbol());
+}
+
+#[test]
+#[should_panic(expected = "does not contain")]
+fn plans_reject_a_shorter_sibling_with_a_later_input() {
+    shorter_sibling_is_rejected(|network| network.input(3.0_f64).symbol());
+}
+
+#[test]
+#[should_panic(expected = "does not contain")]
+fn plans_reject_a_shorter_sibling_with_a_later_parameter() {
+    shorter_sibling_is_rejected(|network| network.parameter(3.0_f64).symbol());
+}
+
+#[test]
+#[should_panic(expected = "does not contain")]
+fn plans_reject_a_shorter_sibling_with_a_later_computed_target() {
+    shorter_sibling_is_rejected(|network| {
+        let y = network.leaf(3.0_f64);
+        (y * y).symbol()
+    });
+}

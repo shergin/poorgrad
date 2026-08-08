@@ -7,7 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Evaluation, Function, Lineage, Network, Operands, Segment, Symbol};
+use super::{Evaluation, Function, Lineage, Network, Operands, Segment, Symbol, chains_agree};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -685,7 +685,8 @@ impl<Data: Tensorial> Plan<Data> {
     ///
     /// # Panics
     /// Panics if `network` belongs to a different lineage or a
-    /// divergent fork, or as `forward_with` panics for `feeds`.
+    /// divergent fork, does not contain the plan's whole graph prefix,
+    /// or as `forward_with` panics for `feeds`.
     pub fn forward<'network>(
         &self,
         network: &'network Network<Data>,
@@ -696,8 +697,17 @@ impl<Data: Tensorial> Plan<Data> {
             self.lineage == tape.lineage(),
             "plan belongs to a different network lineage"
         );
+        // One snapshot serves validation and the run, so both observe
+        // the same atomic tape state; chain agreement alone is not
+        // containment, since a shorter sibling attributes `[0, len)`
+        // to the same branches without carrying the nodes.
+        let snapshot = tape.snapshot();
         assert!(
-            tape.agrees_with_chain(&self.chain, self.len()),
+            snapshot.functions.len() >= self.len(),
+            "plan covers a graph prefix this network does not contain"
+        );
+        assert!(
+            chains_agree(&snapshot.chain, &self.chain, self.len()),
             "plan belongs to a divergent fork of this network"
         );
 
@@ -712,7 +722,6 @@ impl<Data: Tensorial> Plan<Data> {
             );
             bindings.push((slot, payload));
         }
-        let snapshot = tape.snapshot();
         let inputs = if bindings.is_empty() {
             snapshot.inputs
         } else {
