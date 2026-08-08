@@ -27,6 +27,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   routes bitwise), at speed parity and a measurably lower memory
   peak, because forward-only liveness frees what the gradient
   computation no longer needs.
+- `Activation::Sigmoid`, `Activation::LeakyRelu`, and
+  `Activation::Elu`, with the public `Activation::express` that
+  records each variant's expression: the new three are short
+  compositions with stable spellings — sigmoid through the fused
+  `tanh`, leaky relu and ELU through `maximum` with correct
+  subgradients at zero and no overflow at finite extremes — and
+  their gradients are the chain rule, closed under `differentiate`
+  like every composition.
 - `Value::step`, `Value::fold`, and `Value::scatter`: the three
   adjoints that close the op set under differentiation (the
   `maximum` family's locally constant mask, `unfold`'s adjoint, and

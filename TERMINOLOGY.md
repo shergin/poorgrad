@@ -671,9 +671,17 @@ graph operation like any other, so it participates in differentiation
 by `Value::relu`, whose gradient is masked by the 0/1 `step` indicator —
 a dedicated unary variant so the mask costs one node and no zero leaf
 per occurrence, while the rule reaches its zero at run time through
-`zero_like`). In poorgrad: the
-[`Activation`](src/neural/activation.rs) enum selecting `Identity`,
-`Tanh`, or `Relu`.
+`zero_like`). Beyond the dedicated pair, activations are short
+compositions whose gradients are the chain rule: `Sigmoid` as
+`(tanh(x / 2) + 1) / 2` (stable by inheritance where the naive
+exponential overflows), `LeakyRelu` as `maximum(x, x / 100)`, and
+`Elu` as `maximum(x, exp(-relu(-x)) - 1)` (the clamped exponent
+cannot overflow, and the left-biased tie keeps the subgradient at
+zero equal to one). Constants are integer `counted` ratios per the
+settled literal decision; arbitrary-constant activations stay caller
+territory, like GPT-2's GELU. In poorgrad: the
+[`Activation`](src/neural/activation.rs) enum and its
+`Activation::express`.
 
 **Loss.** A scalar training objective written as a composed formula over
 recorded operations, not as a primitive: its gradient falls out of the

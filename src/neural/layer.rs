@@ -92,11 +92,7 @@ impl<Data: Tensorial> Layer<Data> {
         // The bias is repeated across the batch axis; its gradient sums
         // back along the same axis, one contribution per sample.
         let shifted = product + bias.broadcast_along(0, product);
-        match self.activation {
-            Activation::Identity => shifted,
-            Activation::Tanh => shifted.tanh(),
-            Activation::Relu => shifted.relu(),
-        }
+        self.activation.express(shifted)
     }
 }
 

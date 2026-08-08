@@ -79,11 +79,7 @@ impl<Data: Elementary> Neuron<Data> {
             let weight = network.resolve(*weight);
             sum = sum + weight * *input;
         }
-        match self.activation {
-            Activation::Identity => sum,
-            Activation::Tanh => sum.tanh(),
-            Activation::Relu => sum.relu(),
-        }
+        self.activation.express(sum)
     }
 }
 
