@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   fork, and it mirrors the engine scan's seed and accumulation
   order: a compiled plan over `[loss, gradients...]` reproduces
   `Evaluation::backward` bitwise, held by per-variant closure tests.
+- `Evaluation::recorded_gradients`: assembles the update direction
+  from recorded gradient values — the bridge from `differentiate` to
+  `Network::update`, so a training step is one forward run of a
+  compiled `[loss, gradients...]` plan with no backward pass. The
+  `makemore_mlp_compiled` example is that loop: bit-identical to
+  `makemore_mlp` under matched seeds (the closure suite pins the
+  routes bitwise), at speed parity and a measurably lower memory
+  peak, because forward-only liveness frees what the gradient
+  computation no longer needs.
 - `Value::step`, `Value::fold`, and `Value::scatter`: the three
   adjoints that close the op set under differentiation (the
   `maximum` family's locally constant mask, `unfold`'s adjoint, and

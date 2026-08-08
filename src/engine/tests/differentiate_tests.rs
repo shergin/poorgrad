@@ -1,4 +1,4 @@
-use crate::{Network, Symbol, Tensor};
+use crate::{Differentiable, Network, Symbol, Tensor};
 
 /// Asserts the closure contract for one recorded graph: the gradients
 /// `differentiate` records must reproduce `Evaluation::backward`
@@ -454,4 +454,92 @@ fn tape_growth_stays_a_small_constant() {
         "differentiating {before} nodes appended {}",
         after - before
     );
+}
+
+#[test]
+fn a_recorded_training_loop_matches_the_engine_bitwise() {
+    // Two identical models under matched seeds: one trains through the
+    // engine's backward, the other through a compiled
+    // `[loss, gradients...]` forward-only plan and
+    // `recorded_gradients` — every generation's parameters must agree
+    // bit for bit, because both loops fold the same arithmetic.
+    let build = |network: &Network<Tensor<f64>>| {
+        let x = network.input(varied([4, 3], 1));
+        let weights = network.parameter(varied([3, 4], 2));
+        let bias = network.parameter(varied([4], 3));
+        let product = x.matmul(weights);
+        let hidden = (product + bias.broadcast_along(0, product)).tanh();
+        let head = network.parameter(varied([4, 2], 4));
+        let loss = hidden.matmul(head).log_softmax(1).sum();
+        (
+            x.symbol(),
+            [weights.symbol(), bias.symbol(), head.symbol()],
+            loss.symbol(),
+        )
+    };
+
+    let engine_network = Network::new();
+    let (engine_x, engine_params, engine_loss) = build(&engine_network);
+    let recorded_network = Network::new();
+    let (recorded_x, recorded_params, recorded_loss) = build(&recorded_network);
+    let gradients = recorded_network.differentiate(recorded_loss, recorded_params.iter().copied());
+    let plan = recorded_network.compile(
+        std::iter::once(recorded_loss).chain(gradients.iter().copied()),
+        [],
+    );
+
+    let mut engine_network = engine_network;
+    let mut recorded_network = recorded_network;
+    for step in 0..12 {
+        let batch = varied([4, 3], 10 + step);
+
+        let engine_evaluation = engine_network.forward_with([(engine_x, batch.clone())]);
+        let engine_gradients = engine_evaluation.backward(engine_network.resolve(engine_loss));
+        engine_network = engine_network.update(&engine_gradients, |parameter, gradient| {
+            parameter.clone() - gradient.clone() * Tensor::filled(gradient.shape(), 0.05)
+        });
+
+        let recorded_evaluation = plan.forward(&recorded_network, [(recorded_x, batch)]);
+        let recorded_field =
+            recorded_evaluation.recorded_gradients(recorded_params.iter().zip(&gradients).map(
+                |(&parameter, &gradient)| {
+                    (
+                        recorded_network.resolve(parameter),
+                        recorded_network.resolve(gradient),
+                    )
+                },
+            ));
+        recorded_network = recorded_network.update(&recorded_field, |parameter, gradient| {
+            parameter.clone() - gradient.clone() * Tensor::filled(gradient.shape(), 0.05)
+        });
+
+        for (&engine_param, &recorded_param) in engine_params.iter().zip(&recorded_params) {
+            let engine_payload = engine_network
+                .resolve(engine_param)
+                .payload()
+                .expect("parameters carry payloads");
+            let recorded_payload = recorded_network
+                .resolve(recorded_param)
+                .payload()
+                .expect("parameters carry payloads");
+            for (engine, recorded) in engine_payload
+                .to_vec()
+                .iter()
+                .zip(recorded_payload.to_vec())
+            {
+                assert_eq!(engine.to_bits(), recorded.to_bits(), "step {step}");
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "is not a parameter")]
+fn recorded_gradients_reject_swapped_pairs() {
+    let network = Network::new();
+    let a = network.parameter(varied([2], 1));
+    let loss = a.sum();
+    let gradients = network.differentiate(loss.symbol(), [a.symbol()]);
+    let evaluation = network.forward();
+    evaluation.recorded_gradients([(network.resolve(gradients[0]), network.resolve(a.symbol()))]);
 }

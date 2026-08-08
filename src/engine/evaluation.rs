@@ -117,6 +117,55 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         );
         payload
     }
+
+    /// Assembles a [`Gradients`] field from recorded gradient values:
+    /// each `(parameter, gradient)` pair copies the gradient node's
+    /// payload from this evaluation into the parameter's slot, with
+    /// zeros everywhere else — the field [`Evaluation::backward`]
+    /// would produce for those parameters, when the gradients were
+    /// recorded by [`Network::differentiate`](crate::Network::differentiate)
+    /// instead of computed by the engine.
+    ///
+    /// It is the bridge from recorded gradients to
+    /// [`Network::update`](crate::Network::update): one forward run of
+    /// a compiled `[loss, gradients...]` plan yields the update
+    /// direction with no backward pass at all, and the closure suite
+    /// pins the two routes bitwise.
+    ///
+    /// # Panics
+    /// Panics as [`Evaluation::of`] panics for either half of a pair,
+    /// if a pair's first value is not a parameter, or if a gradient's
+    /// payload shape differs from its parameter's recorded shape.
+    pub fn recorded_gradients<'value>(
+        &self,
+        pairs: impl IntoIterator<Item = (Value<'value, Data>, Value<'value, Data>)>,
+    ) -> Gradients<Data>
+    where
+        Data: 'value,
+    {
+        let values = self.values.as_slice();
+        let mut field: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
+        for (parameter, gradient) in pairs {
+            assert!(
+                ptr::eq(self.tape, parameter.tape()),
+                "value belongs to a different network"
+            );
+            let index = parameter.id().index();
+            assert!(
+                matches!(self.nodes.get(index), Some(Function::Parameter(_))),
+                "recorded gradients pair each parameter with its gradient; the first \
+                 value of a pair is not a parameter"
+            );
+            let payload = self.of(gradient).clone();
+            assert_eq!(
+                payload.shape(),
+                parameter.shape(),
+                "recorded gradient shape does not match its parameter's"
+            );
+            field[index] = payload;
+        }
+        Field::new(self.tape.lineage(), Arc::clone(&self.chain), field)
+    }
 }
 
 impl<'network, Data: Tensorial> Evaluation<'network, Data> {

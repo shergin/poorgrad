@@ -369,6 +369,14 @@ term and its mapping to the Rust types — is collected in
   make it train bit-identically to `makemore_mlp`, demonstrating that
   the facade is packaging, not different math:
   `cargo run --release --example makemore_mlp_facade`.
+- [`makemore_mlp_compiled`](examples/makemore/mlp_compiled.rs) — the
+  same model with its backward pass *recorded*:
+  `Network::differentiate` appends the chain rule to the tape, one
+  forward-only plan compiles loss and gradients together, and every
+  training step is a single plan run with no backward pass. Matching
+  seeds make it train bit-identically to `makemore_mlp`, at a lower
+  memory peak — the plan's liveness frees what the gradient no
+  longer needs: `cargo run --release --example makemore_mlp_compiled`.
 - [`mnist`](examples/mnist/main.rs) — a LeNet-style convolutional
   network on MNIST: two conv/relu/max-pool stages and a dense head,
   every convolution one im2col + GEMM under the hood. Downloads and
