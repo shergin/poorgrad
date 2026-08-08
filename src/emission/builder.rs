@@ -109,6 +109,17 @@ fn nested<Element: Emittable>(axes: &[usize], elements: &[Element]) -> String {
     }
 }
 
+/// Returns the MLIR tensor type of an `i1` predicate tensor over
+/// `shape`: what `compare` produces and `select` consumes.
+pub(crate) fn pred_tensor_type(shape: &Shape) -> String {
+    let mut dimensions = String::new();
+    for extent in shape.axes() {
+        dimensions.push_str(&extent.to_string());
+        dimensions.push('x');
+    }
+    format!("tensor<{dimensions}i1>")
+}
+
 /// Returns the MLIR tensor type of an `i64` index tensor over `axes`:
 /// the element type static gathers carry their coordinates in.
 pub(crate) fn index_tensor_type(axes: &[usize]) -> String {

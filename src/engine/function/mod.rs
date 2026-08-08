@@ -7,6 +7,7 @@ mod gather;
 // The module convention names each file after its main concept, and this
 // module's main concept is the `Function` enum itself; the inception is
 // deliberate.
+mod fold;
 #[allow(clippy::module_inception)]
 mod function;
 mod input;
@@ -26,7 +27,9 @@ mod permute;
 mod powf;
 mod relu;
 mod reshape;
+mod scatter;
 mod sqrt;
+mod step;
 mod sub;
 mod sum;
 mod sum_along;
@@ -39,6 +42,7 @@ pub(crate) use broadcast::Broadcast;
 pub(crate) use broadcast_along::BroadcastAlong;
 pub(crate) use div::Div;
 pub(crate) use exp::Exp;
+pub(crate) use fold::Fold;
 pub(crate) use function::Function;
 pub(crate) use gather::Gather;
 pub(crate) use input::Input;
@@ -58,7 +62,9 @@ pub(crate) use permute::Permute;
 pub(crate) use powf::Powf;
 pub(crate) use relu::Relu;
 pub(crate) use reshape::Reshape;
+pub(crate) use scatter::Scatter;
 pub(crate) use sqrt::Sqrt;
+pub(crate) use step::Step;
 pub(crate) use sub::Sub;
 pub(crate) use sum::Sum;
 pub(crate) use sum_along::SumAlong;

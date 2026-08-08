@@ -20,7 +20,7 @@ use crate::engine::{Function, WindowProduct};
 use crate::{Plan, Shape, Tensor};
 
 use super::builder::{
-    Emittable, dense_index_literal, dense_literal, index_tensor_type, tensor_type,
+    Emittable, dense_index_literal, dense_literal, index_tensor_type, pred_tensor_type, tensor_type,
 };
 
 /// Why a plan declined to emit.
@@ -373,6 +373,123 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             }
             Function::LogSumExp(log_sum_exp) => {
                 self.lower_log_sum_exp(index, operand(0), log_sum_exp.axis, emitter);
+            }
+            Function::Step(_) => {
+                // No step exists in StableHLO; the indicator is a
+                // `GE` compare selecting between splat ones and zeros.
+                let source = operand(0);
+                let threshold = operand(1);
+                let full_type = tensor_type::<Element>(&shapes[source]);
+                let mask_type = pred_tensor_type(&shapes[source]);
+                let mask = format!("%v{index}_mask");
+                emitter.line(format!(
+                    "{mask} = stablehlo.compare GE, {}, {}, FLOAT \
+                     : ({full_type}, {full_type}) -> {mask_type}",
+                    emitter.name(source),
+                    emitter.name(threshold),
+                ));
+                let ones = format!("%v{index}_ones");
+                emitter.line(format!(
+                    "{ones} = stablehlo.constant dense<{}> : {result_type}",
+                    Element::counted(Shape::scalar(), 1).literal(),
+                ));
+                let zeros = format!("%v{index}_zeros");
+                emitter.line(format!(
+                    "{zeros} = stablehlo.constant dense<{}> : {result_type}",
+                    Element::ZERO,
+                ));
+                emitter.line(format!(
+                    "{result} = stablehlo.select {mask}, {ones}, {zeros} \
+                     : {mask_type}, {result_type}",
+                ));
+            }
+            Function::Scatter(_) => {
+                // The adjoint of the one-hot gather: the one-hot with
+                // its count axis contracted against the gradient's,
+                // leaving `[vocab, ...]` — a scatter-add expressed as
+                // the dense product, free abroad where the selection
+                // already crosses the boundary as its dense matrix.
+                let gradient = operand(0);
+                let selection = operand(1);
+                emitter.line(format!(
+                    "{result} = stablehlo.dot_general {}, {}, contracting_dims = [0] x [0] \
+                     : ({}, {}) -> {result_type}",
+                    emitter.name(selection),
+                    emitter.name(gradient),
+                    tensor_type::<Element>(&shapes[selection]),
+                    tensor_type::<Element>(&shapes[gradient]),
+                ));
+            }
+            Function::Fold(fold) => {
+                // Fold is a linear map on the window pair, so it lowers
+                // as one contraction against a constant 0/1 window
+                // matrix `[count, size, extent]` marking which source
+                // position each window element folds onto — the static
+                // dual of `unfold`'s gather fallback — followed by a
+                // transpose that returns the folded axis from the
+                // contraction's trailing position to its own.
+                let source = operand(0);
+                let source_shape = &shapes[source];
+                let count = source_shape.axes()[fold.axis];
+                let weights_shape = Shape::new([count, fold.size, fold.extent]);
+                let one = Element::counted(Shape::scalar(), 1);
+                let zero = Element::counted(Shape::scalar(), 0);
+                let mut weights = vec![zero; count * fold.size * fold.extent];
+                for window in 0..count {
+                    for position in 0..fold.size {
+                        let target = window * fold.step + position * fold.dilation;
+                        weights[(window * fold.size + position) * fold.extent + target] =
+                            one.clone();
+                    }
+                }
+                let weights_name = format!("%v{index}_weights");
+                let weights_type = tensor_type::<Element>(&weights_shape);
+                emitter.line(format!(
+                    "{weights_name} = stablehlo.constant {} : {weights_type}",
+                    dense_literal(&weights_shape, &weights),
+                ));
+                let joined_axes: Vec<usize> = source_shape
+                    .axes()
+                    .iter()
+                    .enumerate()
+                    .filter(|&(dim, _)| dim != fold.axis && dim != fold.axis + 1)
+                    .map(|(_, &extent)| extent)
+                    .chain(std::iter::once(fold.extent))
+                    .collect();
+                let joined_shape = Shape::new(joined_axes);
+                let trailing = joined_shape.rank() - 1;
+                let joined_name = if fold.axis == trailing {
+                    format!("%v{index}")
+                } else {
+                    format!("%v{index}_joined")
+                };
+                emitter.line(format!(
+                    "{joined_name} = stablehlo.dot_general {}, {weights_name}, \
+                     contracting_dims = [{}, {}] x [0, 1] : ({}, {weights_type}) -> {}",
+                    emitter.name(source),
+                    fold.axis,
+                    fold.axis + 1,
+                    tensor_type::<Element>(source_shape),
+                    tensor_type::<Element>(&joined_shape),
+                ));
+                if fold.axis != trailing {
+                    let order: Vec<usize> = (0..joined_shape.rank())
+                        .map(|dim| {
+                            if dim < fold.axis {
+                                dim
+                            } else if dim == fold.axis {
+                                trailing
+                            } else {
+                                dim - 1
+                            }
+                        })
+                        .collect();
+                    emitter.line(format!(
+                        "{result} = stablehlo.transpose {joined_name}, dims = {order:?} \
+                         : ({}) -> {result_type}",
+                        tensor_type::<Element>(&joined_shape),
+                    ));
+                }
             }
             Function::Unfold(unfold) => {
                 // The completeness fallback the emission design names: the

@@ -4,9 +4,10 @@ use crate::{Differentiable, Shape, Tensorial};
 use static_assertions::assert_impl_all;
 
 use super::{
-    Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Gather, Input, Leaf, Ln, LogSoftmax,
-    LogSumExp, MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute, Powf, Relu,
-    Reshape, Retention, Sqrt, Sub, Sum, SumAlong, Tanh, Transpose, Unfold,
+    Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Fold, Gather, Input, Leaf, Ln,
+    LogSoftmax, LogSumExp, MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute,
+    Powf, Relu, Reshape, Retention, Scatter, Sqrt, Step, Sub, Sum, SumAlong, Tanh, Transpose,
+    Unfold,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -46,13 +47,16 @@ pub(crate) enum Function<Data> {
     Narrow(Narrow),
     Pad(Pad),
     Unfold(Unfold),
+    Fold(Fold),
     Gather(Gather),
+    Scatter(Scatter),
     LogSoftmax(LogSoftmax),
     LogSumExp(LogSumExp),
     Sqrt(Sqrt),
     Powf(Powf),
     Maximum(Maximum),
     Relu(Relu),
+    Step(Step),
 }
 
 impl<Data> Function<Data> {
@@ -199,6 +203,35 @@ impl<Data> Function<Data> {
         Function::LogSumExp(LogSumExp { axis })
     }
 
+    /// Creates the Heaviside step of `[operand, threshold]`.
+    pub(crate) fn step() -> Self {
+        Function::Step(Step)
+    }
+
+    /// Creates the fold of the operand's `(count, size)` pair at
+    /// `axis` back onto an axis of `extent`.
+    pub(crate) fn fold(
+        axis: usize,
+        size: usize,
+        step: usize,
+        dilation: usize,
+        extent: usize,
+    ) -> Self {
+        Function::Fold(Fold {
+            axis,
+            size,
+            step,
+            dilation,
+            extent,
+        })
+    }
+
+    /// Creates the scatter-add of `[gradient, selection]` into `rows`
+    /// rows.
+    pub(crate) fn scatter(rows: usize) -> Self {
+        Function::Scatter(Scatter { rows })
+    }
+
     /// Creates the square root of the single operand.
     pub(crate) fn sqrt() -> Self {
         Function::Sqrt(Sqrt)
@@ -247,6 +280,9 @@ impl<Data> Function<Data> {
             Function::Gather(_) => "Gather",
             Function::LogSoftmax(_) => "LogSoftmax",
             Function::LogSumExp(_) => "LogSumExp",
+            Function::Step(_) => "Step",
+            Function::Fold(_) => "Fold",
+            Function::Scatter(_) => "Scatter",
             Function::Sqrt(_) => "Sqrt",
             Function::Powf(_) => "Powf",
             Function::Maximum(_) => "Maximum",
@@ -293,6 +329,9 @@ impl<Data> Function<Data> {
             Function::Gather(gather) => gather.retains(),
             Function::LogSoftmax(log_softmax) => log_softmax.retains(),
             Function::LogSumExp(log_sum_exp) => log_sum_exp.retains(),
+            Function::Step(step) => step.retains(),
+            Function::Fold(fold) => fold.retains(),
+            Function::Scatter(scatter) => scatter.retains(),
             Function::Sqrt(sqrt) => sqrt.retains(),
             Function::Powf(powf) => powf.retains(),
             Function::Maximum(maximum) => maximum.retains(),
@@ -329,6 +368,9 @@ impl<Data> Function<Data> {
             Function::Gather(gather) => gather.arity(),
             Function::LogSoftmax(log_softmax) => log_softmax.arity(),
             Function::LogSumExp(log_sum_exp) => log_sum_exp.arity(),
+            Function::Step(step) => step.arity(),
+            Function::Fold(fold) => fold.arity(),
+            Function::Scatter(scatter) => scatter.arity(),
             Function::Sqrt(sqrt) => sqrt.arity(),
             Function::Powf(powf) => powf.arity(),
             Function::Maximum(maximum) => maximum.arity(),
@@ -375,6 +417,9 @@ impl<Data> Function<Data> {
             Function::Gather(gather) => gather.infer_shape(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.infer_shape(operands),
             Function::LogSumExp(log_sum_exp) => log_sum_exp.infer_shape(operands),
+            Function::Step(step) => step.infer_shape(operands),
+            Function::Fold(fold) => fold.infer_shape(operands),
+            Function::Scatter(scatter) => scatter.infer_shape(operands),
             Function::Sqrt(sqrt) => sqrt.infer_shape(operands),
             Function::Powf(powf) => powf.infer_shape(operands),
             Function::Maximum(maximum) => maximum.infer_shape(operands),
@@ -423,6 +468,9 @@ impl<Data: Tensorial> Function<Data> {
             Function::Gather(gather) => gather.forward(operands),
             Function::LogSoftmax(log_softmax) => log_softmax.forward(operands),
             Function::LogSumExp(log_sum_exp) => log_sum_exp.forward(operands),
+            Function::Step(step) => step.forward(operands),
+            Function::Fold(fold) => fold.forward(operands),
+            Function::Scatter(scatter) => scatter.forward(operands),
             Function::Sqrt(sqrt) => sqrt.forward(operands),
             Function::Powf(powf) => powf.forward(operands),
             Function::Maximum(maximum) => maximum.forward(operands),
@@ -467,6 +515,9 @@ impl<Data: Tensorial> Function<Data> {
             Function::Gather(gather) => gather.backward(operands, output, gradient),
             Function::LogSoftmax(log_softmax) => log_softmax.backward(operands, output, gradient),
             Function::LogSumExp(log_sum_exp) => log_sum_exp.backward(operands, output, gradient),
+            Function::Step(step) => step.backward(operands, output, gradient),
+            Function::Fold(fold) => fold.backward(operands, output, gradient),
+            Function::Scatter(scatter) => scatter.backward(operands, output, gradient),
             Function::Sqrt(sqrt) => sqrt.backward(operands, output, gradient),
             Function::Powf(powf) => powf.backward(operands, output, gradient),
             Function::Maximum(maximum) => maximum.backward(operands, output, gradient),

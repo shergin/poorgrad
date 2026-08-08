@@ -188,6 +188,25 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     pub fn relu(self) -> Self {
         self.apply(Function::relu(), &[self.id])
     }
+
+    /// Records the elementwise 0/1 indicator of `self >= threshold` on
+    /// the same network and returns a proxy to it: the Heaviside step,
+    /// ties answering one.
+    ///
+    /// It is the derivative mask of the `maximum` family as a recorded
+    /// node — what `differentiate` emits where the engine's rules call
+    /// [`Elementary::step`](crate::Elementary::step) — and it carries no
+    /// gradient of its own: the function is locally constant almost
+    /// everywhere, so both operands are data, not differentiable
+    /// dependencies.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks or their
+    /// shapes differ.
+    pub fn step(self, threshold: Self) -> Self {
+        self.assert_same_network(&threshold);
+        self.apply(Function::step(), &[self.id, threshold.id])
+    }
 }
 
 impl<'network, Data: Tensorial> Value<'network, Data> {
@@ -347,6 +366,32 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.apply(Function::unfold(axis, size, step, dilation), &[self.id])
     }
 
+    /// Records the `(count, size)` window pair at `axis`, `axis + 1`
+    /// folded back onto an axis of `extent` on the same network and
+    /// returns a proxy to it: [`unfold`](Value::unfold)'s adjoint, each
+    /// source position summing the window elements read from it,
+    /// accumulated output-centrically so the result is deterministic
+    /// under any evaluation strategy.
+    ///
+    /// # Panics
+    /// Panics if the operand has no `(count, size)` pair at `axis`, a
+    /// parameter is zero, the dilated window span exceeds `extent`, or
+    /// the pair is not what unfolding an `extent` axis by these
+    /// parameters produces.
+    pub fn fold(
+        self,
+        axis: usize,
+        size: usize,
+        step: usize,
+        dilation: usize,
+        extent: usize,
+    ) -> Self {
+        self.apply(
+            Function::fold(axis, size, step, dilation, extent),
+            &[self.id],
+        )
+    }
+
     /// Records the row gather of this value (the table) by `selection`, a
     /// one-hot `[count, vocab]` whose vocabulary matches the table's first
     /// axis: `output[i]` is the table row `selection` names for position
@@ -362,6 +407,21 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     pub fn gather(self, selection: Self) -> Self {
         self.assert_same_network(&selection);
         self.apply(Function::gather(), &[self.id, selection.id])
+    }
+
+    /// Records the rows of this value scatter-added into `rows` rows by
+    /// `selection`'s one-hot indices on the same network and returns a
+    /// proxy to it: [`gather`](Value::gather)'s adjoint, accumulating
+    /// rows selected more than once. The selection is data and receives
+    /// no gradient.
+    ///
+    /// # Panics
+    /// Panics if the values belong to different networks, this value is
+    /// rank 0, `selection` is not rank 2 with one row per leading entry
+    /// of this value, or its vocabulary differs from `rows`.
+    pub fn scatter(self, selection: Self, rows: usize) -> Self {
+        self.assert_same_network(&selection);
+        self.apply(Function::scatter(rows), &[self.id, selection.id])
     }
 
     /// Records the log-softmax of this value along `axis` on the same
