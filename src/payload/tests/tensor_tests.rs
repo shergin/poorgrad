@@ -911,6 +911,38 @@ fn scatter_accumulates_repeated_rows() {
 }
 
 #[test]
+#[should_panic(expected = "disagree with the selection count")]
+fn scatter_rejects_extra_gradient_rows() {
+    let gradient = Tensor::new([2, 1], [10.0_f64, 20.0]);
+    let selection = Tensor::selection([0_usize], 2, 1.0);
+    gradient.scatter(&selection, 2);
+}
+
+#[test]
+#[should_panic(expected = "disagree with the selection count")]
+fn scatter_rejects_missing_gradient_rows() {
+    let gradient = Tensor::new([1, 1], [10.0_f64]);
+    let selection = Tensor::selection([0_usize, 1], 2, 1.0);
+    gradient.scatter(&selection, 2);
+}
+
+#[test]
+#[should_panic(expected = "disagree with the selection vocabulary")]
+fn scatter_rejects_a_foreign_vocabulary() {
+    let gradient = Tensor::new([1, 1], [10.0_f64]);
+    let selection = Tensor::selection([0_usize], 3, 1.0);
+    gradient.scatter(&selection, 2);
+}
+
+#[test]
+#[should_panic(expected = "leading selection axis")]
+fn scatter_rejects_a_rank_zero_gradient() {
+    let gradient = Tensor::filled([1], 10.0_f64).sum();
+    let selection = Tensor::selection([0_usize], 1, 1.0);
+    gradient.scatter(&selection, 1);
+}
+
+#[test]
 fn selection_densifies_for_non_gather_operations() {
     // A selection is stored as its indices, but any operation other than
     // gather still works by densifying it to the one-hot it represents.

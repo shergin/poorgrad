@@ -1308,11 +1308,28 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// more than once accumulate.
     fn scatter(&self, selection: &Self, rows: usize) -> Self {
         let gradient = self.logical_shape();
+        assert!(
+            gradient.rank() >= 1,
+            "scatter needs a gradient with a leading selection axis"
+        );
         let indices = selection.selection_indices();
+        assert_eq!(
+            gradient.axes()[0],
+            indices.len(),
+            "scatter gradient rows disagree with the selection count"
+        );
+        assert_eq!(
+            selection.logical_shape().axes()[1],
+            rows,
+            "scatter rows disagree with the selection vocabulary"
+        );
         let row_size: usize = gradient.axes()[1..].iter().product();
+        let volume = rows
+            .checked_mul(row_size)
+            .expect("shape volume overflows `usize`");
         let zero = self.get(0).zero_like();
 
-        let mut elements = vec![zero; rows * row_size];
+        let mut elements = vec![zero; volume];
         for (source, &target) in indices.iter().enumerate() {
             for offset in 0..row_size {
                 let position = target * row_size + offset;

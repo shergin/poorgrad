@@ -143,6 +143,12 @@ pub trait Tensorial: Elementary {
     /// Scatter-adds the rows of `self` into a zero payload of `rows` rows by
     /// `selection`'s indices: the adjoint of [`gather`](Tensorial::gather)
     /// and its gradient rule, accumulating rows selected more than once.
+    ///
+    /// The adjoint contract is validated at the boundary: `self` has a
+    /// leading axis of one gradient row per selection index, and `rows`
+    /// equals the selection's vocabulary, so every index lands inside the
+    /// result. Built-in tensors panic on any violation rather than
+    /// discard or misplace gradient rows.
     fn scatter(&self, selection: &Self, rows: usize) -> Self;
 }
 
