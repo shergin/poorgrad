@@ -62,6 +62,7 @@ fn fooify<'floof, T>(label: T, magic: Foo<'floof>) -> Result<Bar<'floof>, i32>
 - For error types, use `thiserror` library with `#[from]` attribute for automatic error conversions. Prefer `?` operator and early returns over deeply nested `match` or `if let` statements.
 - When handling errors from external types, add a variant to your error enum with `#[from]` instead of using `.map_err()`. This enables automatic error conversion via the `?` operator.
 - Always run `cargo fmt` after making code changes, before running `cargo check` or `cargo build`.
+- Dynamic dispatch is not allowed in the main API design or on any hot path: dispatch is static by construction — a plain enum `match` for the operation set, monomorphized generics for payloads and rules, `impl Fn`/`impl FnMut` for every closure parameter, and never `Box<dyn Fn>` or trait objects in engine loops. A public trait may be object-safe as a capability (`Optimizer` is), but no API may *require* a trait object, and no engine code may call through one. Sanctioned exceptions, on record: platform-mandated indirection (Metal's Objective-C protocol objects, the dlopen'd backend function pointers — both amortized over kernel launches), and caller-side `dyn` in tests or examples where a comparison loop iterates strategies.
 
 # Rules for writing Rust tests
 - Tests for a particular module (file) should be in a separate file (placed inside `tests` folder) with `_tests` suffix.
