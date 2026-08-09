@@ -65,4 +65,6 @@ pub use neural::{
     Activation, Adam, AdamW, BatchNorm, Conv2d, Layer, LayerNorm, Mlp, Neuron, Normalization,
     Optimizer, RmsNorm, Sgd, average_pool, conv2d, cross_entropy, init, max_pool,
 };
-pub use payload::{Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial};
+pub use payload::{
+    Bf16, Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial,
+};

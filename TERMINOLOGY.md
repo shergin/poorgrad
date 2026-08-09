@@ -396,6 +396,17 @@ through `iter`, as a contiguous slice through `as_slice` when the
 representation allows, or copied out with `to_vec`. In poorgrad:
 [`Tensor`](src/payload/tensor.rs).
 
+**Bf16 (brain float 16).** The truncated-single float format — one sign
+bit, the eight exponent bits of `f32`, seven stored mantissa bits — and
+poorgrad's first payload beyond the IEEE singles: a `u16` newtype whose
+every operation converts to `f32`, computes there, and rounds the result
+to nearest-even. Same range as `f32`, precision of about two decimal
+digits; integers are exact up to 256. Half the memory of `f32` at rest,
+deterministic on every platform, and an ordinary `Differentiable` +
+`Elementary` implementation (plus the scalar-identity `Tensorial`), so
+`Tensor<Bf16>` and `Network<Bf16>` run the engine unchanged. In
+poorgrad: [`Bf16`](src/payload/bf16.rs).
+
 **Storage.** The buffer representation behind a `Tensor`, and the
 extension seam for how elements are held: today an `Arc`-shared row-major
 `Dense` buffer addressed by a `Layout`, and a non-allocating `Constant`

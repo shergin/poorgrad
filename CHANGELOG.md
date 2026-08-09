@@ -7,6 +7,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `Bf16`, the brain-float payload: a `u16` newtype implementing
+  `Differentiable`, `Elementary`, and the scalar-identity
+  `Tensorial`, where every operation converts
+  to `f32`, computes, and rounds back to nearest-even — the standard
+  bf16 semantic, deterministic on every platform. Half the memory of
+  `f32`; integers exact up to 256, per the documented `counted`
+  contract. `Tensor<Bf16>` and `Network<Bf16>` run the engine
+  unchanged, autodiff included — the payload contract holding beyond
+  the IEEE singles, with no engine changes at all.
+
 ### Changed
 
 - **Breaking**: `Tensor::iter` yields owned elements instead of
