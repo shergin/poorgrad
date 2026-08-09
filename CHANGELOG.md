@@ -24,6 +24,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   expanding the operands exactly and riding the accelerated `f32`
   backend chain, with the composed `f32` kernel as the deterministic
   fallback.
+- `Tensor::convert`: storage-preserving element conversion through
+  the target's `From` — a constant stays a constant, a selection
+  stays a selection, and a dense view keeps its layout, so a
+  broadcast converts only its distinct buffer elements. The
+  precision boundary for mixed-precision work: loading an `f32`
+  checkpoint into a `Tensor<Bf16>` model, or widening bf16 results
+  back, priced at one conversion per stored element. Held by an
+  end-to-end test recording the same model in both precisions and
+  bounding the gradient divergence by bf16 epsilon.
 - StableHLO emission for `Bf16`: an `Emittable` implementation
   (`bf16` element type, literals through the exact `f32` expansion,
   bit-pattern hex for the non-finite values), and dtype-aware

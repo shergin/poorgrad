@@ -166,6 +166,46 @@ impl<Element: Clone> Tensor<Element> {
         self.iter().collect()
     }
 
+    /// Returns this tensor with every element converted into `Target`
+    /// through its `From` conversion, preserving the storage
+    /// representation: a constant stays a constant, a selection stays
+    /// a selection, and a dense view keeps its layout, so a broadcast
+    /// converts only its distinct buffer elements.
+    ///
+    /// It is the precision boundary for mixed-precision work —
+    /// loading an `f32` checkpoint into a `Tensor<Bf16>` model, or
+    /// widening bf16 results back — priced at one conversion per
+    /// stored element.
+    pub fn convert<Target: From<Element>>(&self) -> Tensor<Target> {
+        match &self.storage {
+            Storage::Dense { data, layout } => Tensor {
+                storage: Storage::Dense {
+                    data: Arc::new(data.iter().cloned().map(Target::from).collect()),
+                    layout: layout.clone(),
+                },
+            },
+            Storage::Constant { shape, value } => Tensor {
+                storage: Storage::Constant {
+                    shape: shape.clone(),
+                    value: Target::from(value.clone()),
+                },
+            },
+            Storage::Selection {
+                indices,
+                shape,
+                zero,
+                one,
+            } => Tensor {
+                storage: Storage::Selection {
+                    indices: Arc::clone(indices),
+                    shape: shape.clone(),
+                    zero: Target::from(zero.clone()),
+                    one: Target::from(one.clone()),
+                },
+            },
+        }
+    }
+
     /// Returns the element at logical row-major `position`.
     ///
     /// It is the general per-element read shared by every operation; a

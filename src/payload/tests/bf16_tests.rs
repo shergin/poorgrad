@@ -164,6 +164,58 @@ fn scalar_networks_differentiate_bf16() {
 }
 
 #[test]
+fn convert_crosses_the_precision_boundary_exactly() {
+    // Narrowing rounds each element to the nearest bf16; widening a
+    // bf16 tensor back is exact, so the round trip is idempotent.
+    let singles = Tensor::new([2, 2], vec![1.0_f32, 0.3, -2.5, 300.0]);
+    let narrowed: Tensor<Bf16> = singles.convert();
+    let expected: Vec<Bf16> = singles.iter().map(Bf16::from_f32).collect();
+    assert_eq!(narrowed.to_vec(), expected);
+    let widened: Tensor<f32> = narrowed.convert();
+    let round_tripped: Tensor<Bf16> = widened.convert();
+    assert_eq!(round_tripped.to_vec(), narrowed.to_vec());
+
+    // A constant converts in O(1) and stays a constant: the widened
+    // tensor still has no contiguous buffer to lend.
+    let constant = Tensor::filled([1024], Bf16::ONE);
+    let widened: Tensor<f32> = constant.convert();
+    assert!(widened.as_slice().is_none());
+    assert_eq!(widened.to_vec(), vec![1.0_f32; 1024]);
+}
+
+#[test]
+fn bf16_gradients_track_f32_within_epsilon() {
+    use crate::Value;
+
+    // The same tiny model recorded in both precisions through
+    // `convert`: the bf16 gradients must match the f32 oracle to
+    // bf16 precision — the end-to-end mixed-precision contract.
+    let weights = Tensor::new([2, 2], vec![0.8_f32, -1.3, 0.4, 2.1]);
+    let x = Tensor::new([2, 2], vec![0.5_f32, -1.1, 1.9, 0.7]);
+
+    let oracle = Network::new();
+    let oracle_weights = oracle.parameter(weights.clone());
+    let oracle_x = oracle.leaf(x.clone());
+    let oracle_loss = oracle_x.matmul(oracle_weights).relu().sum();
+    let oracle_gradients = oracle.forward().backward(oracle_loss);
+    let expected = oracle_gradients.of(oracle_weights).to_vec();
+
+    let network: Network<Tensor<Bf16>> = Network::new();
+    let narrowed_weights: Value<'_, Tensor<Bf16>> = network.parameter(weights.convert());
+    let narrowed_x = network.leaf(x.convert());
+    let loss = narrowed_x.matmul(narrowed_weights).relu().sum();
+    let gradients = network.forward().backward(loss);
+
+    let epsilon = 7.8125e-3_f32;
+    for (narrow, wide) in gradients.of(narrowed_weights).iter().zip(expected) {
+        assert!(
+            (narrow.to_f32() - wide).abs() <= epsilon * (1.0 + wide.abs()),
+            "bf16 gradient {narrow:?} strays from the f32 oracle {wide}"
+        );
+    }
+}
+
+#[test]
 fn tensor_networks_differentiate_bf16() {
     let network = Network::new();
     let elements: Vec<Bf16> = [-2.0, 0.0, 3.0].map(Bf16::from_f32).to_vec();
