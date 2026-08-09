@@ -1,4 +1,4 @@
-use crate::{Network, Symbol, Tensor};
+use crate::{Network, Retention, Symbol, Tensor};
 
 use super::Plan;
 
@@ -81,7 +81,7 @@ fn training_plans_differentiate_like_the_interpreter() {
     let x = network.leaf(Tensor::new([2], [3.0, 4.0]));
     let loss = ((w * x).tanh() * x).sum();
 
-    let plan = network.compile_training(loss.symbol(), []);
+    let plan = network.compile_training(loss.symbol(), [], Retention::All);
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -105,7 +105,7 @@ fn one_plan_serves_every_generation() {
     let loss_symbol = loss.symbol();
     let w_symbol = w.symbol();
 
-    let plan = network.compile_training(loss_symbol, []);
+    let plan = network.compile_training(loss_symbol, [], Retention::All);
     let mut network = network;
     for _ in 0..5 {
         let loss_value = network.resolve(loss_symbol);
@@ -224,7 +224,7 @@ fn training_liveness_matches_the_interpreter_on_a_convnet() {
     let logits = pooled.reshape([2, 8]).matmul(head);
     let loss = cross_entropy(logits, targets);
 
-    let mut plan = network.compile_training(loss.symbol(), []);
+    let mut plan = network.compile_training(loss.symbol(), [], Retention::All);
     // The retention analysis must license releases here: the conv view
     // chains and output permutes are all shape-only.
     assert!(plan.describe().contains("releasable after"));
@@ -270,7 +270,7 @@ fn training_liveness_matches_the_interpreter_on_every_value_reader() {
     let loss =
         (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
 
-    let plan = network.compile_training(loss.symbol(), []);
+    let plan = network.compile_training(loss.symbol(), [], Retention::All);
     let planned = plan.forward(&network, no_feeds());
     let interpreted = network.forward();
 
@@ -294,7 +294,7 @@ fn training_liveness_retains_the_gather_selection() {
     let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
     let loss = table.gather(selection).sum();
 
-    let plan = network.compile_training(loss.symbol(), []);
+    let plan = network.compile_training(loss.symbol(), [], Retention::All);
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -420,8 +420,8 @@ fn compact_training_drops_where_the_default_retains() {
     let big = w * x;
     let loss = (big * big).sum();
 
-    let default = network.compile_training(loss.symbol(), []);
-    let compact = network.compile_training_compact(loss.symbol(), []);
+    let default = network.compile_training(loss.symbol(), [], Retention::All);
+    let compact = network.compile_training(loss.symbol(), [], Retention::Compact);
     assert!(default.describe().contains("remat drops 0 slots"));
     assert!(!compact.describe().contains("remat drops 0 slots"));
     assert!(compact.describe().contains("(remat)"));
@@ -463,7 +463,7 @@ fn window_gemm_fusion_matches_the_interpreter() {
     let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
     let loss = cross_entropy(pooled.reshape([2, 8]).matmul(head), targets);
 
-    let plan = network.compile_training_compact(loss.symbol(), []);
+    let plan = network.compile_training(loss.symbol(), [], Retention::Compact);
     let description = plan.describe();
     assert!(description.contains("fused 1 window-gemm"));
     assert!(description.contains("fused (window-gemm)"));
@@ -527,14 +527,14 @@ fn kept_interiors_bar_fusion() {
         .reshape([9, 4]);
     let loss = patches.matmul(kernel).sum();
 
-    let fused = network.compile_training_compact(loss.symbol(), []);
+    let fused = network.compile_training(loss.symbol(), [], Retention::Compact);
     assert!(fused.describe().contains("window-gemm"));
     // The default retain-all training plan does not fuse at all: its
     // memory contract stays exact.
-    let default = network.compile_training(loss.symbol(), []);
+    let default = network.compile_training(loss.symbol(), [], Retention::All);
     assert!(!default.describe().contains("window-gemm"));
 
-    let barred = network.compile_training_compact(loss.symbol(), [patches.symbol()]);
+    let barred = network.compile_training(loss.symbol(), [patches.symbol()], Retention::Compact);
     assert!(!barred.describe().contains("window-gemm"));
     let evaluation = barred.forward(&network, std::iter::empty());
     assert_eq!(
@@ -561,7 +561,7 @@ fn shared_windows_bar_fusion() {
     let patches = windows.permute([0, 2, 4, 1, 3, 5]).reshape([9, 4]);
     let loss = patches.matmul(kernel).sum() + windows.sum();
 
-    let plan = network.compile_training_compact(loss.symbol(), []);
+    let plan = network.compile_training(loss.symbol(), [], Retention::Compact);
     assert!(!plan.describe().contains("window-gemm"));
 
     let planned = plan.forward(&network, std::iter::empty());

@@ -20,7 +20,7 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Activation, Conv2d, Layer, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
+    Activation, Conv2d, Layer, Network, Plan, Retention, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -198,7 +198,7 @@ fn main() {
     println!("recorded {recorded_nodes} nodes for both expressions");
 
     // Compile once, run every generation.
-    let training_plan = network.compile_training(loss_symbol, []);
+    let training_plan = network.compile_training(loss_symbol, [], Retention::All);
     let probe_plan = network.compile([probe_logits_symbol], []);
     for line in probe_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")

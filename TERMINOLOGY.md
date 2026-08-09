@@ -276,7 +276,9 @@ elimination), the readable set (targets plus keeps), per-node free
 lists (buffer liveness), and captured shapes. Produced by
 [`Network::compile`](src/engine/plan.rs) (forward-only: aggressive
 liveness, refuses `backward`) or `Network::compile_training` (retains
-everything `backward` reads); run by `Plan::forward`, whose results
+what `backward` reads, per its explicit `Retention` policy — `All`
+holds every closure value, `Compact` drops and rematerializes the
+large ones); run by `Plan::forward`, whose results
 are bit-identical to the interpreter's — a plan changes what is
 *stored*, never what is *computed*. Plans are graph-structural, so
 one plan survives every `update` generation and compile-once
@@ -333,7 +335,7 @@ exact. `describe` prints the groups; recognition proposes, payloads
 and backends dispose — neither ever sees graph structure.
 
 **Rematerialization.** Trading compute for memory, opt-in through
-`compile_training_compact`: the plan *drops* its large
+`Retention::Compact` on `compile_training`: the plan *drops* its large
 intermediates — freed right after their last forward consumer — and
 `backward` recomputes them on demand from retained neighbors,
 memoized and evicted the moment their own node has been processed. The drop set is size-thresholded to the

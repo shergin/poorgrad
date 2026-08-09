@@ -22,7 +22,9 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy, init};
+use poorgrad::{
+    Network, Retention, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy, init,
+};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -240,7 +242,7 @@ fn main() {
 
     // Compile once: training keeps only the loss, sampling is
     // forward-only.
-    let training_plan = network.compile_training(loss_symbol, []);
+    let training_plan = network.compile_training(loss_symbol, [], Retention::All);
     let sampling_plan = network.compile([sample_probabilities_symbol], []);
 
     let fast = Tensor::new([], [0.1]);

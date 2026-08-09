@@ -22,7 +22,9 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{BatchNorm, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
+use poorgrad::{
+    BatchNorm, Network, Retention, Shape, Tensor, Tensorial, Value, cross_entropy, init,
+};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -154,7 +156,8 @@ fn main() {
     // Compile once: the training plan keeps the batch statistics
     // readable — the keep-set naming exactly what the loop reads —
     // and the sampling plan is forward-only.
-    let training_plan = network.compile_training(loss_symbol, [mean_symbol, variance_symbol]);
+    let training_plan =
+        network.compile_training(loss_symbol, [mean_symbol, variance_symbol], Retention::All);
     let sampling_plan = network.compile([sample_probabilities_symbol], []);
 
     // The running estimates: loop-owned payloads, never engine state.

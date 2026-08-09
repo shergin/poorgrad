@@ -63,6 +63,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking**: the compile facade loses its fork —
+  `compile_training_compact` is gone, and `compile_training` takes an
+  explicit `Retention` policy (`All` or `Compact`) as its third
+  parameter. The policy is a closed set of alternatives, so per the
+  facade rules it is a plain `Copy` enum chosen at the call site, with
+  each variant's measured trade documented on the variant instead of
+  split across two method docs. `Symbol::from(value)` /
+  `From<Value> for Symbol` also lands as the conversion form of
+  `Value::symbol`, for lists that must be homogeneous in `Symbol`.
 - **Breaking**: `Differentiable` gains the accumulation contract —
   `type Accumulator` with `promote`/`demote`. Matmul inner products
   (every path, including the composed fallback a constant operand

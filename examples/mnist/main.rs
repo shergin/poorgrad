@@ -21,7 +21,7 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Activation, Conv2d, Layer, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
+    Activation, Conv2d, Layer, Network, Plan, Retention, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -197,7 +197,7 @@ fn main() {
     // drops its large intermediates and rematerializes them during
     // backward: measured here at 9% less peak RSS for 22% more step
     // time. The probe plan frees as it goes.
-    let training_plan = network.compile_training_compact(loss_symbol, []);
+    let training_plan = network.compile_training(loss_symbol, [], Retention::Compact);
     let probe_plan = network.compile([probe_logits_symbol], []);
     for line in training_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")

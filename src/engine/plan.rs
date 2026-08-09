@@ -813,14 +813,8 @@ impl<Data: Differentiable> Network<Data> {
     }
 
     /// Compiles a training [`Plan`] whose evaluations differentiate
-    /// `loss` exactly. Training runs hold every closure value — the
-    /// fastest and, on the measured consumers, usually the
-    /// smallest-RSS default, since the allocator recycles the uniform
-    /// per-step cycle perfectly — while `describe` reports the
-    /// retention floor the analysis licenses. `loss` joins the
-    /// readable set alongside `keep`. See
-    /// [`Network::compile_training_compact`] for the memory-leaning
-    /// trade.
+    /// `loss` exactly, holding forward values per `retention`. `loss`
+    /// joins the readable set alongside `keep`.
     ///
     /// # Panics
     /// Panics if `loss` or a keep does not resolve in this generation.
@@ -828,35 +822,42 @@ impl<Data: Differentiable> Network<Data> {
         &self,
         loss: impl ValueRef<Data>,
         keep: impl IntoIterator<Item = Symbol>,
+        retention: Retention,
     ) -> Plan<Data> {
         let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &[self.named(loss)], &keep, true, usize::MAX)
+        let threshold = match retention {
+            Retention::All => usize::MAX,
+            Retention::Compact => REMAT_THRESHOLD,
+        };
+        Plan::new(self, &[self.named(loss)], &keep, true, threshold)
     }
+}
 
-    /// Compiles a training [`Plan`] that trades backward time for
-    /// memory: large intermediates (the im2col patches, padded copies,
-    /// and pooling lanes at or above the allocator's page-returning
-    /// size class) are dropped right after their last forward consumer
-    /// and rematerialized on demand during `backward`, bit-exactly.
-    ///
-    /// The trade is explicit because it does not always win: on the
-    /// MNIST example it cut peak RSS 9% below retain-all for 22% more
-    /// step time, while on the deeper CIFAR-10 example it cost time
-    /// *and* memory (gradient cotangent buffers, not forward values,
-    /// dominate there — their eviction is future work that may flip
-    /// the default). Reach for it when activations, not gradients, are
-    /// what does not fit.
-    ///
-    /// # Panics
-    /// Panics if `loss` or a keep does not resolve in this generation.
-    pub fn compile_training_compact(
-        &self,
-        loss: impl ValueRef<Data>,
-        keep: impl IntoIterator<Item = Symbol>,
-    ) -> Plan<Data> {
-        let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &[self.named(loss)], &keep, true, REMAT_THRESHOLD)
-    }
+/// The forward-value retention policy of a training plan: what a run
+/// holds for `backward`, chosen explicitly at the compile call site.
+///
+/// It replaces a fork of the compile facade — the policy is a closed
+/// set of alternatives, so it is a plain `Copy` enum parameter, with
+/// each variant's measured trade documented where it is chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retention {
+    /// Hold every closure value: the fastest and, on the measured
+    /// consumers, usually the smallest-RSS choice, since the
+    /// allocator recycles the uniform per-step cycle perfectly;
+    /// `describe` reports the retention floor the analysis licenses.
+    All,
+    /// Trade backward time for memory: large intermediates (the
+    /// im2col patches, padded copies, and pooling lanes at or above
+    /// the allocator's page-returning size class) are dropped right
+    /// after their last forward consumer and rematerialized on demand
+    /// during `backward`, bit-exactly. The trade does not always win:
+    /// on the MNIST example it cut peak RSS 9% below retain-all for
+    /// 22% more step time, while on the deeper CIFAR-10 example it
+    /// cost time *and* memory (gradient cotangent buffers, not
+    /// forward values, dominate there — their eviction is future work
+    /// that may flip the default). Reach for it when activations, not
+    /// gradients, are what does not fit.
+    Compact,
 }
 
 #[cfg(test)]
