@@ -24,6 +24,19 @@ The format is based on [Keep a Changelog], and this project adheres to
   expanding the operands exactly and riding the accelerated `f32`
   backend chain, with the composed `f32` kernel as the deterministic
   fallback.
+- `ValueRef`, the unified value reference: `Evaluation::of`,
+  `Evaluation::backward`, `Field::of` (so `Gradients::of`), plan
+  targets (`compile`, `compile_training`, `compile_training_compact`,
+  `forward_for`), and `differentiate` accept either a generation-bound
+  `Value` or a detached `Symbol`, so the
+  `evaluation.of(network.resolve(symbol))` chain collapses to
+  `evaluation.of(symbol)` and `compile([loss.symbol()], [])` to
+  `compile([loss], [])`. A sealed trait with monomorphized dispatch;
+  each form keeps its full validation and panic messages — a symbol
+  read on a `Field` checks lineage, branch, and position against the
+  field's own chain, the detachment fields were built for. Feed pairs
+  and `keep` lists stay `Symbol`-typed so empty list literals keep
+  inferring; existing `Value` call sites compile unchanged.
 - `Tensor::convert`: storage-preserving element conversion through
   the target's `From` — a constant stays a constant, a selection
   stays a selection, and a dense view keeps its layout, so a

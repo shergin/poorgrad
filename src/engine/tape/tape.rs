@@ -7,7 +7,7 @@ use cow_vec::CowVec;
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-use crate::engine::{Function, ValueId};
+use crate::engine::{Function, Symbol, ValueId};
 use crate::{Differentiable, Shape};
 
 use super::{Branch, Lineage, Operands, ParameterStore, Segment, SlotId, Tip, chains_agree};
@@ -290,6 +290,29 @@ impl<Data: Differentiable> Tape<Data> {
     /// branches as `chain`.
     pub(crate) fn agrees_with_chain(&self, chain: &Arc<Vec<Segment>>, length: usize) -> bool {
         chains_agree(&self.lock().chain, chain, length)
+    }
+
+    /// Locates `symbol` on this tape: the resolution behind
+    /// [`Network::resolve`](crate::Network::resolve) and the named
+    /// form of [`ValueRef`](crate::ValueRef) reads, with one set of
+    /// checks and panic messages for both.
+    ///
+    /// # Panics
+    /// Panics if `symbol` belongs to a different lineage or a
+    /// divergent fork, or no value with that name is allocated here.
+    pub(crate) fn locate(&self, symbol: Symbol) -> ValueId {
+        assert!(
+            symbol.lineage == self.lineage(),
+            "symbol belongs to a different network lineage"
+        );
+        let range = self
+            .segment_range(symbol.branch)
+            .expect("symbol belongs to a divergent fork of this network");
+        assert!(
+            range.contains(&symbol.id.index()),
+            "symbol is not allocated in this network"
+        );
+        symbol.id
     }
 
     /// Returns a clone of the payload behind `id`: a leaf's embedded

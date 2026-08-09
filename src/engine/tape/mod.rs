@@ -8,7 +8,7 @@ mod slot;
 mod tape;
 
 use identity::Tip;
-pub(crate) use identity::{Branch, Lineage, Segment, chains_agree};
+pub(crate) use identity::{Branch, Lineage, Segment, chain_attributes, chains_agree};
 pub(crate) use operands::Operands;
 pub(super) use parameter_store::ParameterStore;
 pub(crate) use slot::SlotId;

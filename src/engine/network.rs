@@ -1,3 +1,4 @@
+use std::ptr;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
@@ -5,7 +6,9 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Evaluation, Field, Function, Symbol, Tape, Trace, Value, ValueId};
+use super::{
+    Designation, Evaluation, Field, Function, Symbol, Tape, Trace, Value, ValueId, ValueRef,
+};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
@@ -88,19 +91,39 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if `symbol` belongs to a different network lineage or to a
     /// divergent fork, or is not allocated in this generation.
     pub fn resolve(&self, symbol: Symbol) -> Value<'_, Data> {
-        assert!(
-            symbol.lineage == self.tape.lineage(),
-            "symbol belongs to a different network lineage"
-        );
-        let range = self
-            .tape
-            .segment_range(symbol.branch)
-            .expect("symbol belongs to a divergent fork of this network");
-        assert!(
-            range.contains(&symbol.id.index()),
-            "symbol is not allocated in this network"
-        );
-        Value::bind(&self.tape, symbol.id)
+        Value::bind(&self.tape, self.tape.locate(symbol))
+    }
+
+    /// Locates `reference` on this network: a bound value proves
+    /// identity by tape pointer, a symbol resolves with the checks of
+    /// [`Network::resolve`].
+    pub(crate) fn locate(&self, reference: impl ValueRef<Data>) -> ValueId {
+        match reference.designation() {
+            Designation::Bound { tape, id } => {
+                assert!(
+                    ptr::eq(&self.tape, tape),
+                    "value belongs to a different network"
+                );
+                id
+            }
+            Designation::Named(symbol) => self.tape.locate(symbol),
+        }
+    }
+
+    /// Returns the detached name of `reference`: a symbol passes
+    /// through and is validated where it is used, a bound value must
+    /// belong to this network.
+    pub(crate) fn named(&self, reference: impl ValueRef<Data>) -> Symbol {
+        match reference.designation() {
+            Designation::Bound { tape, id } => {
+                assert!(
+                    ptr::eq(&self.tape, tape),
+                    "value belongs to a different network"
+                );
+                Value::bind(&self.tape, id).symbol()
+            }
+            Designation::Named(symbol) => symbol,
+        }
     }
 
     /// Resolves `symbol` in this generation, or returns `None` if the
@@ -251,12 +274,12 @@ impl<Data: Tensorial> Network<Data> {
     /// `forward_with` panics for `feeds`.
     pub fn forward_for(
         &self,
-        targets: impl IntoIterator<Item = Symbol>,
+        targets: impl IntoIterator<Item = impl ValueRef<Data>>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
     ) -> Evaluation<'_, Data> {
         let targets: Vec<ValueId> = targets
             .into_iter()
-            .map(|symbol| self.resolve(symbol).id())
+            .map(|target| self.locate(target))
             .collect();
         self.run(Some(targets), feeds)
     }
@@ -390,10 +413,10 @@ impl<Data: Tensorial> Network<Data> {
     /// divergent fork.
     pub fn differentiate(
         &self,
-        loss: Symbol,
-        wrt: impl IntoIterator<Item = Symbol>,
+        loss: impl ValueRef<Data>,
+        wrt: impl IntoIterator<Item = impl ValueRef<Data>>,
     ) -> Vec<Symbol> {
-        let loss_value = self.resolve(loss);
+        let loss_value = Value::bind(&self.tape, self.locate(loss));
         assert_eq!(
             loss_value.shape().rank(),
             0,
@@ -452,8 +475,8 @@ impl<Data: Tensorial> Network<Data> {
         }
 
         wrt.into_iter()
-            .map(|symbol| {
-                let value = self.resolve(symbol);
+            .map(|target| {
+                let value = Value::bind(&self.tape, self.locate(target));
                 match cotangents.get(value.id().index()).copied().flatten() {
                     Some(gradient) => gradient.value().symbol(),
                     // A non-ancestor's gradient is a recorded zero of

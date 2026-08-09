@@ -5,6 +5,7 @@ mod function;
 mod literal;
 mod network;
 mod plan;
+mod reference;
 mod symbol;
 mod tape;
 mod trace;
@@ -16,10 +17,14 @@ pub use field::{Field, Gradients};
 pub use network::Network;
 pub use plan::Plan;
 pub(crate) use plan::WindowProduct;
+pub(crate) use reference::Designation;
+pub use reference::ValueRef;
 pub use symbol::Symbol;
 pub use value::Value;
 
 pub(crate) use function::Function;
-pub(crate) use tape::{Branch, Lineage, Operands, Segment, SlotId, Tape, chains_agree};
+pub(crate) use tape::{
+    Branch, Lineage, Operands, Segment, SlotId, Tape, chain_attributes, chains_agree,
+};
 pub(crate) use trace::Trace;
 pub(crate) use value::ValueId;

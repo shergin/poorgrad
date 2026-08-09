@@ -5,7 +5,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Lineage, Segment, Value, chains_agree};
+use super::{Designation, Lineage, Segment, ValueRef, chain_attributes, chains_agree};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -53,24 +53,51 @@ impl<Data: Differentiable> Field<Data> {
         }
     }
 
-    /// Returns the value assigned to `value`'s node.
+    /// Returns the value assigned to the node named by `value` — a
+    /// bound [`Value`](super::Value) or a detached
+    /// [`Symbol`](super::Symbol).
+    ///
+    /// A field borrows no tape, so the two forms present different
+    /// proofs: a bound value's tape must agree with the field's
+    /// branch chain, while a symbol's own lineage, branch, and
+    /// position are checked against the chain directly — the
+    /// detachment fields were built for.
     ///
     /// # Panics
     /// Panics if `value` belongs to a different lineage or a divergent
     /// fork, or was allocated after this field was produced.
-    pub fn of(&self, value: Value<'_, Data>) -> &Data {
-        assert!(
-            self.lineage == value.tape().lineage(),
-            "value belongs to a different network lineage"
-        );
-        assert!(
-            value
-                .tape()
-                .agrees_with_chain(&self.chain, self.values.len()),
-            "value belongs to a divergent fork of the network"
-        );
+    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
+        let index = match value.designation() {
+            Designation::Bound { tape, id } => {
+                assert!(
+                    self.lineage == tape.lineage(),
+                    "value belongs to a different network lineage"
+                );
+                assert!(
+                    tape.agrees_with_chain(&self.chain, self.values.len()),
+                    "value belongs to a divergent fork of the network"
+                );
+                id.index()
+            }
+            Designation::Named(symbol) => {
+                assert!(
+                    self.lineage == symbol.lineage,
+                    "symbol belongs to a different network lineage"
+                );
+                let index = symbol.id.index();
+                assert!(
+                    index < self.values.len(),
+                    "symbol was allocated after this field was produced"
+                );
+                assert!(
+                    chain_attributes(&self.chain, symbol.branch, index, self.values.len()),
+                    "symbol belongs to a divergent fork of the network"
+                );
+                index
+            }
+        };
         self.values
-            .get(value.id().index())
+            .get(index)
             .expect("value was allocated after this field was produced")
     }
 

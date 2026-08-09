@@ -29,14 +29,14 @@ fn small_case() -> Case {
     let x = Tensor::new([2, 2], [0.5_f32, -1.0, 2.0, 3.0]);
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
-    let plan = network.compile([loss.symbol()], []);
+    let plan = network.compile([loss], []);
     let evaluation = plan.forward(&network, []);
     Case {
         name: "small",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![weights, x],
-        expected: vec![evaluation.of(network.resolve(loss.symbol())).to_vec()],
+        expected: vec![evaluation.of(loss).to_vec()],
     }
 }
 
@@ -66,7 +66,7 @@ fn attention_case() -> Case {
         })
         .collect();
     let output = concat(&heads, 1);
-    let plan = network.compile([output.symbol()], []);
+    let plan = network.compile([output], []);
     let evaluation = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_tokens = Tensor::new(Shape::new([2, 3]), tokens.to_vec());
@@ -75,7 +75,7 @@ fn attention_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![table, dense_tokens],
-        expected: vec![evaluation.of(network.resolve(output.symbol())).to_vec()],
+        expected: vec![evaluation.of(output).to_vec()],
     }
 }
 
@@ -94,7 +94,7 @@ fn cross_entropy_case() -> Case {
     let targets = Tensor::selection(vec![0, 2], 3, 1.0_f32);
     let targets_value = network.input(targets.clone());
     let loss = cross_entropy(logits_value, targets_value);
-    let plan = network.compile([loss.symbol()], []);
+    let plan = network.compile([loss], []);
     let evaluation = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
@@ -103,7 +103,7 @@ fn cross_entropy_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![logits, dense_targets],
-        expected: vec![evaluation.of(network.resolve(loss.symbol())).to_vec()],
+        expected: vec![evaluation.of(loss).to_vec()],
     }
 }
 
@@ -134,8 +134,7 @@ fn gradient_case() -> Case {
     let windows = (signal_value.unfold(0, 3, 2, 1) * mix_value).relu().sum();
     let lookup = table_value.gather(tokens_value).sum();
     let loss = windows + lookup;
-    let gradients =
-        network.differentiate(loss.symbol(), [signal_value.symbol(), table_value.symbol()]);
+    let gradients = network.differentiate(loss, [signal_value, table_value]);
 
     // The module's result list follows recording order, so the
     // expected vectors must too.
@@ -153,7 +152,7 @@ fn gradient_case() -> Case {
         arguments: vec![signal, mix, table, dense_tokens],
         expected: readable
             .iter()
-            .map(|&symbol| evaluation.of(network.resolve(symbol)).to_vec())
+            .map(|&symbol| evaluation.of(symbol).to_vec())
             .collect(),
     }
 }
@@ -175,14 +174,14 @@ fn unfold_case() -> Case {
     let x = Tensor::new([8], (1..=8).map(|value| value as f32).collect::<Vec<_>>());
     let x_value = network.parameter(x.clone());
     let windows = x_value.unfold(0, 3, 2, 1);
-    let plan = network.compile([windows.symbol()], []);
+    let plan = network.compile([windows], []);
     let evaluation = plan.forward(&network, []);
     Case {
         name: "unfold",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![x],
-        expected: vec![evaluation.of(network.resolve(windows.symbol())).to_vec()],
+        expected: vec![evaluation.of(windows).to_vec()],
     }
 }
 
@@ -259,7 +258,7 @@ fn convolution_case() -> Case {
     let bias = Tensor::new([2], [0.25_f32, -0.5]);
     let bias_value = network.parameter(bias.clone());
     let convolved = conv2d(image_value, weights_value, bias_value, 2, 1);
-    let plan = network.compile([convolved.symbol()], []);
+    let plan = network.compile([convolved], []);
     assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
     let evaluation = plan.forward(&network, []);
     Case {
@@ -267,7 +266,7 @@ fn convolution_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias],
-        expected: vec![evaluation.of(network.resolve(convolved.symbol())).to_vec()],
+        expected: vec![evaluation.of(convolved).to_vec()],
     }
 }
 
@@ -305,7 +304,7 @@ fn probe_case() -> Case {
     let features = conv2d(image_value, weights_value, bias_value, 1, 1).relu();
     let pooled = max_pool(features, 2, 2);
     let scores = pooled.reshape([1, 27]).matmul(dense_value).log_softmax(1);
-    let plan = network.compile([scores.symbol()], []);
+    let plan = network.compile([scores], []);
     assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
     let evaluation = plan.forward(&network, []);
     Case {
@@ -313,7 +312,7 @@ fn probe_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias, dense],
-        expected: vec![evaluation.of(network.resolve(scores.symbol())).to_vec()],
+        expected: vec![evaluation.of(scores).to_vec()],
     }
 }
 
@@ -390,13 +389,9 @@ fn bf16_case() -> Case {
     let x = Tensor::new([2, 2], x_elements);
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
-    let plan = network.compile([loss.symbol()], []);
+    let plan = network.compile([loss], []);
     let evaluation = plan.forward(&network, []);
-    let expected: Vec<f32> = evaluation
-        .of(network.resolve(loss.symbol()))
-        .iter()
-        .map(Bf16::to_f32)
-        .collect();
+    let expected: Vec<f32> = evaluation.of(loss).iter().map(Bf16::to_f32).collect();
     Case {
         name: "bf16-small",
         // The envelope scales to the element: bf16's epsilon is 2^-8,

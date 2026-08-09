@@ -85,6 +85,26 @@ pub(crate) fn chains_agree(
     left[..trimmed(left)] == right[..trimmed(right)]
 }
 
+/// Returns whether `chain` attributes position `index` to `branch`
+/// within the first `length` covered positions: the detached twin of
+/// a tape-side branch check, answerable by a [`Field`](crate::Field)
+/// that borrows no tape.
+pub(crate) fn chain_attributes(
+    chain: &[Segment],
+    branch: Branch,
+    index: usize,
+    length: usize,
+) -> bool {
+    if index >= length {
+        return false;
+    }
+    let owner = chain
+        .iter()
+        .take_while(|segment| segment.start <= index)
+        .last();
+    matches!(owner, Some(segment) if segment.branch == branch)
+}
+
 /// The tape's relationship to its chain's tip branch.
 #[derive(Debug)]
 pub(super) enum Tip {

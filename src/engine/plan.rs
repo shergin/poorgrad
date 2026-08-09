@@ -7,7 +7,9 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Evaluation, Function, Lineage, Network, Operands, Segment, Symbol, chains_agree};
+use super::{
+    Evaluation, Function, Lineage, Network, Operands, Segment, Symbol, ValueRef, chains_agree,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -799,10 +801,13 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if a target or keep does not resolve in this generation.
     pub fn compile(
         &self,
-        targets: impl IntoIterator<Item = Symbol>,
+        targets: impl IntoIterator<Item = impl ValueRef<Data>>,
         keep: impl IntoIterator<Item = Symbol>,
     ) -> Plan<Data> {
-        let targets: Vec<Symbol> = targets.into_iter().collect();
+        let targets: Vec<Symbol> = targets
+            .into_iter()
+            .map(|target| self.named(target))
+            .collect();
         let keep: Vec<Symbol> = keep.into_iter().collect();
         Plan::new(self, &targets, &keep, false, REMAT_THRESHOLD)
     }
@@ -821,11 +826,11 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if `loss` or a keep does not resolve in this generation.
     pub fn compile_training(
         &self,
-        loss: Symbol,
+        loss: impl ValueRef<Data>,
         keep: impl IntoIterator<Item = Symbol>,
     ) -> Plan<Data> {
         let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &[loss], &keep, true, usize::MAX)
+        Plan::new(self, &[self.named(loss)], &keep, true, usize::MAX)
     }
 
     /// Compiles a training [`Plan`] that trades backward time for
@@ -846,11 +851,11 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if `loss` or a keep does not resolve in this generation.
     pub fn compile_training_compact(
         &self,
-        loss: Symbol,
+        loss: impl ValueRef<Data>,
         keep: impl IntoIterator<Item = Symbol>,
     ) -> Plan<Data> {
         let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &[loss], &keep, true, REMAT_THRESHOLD)
+        Plan::new(self, &[self.named(loss)], &keep, true, REMAT_THRESHOLD)
     }
 }
 

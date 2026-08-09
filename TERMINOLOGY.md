@@ -216,6 +216,20 @@ fork that diverged before the symbol was minted — panics rather than
 misbinding; within a branch, resolution is positional. In poorgrad:
 [`Symbol`](src/engine/symbol.rs), obtained with `Value::symbol`.
 
+**Value reference.** Either handle to a recorded value, accepted
+interchangeably by the read and naming surfaces: a generation-bound
+`Value` proxy or a detached `Symbol` name. A proxy proves its
+provenance by carrying its tape; a name is validated with the same
+lineage, branch, and allocation checks `resolve` performs — a
+reference never weakens a check, it only chooses which proof to
+present. The trait is sealed (the two forms are the closed set) and
+dispatch is a monomorphized match, never a trait object. Reads
+(`Evaluation::of`, `Evaluation::backward`, `Field::of`), plan targets
+(`compile`, `compile_training*`, `forward_for`), and `differentiate`
+accept it; feed pairs and `keep` lists stay `Symbol`-typed so empty
+list literals keep inferring. In poorgrad:
+[`ValueRef`](src/engine/reference.rs).
+
 **Generation.** A network state produced by a state transition: a fork
 (`Network::clone`) or a gradient step (`Network::update`). Generations
 share the recorded structure through the arena and differ only in their

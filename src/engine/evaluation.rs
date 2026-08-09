@@ -9,7 +9,9 @@ use static_assertions::assert_impl_all;
 use crate::{Differentiable, Tensorial};
 
 use super::plan::WindowProduct;
-use super::{Field, Function, Gradients, Operands, Segment, Tape, Value};
+use super::{
+    Designation, Field, Function, Gradients, Operands, Segment, Tape, Value, ValueId, ValueRef,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -90,7 +92,25 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         }
     }
 
-    /// Returns the computed payload of `value`.
+    /// Locates `value` in this evaluation's slots: a bound proxy
+    /// proves identity by tape pointer, a symbol resolves against the
+    /// borrowed tape with the checks of
+    /// [`Network::resolve`](crate::Network::resolve).
+    fn locate(&self, value: impl ValueRef<Data>) -> usize {
+        match value.designation() {
+            Designation::Bound { tape, id } => {
+                assert!(
+                    ptr::eq(self.tape, tape),
+                    "value belongs to a different network"
+                );
+                id.index()
+            }
+            Designation::Named(symbol) => self.tape.locate(symbol).index(),
+        }
+    }
+
+    /// Returns the computed payload of `value`, named by a bound
+    /// [`Value`] or a detached [`Symbol`](crate::Symbol).
     ///
     /// It is the shared read-back accessor of every position-indexed
     /// buffer: evaluations, gradients, and fields all answer `of(value)`.
@@ -100,12 +120,8 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     /// after this evaluation ran, or was skipped by a target-sliced run
     /// (see [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
-    pub fn of(&self, value: Value<'_, Data>) -> &Data {
-        assert!(
-            ptr::eq(self.tape, value.tape()),
-            "value belongs to a different network"
-        );
-        let index = value.id().index();
+    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
+        let index = self.locate(value);
         let payload = self
             .values
             .as_slice()
@@ -193,13 +209,9 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     /// Panics if `output` is not a scalar, belongs to a different
     /// network, was allocated after this evaluation ran, or was skipped
     /// by a target-sliced run.
-    pub fn backward(&self, output: Value<'_, Data>) -> Gradients<Data> {
-        assert!(
-            ptr::eq(self.tape, output.tape()),
-            "output belongs to a different network"
-        );
+    pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
+        let output_index = self.locate(output);
         let values = self.values.as_slice();
-        let output_index = output.id().index();
         assert!(
             output_index < values.len(),
             "value was allocated after this evaluation ran"
@@ -225,7 +237,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         // and the recorded column here, so a payload that ignored a
         // recorded movement cannot smuggle a non-scalar target through.
         assert_eq!(
-            output.shape().rank(),
+            self.tape.shape(ValueId(output_index)).rank(),
             0,
             "backward requires a scalar target; reduce it with `sum` first"
         );
