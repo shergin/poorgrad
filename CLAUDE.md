@@ -64,6 +64,18 @@ fn fooify<'floof, T>(label: T, magic: Foo<'floof>) -> Result<Bar<'floof>, i32>
 - Always run `cargo fmt` after making code changes, before running `cargo check` or `cargo build`.
 - Dynamic dispatch is not allowed in the main API design or on any hot path: dispatch is static by construction — a plain enum `match` for the operation set, monomorphized generics for payloads and rules, `impl Fn`/`impl FnMut` for every closure parameter, and never `Box<dyn Fn>` or trait objects in engine loops. A public trait may be object-safe as a capability (`Optimizer` is), but no API may *require* a trait object, and no engine code may call through one. Sanctioned exceptions, on record: platform-mandated indirection (Metal's Objective-C protocol objects, the dlopen'd backend function pointers — both amortized over kernel launches), and caller-side `dyn` in tests or examples where a comparison loop iterates strategies.
 
+# Rules for dependencies
+
+- "Near-zero dependencies" is a bar on *what* a dependency is, not a count. Do not quote a number as the promise; the promise is the bar.
+- The bar is one question: **is this crate doing work that is poorgrad's own to do?** Own the crate's competence; delegate the incidentals.
+  - Never a dependency: autodiff, the tape, graph passes, tensor math, GEMM kernels, optimizers, initializers, losses — what the crate exists to do, however well someone else does it. Delegating one hands the guarantees people depend on poorgrad for (bit-identical determinism, shape errors at record time, an API that moves on our schedule) to a project with different priorities.
+  - Fine as a dependency: an incidental format, container, or measurement the surrounding code merely has to get through — JSON syntax, a stack-first vector, benchmark statistics, a chart renderer. Nobody picks poorgrad for these, and none of them constrain the engine.
+  - In examples, the algorithm the example exists to demonstrate counts as poorgrad's own work (byte-level BPE in `gpt2`, the bigram counts in `makemore`): keep it hand-rolled and in view, even though it is not library code.
+- A crate that clears the bar must also be a *battery*: small, boring, stable, widely used, and auditable. `serde`/`serde_json` qualifies and is accepted outright; so do `cow_vec`, `smallvec`, `static_assertions`, `criterion`, `malevich`.
+- Judge the tree, not the crate. Read the transitive set before adding, and reject a dependency whose tree is disproportionate to what it does — that is what rules out the framework-scale crates, not the fact that they are third-party.
+- The bar is the same for `[dependencies]` and `[dev-dependencies]`, but the cost is not: a library dependency reaches every downstream user and a dev one reaches nobody. Prefer the dev tier when either would do, and prefer `optional = true` behind a feature for anything platform-specific, heavy, or FFI-bound.
+- `#![forbid(unsafe_code)]` in the default build outranks this section: a dependency never becomes a reason to relax it, and an FFI-bound crate belongs behind a backend feature with the rest of the scoped `unsafe`.
+
 # Rules for facade design
 
 - Facades (the neural tier: activations, layers, losses, optimizers, initializers) compose exclusively through the public operation surface — no privileged engine access — so a facade's internal spelling can change without breaking anyone, and a hand-rolled equivalent behaves identically.

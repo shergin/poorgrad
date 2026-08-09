@@ -27,7 +27,8 @@ the schedule, `Plan::describe()` prints every decision — dead-node
 elimination, buffer liveness, fusion, rematerialization — and one
 assert checks any of them against the interpreter, bit for bit.
 
-The discipline is the product: three dependencies,
+The discipline is the product: no dependency doing poorgrad's own
+work,
 `#![forbid(unsafe_code)]` unless you opt into the FFI backends —
 whose `unsafe` is scoped by a crate-wide `deny`, argued block by
 block, and small enough to audit in one sitting — shape errors
@@ -434,8 +435,8 @@ term and its mapping to the Rust types — is collected in
   under a causal mask, GELU held as scalar leaves, the tied head as
   the transposed embedding table, and one fixed-context sampling
   plan fed the token window per step. The checkpoint and tokenizer
-  (byte-level BPE, hand-rolled, dependency-free like every reader in
-  the examples) download and cache on first run. A third argument
+  (byte-level BPE, hand-rolled like every algorithm an example exists
+  to show) download and cache on first run. A third argument
   picks the engine: `tape` runs the plan at home, `xla` emits it as
   StableHLO and serves generation through a resident XLA process —
   measured faster than the tape and reproducing its text:
