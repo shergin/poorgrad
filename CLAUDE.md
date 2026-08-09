@@ -64,6 +64,18 @@ fn fooify<'floof, T>(label: T, magic: Foo<'floof>) -> Result<Bar<'floof>, i32>
 - Always run `cargo fmt` after making code changes, before running `cargo check` or `cargo build`.
 - Dynamic dispatch is not allowed in the main API design or on any hot path: dispatch is static by construction — a plain enum `match` for the operation set, monomorphized generics for payloads and rules, `impl Fn`/`impl FnMut` for every closure parameter, and never `Box<dyn Fn>` or trait objects in engine loops. A public trait may be object-safe as a capability (`Optimizer` is), but no API may *require* a trait object, and no engine code may call through one. Sanctioned exceptions, on record: platform-mandated indirection (Metal's Objective-C protocol objects, the dlopen'd backend function pointers — both amortized over kernel launches), and caller-side `dyn` in tests or examples where a comparison loop iterates strategies.
 
+# Rules for facade design
+
+- Facades (the neural tier: activations, layers, losses, optimizers, initializers) compose exclusively through the public operation surface — no privileged engine access — so a facade's internal spelling can change without breaking anyone, and a hand-rolled equivalent behaves identically.
+- Pick the facade's shape by what it is:
+  - A *stateless closed set of alternatives* is a plain `Copy` enum with an `express` method (`Activation`).
+  - A *stateful or user-extensible strategy* is an open, object-safe trait with the built-ins as ordinary implementations (`Optimizer`); never a closed enum, so custom implementations have equal standing.
+  - An *operand-asymmetric formula* (no natural `self`) is a free function in a domain module (`cross_entropy`, `conv2d`).
+  - A *factory* returns `impl FnMut` closures with explicit seeds (`init`).
+- Initialization and hyperparameters are caller-owned and visible at the call site: facades never choose distributions, learning rates, or float constants. Facade-internal constants are integer `counted` ratios only; arbitrary float constants stay caller territory.
+- Facade state (running estimates, optimizer moments) lives in explicit caller-held structs, never hidden in the graph or in globals; `Field` is the designed carrier for value-aligned state.
+- Every stateful or tie-breaking choice a facade makes (decay policy, tie direction, default constants) is documented on the item with its rationale, and any escape hatch is a parameter or predicate, not a fork of the facade.
+
 # Rules for writing Rust tests
 - Tests for a particular module (file) should be in a separate file (placed inside `tests` folder) with `_tests` suffix.
 - The test file should be included in the code file as module `tests` with specified path to the test file, like this:
