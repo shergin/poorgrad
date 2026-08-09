@@ -39,8 +39,10 @@ fn plans_and_derivatives_accept_bound_values() {
     let loss = (x * x).sum();
 
     let gradient_symbols = network.differentiate(loss, [x]);
+    // `From<Value> for Symbol` serves the one position `ValueRef`
+    // cannot: a list that must be homogeneous in `Symbol`.
     let plan = network.compile(
-        std::iter::once(loss.symbol()).chain(gradient_symbols.iter().copied()),
+        std::iter::once(loss.into()).chain(gradient_symbols.iter().copied()),
         [],
     );
     let evaluation = plan.forward(&network, []);

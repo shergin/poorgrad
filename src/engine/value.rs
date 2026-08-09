@@ -77,7 +77,17 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
             id: self.id,
         }
     }
+}
 
+/// The conversion form of [`Value::symbol`], for positions where a
+/// list must be homogeneous in `Symbol`: `[loss.into(), stored]`.
+impl<Data: Differentiable> From<Value<'_, Data>> for Symbol {
+    fn from(value: Value<'_, Data>) -> Symbol {
+        value.symbol()
+    }
+}
+
+impl<'network, Data: Differentiable> Value<'network, Data> {
     /// Returns a clone of the `Function` that produced this value.
     #[cfg(test)]
     pub(crate) fn function(&self) -> Function<Data> {

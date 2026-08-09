@@ -138,7 +138,7 @@ fn gradient_case() -> Case {
 
     // The module's result list follows recording order, so the
     // expected vectors must too.
-    let mut readable: Vec<_> = std::iter::once(loss.symbol())
+    let mut readable: Vec<_> = std::iter::once(loss.into())
         .chain(gradients.iter().copied())
         .collect();
     readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
