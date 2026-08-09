@@ -629,6 +629,18 @@ impl<Element: Differentiable> Neg for Tensor<Element> {
 }
 
 impl<Element: Differentiable> Differentiable for Tensor<Element> {
+    /// A tensor accumulates in itself: its own elements already honor
+    /// their element-level accumulator through the operations.
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        self.clone()
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     /// Returns a zero shaped like `self`, stored as a constant.
     ///
     /// It reads one element's `zero_like` as the fill, which is exact for
@@ -775,11 +787,13 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         let mut elements = Vec::with_capacity(rows * columns);
         for row in 0..rows {
             for column in 0..columns {
-                let mut total = self.get(row * inner) * rhs.get(column);
+                let mut total = self.get(row * inner).promote() * rhs.get(column).promote();
                 for step in 1..inner {
-                    total = total + self.get(row * inner + step) * rhs.get(step * columns + column);
+                    total = total
+                        + self.get(row * inner + step).promote()
+                            * rhs.get(step * columns + column).promote();
                 }
-                elements.push(total);
+                elements.push(Element::demote(total));
             }
         }
         Self::dense(Shape::new([rows, columns]), elements)
@@ -813,9 +827,12 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// pairwise or compensated summation.
     fn sum(&self) -> Self {
         let mut elements = self.iter();
-        let first = elements.next().expect("sum requires a non-empty tensor");
-        let total = elements.fold(first, |total, element| total + element);
-        Self::constant(Shape::scalar(), total)
+        let first = elements
+            .next()
+            .expect("sum requires a non-empty tensor")
+            .promote();
+        let total = elements.fold(first, |total, element| total + element.promote());
+        Self::constant(Shape::scalar(), Element::demote(total))
     }
 
     /// Returns the tensor with `axis` reduced by summation.
@@ -838,11 +855,11 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for inner_index in 0..inner {
                 let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
-                let mut total = self.get(position(0));
+                let mut total = self.get(position(0)).promote();
                 for step in 1..extent {
-                    total = total + self.get(position(step));
+                    total = total + self.get(position(step)).promote();
                 }
-                elements.push(total);
+                elements.push(Element::demote(total));
             }
         }
         Self::dense(shape.without_axis(axis), elements)
@@ -1184,7 +1201,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for position in 0..extent {
                 for inner_index in 0..inner {
-                    let mut total = zero.clone();
+                    let mut total = zero.promote();
                     // Window `w` reads `position` as its element `k`
                     // exactly when `w * step + k * dilation == position`.
                     for k in 0..size {
@@ -1202,9 +1219,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                         }
                         let source =
                             ((outer_index * count + window) * size + k) * inner + inner_index;
-                        total = total + self.get(source);
+                        total = total + self.get(source).promote();
                     }
-                    elements.push(total);
+                    elements.push(Element::demote(total));
                 }
             }
         }
@@ -1358,16 +1375,19 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             .expect("shape volume overflows `usize`");
         let zero = self.get(0).zero_like();
 
-        let mut elements = vec![zero; volume];
+        let mut accumulators = vec![zero.promote(); volume];
         for (source, &target) in indices.iter().enumerate() {
             for offset in 0..row_size {
                 let position = target * row_size + offset;
-                elements[position] =
-                    elements[position].clone() + self.get(source * row_size + offset);
+                accumulators[position] =
+                    accumulators[position].clone() + self.get(source * row_size + offset).promote();
             }
         }
         let result = Shape::new(std::iter::once(rows).chain(gradient.axes()[1..].iter().copied()));
-        Self::dense(result, elements)
+        Self::dense(
+            result,
+            accumulators.into_iter().map(Element::demote).collect(),
+        )
     }
 }
 

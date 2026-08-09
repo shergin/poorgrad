@@ -107,6 +107,50 @@ fn matmul_accumulates_in_f32_and_rounds_once() {
 }
 
 #[test]
+fn matmul_accumulation_is_representation_independent() {
+    use crate::{Tensor, Tensorial};
+
+    // A constant operand has no gemm operand and takes the composed
+    // path; the accumulation contract must answer identically there,
+    // or bf16 results would depend on the storage representation.
+    let ones_constant = Tensor::filled([1, 3], Bf16::ONE);
+    let ones_dense = Tensor::new([1, 3], [1.0_f32; 3].map(Bf16::from_f32).to_vec());
+    let right = Tensor::new([3, 1], [256.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    assert_eq!(
+        ones_constant.matmul(&right).to_vec(),
+        ones_dense.matmul(&right).to_vec(),
+    );
+    assert_eq!(
+        ones_constant.matmul(&right).to_vec(),
+        vec![Bf16::from_f32(258.0)]
+    );
+}
+
+#[test]
+fn reductions_accumulate_in_f32() {
+    use crate::Tensorial;
+
+    // Per-op bf16 summation would swamp at 256; the accumulator
+    // contract sums in f32 and rounds once.
+    let values = Tensor::new([3], [256.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    assert_eq!(values.sum().to_vec(), vec![Bf16::from_f32(258.0)]);
+    let rows = Tensor::new([1, 3], [256.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    assert_eq!(rows.sum_along(1).to_vec(), vec![Bf16::from_f32(258.0)]);
+}
+
+#[test]
+fn scatter_accumulates_duplicate_rows_in_f32() {
+    use crate::Tensorial;
+
+    // Three gradient rows land on the same vocabulary row; their sum
+    // accumulates in f32, so the ones keep landing past 256.
+    let gradient = Tensor::new([3, 1], [256.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    let selection = Tensor::selection(vec![0, 0, 0], 1, Bf16::ONE);
+    let folded = gradient.scatter(&selection, 1);
+    assert_eq!(folded.to_vec(), vec![Bf16::from_f32(258.0)]);
+}
+
+#[test]
 fn scalar_networks_differentiate_bf16() {
     let network = Network::new();
     let x = network.parameter(Bf16::from_f32(1.5));

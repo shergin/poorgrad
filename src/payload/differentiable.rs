@@ -28,6 +28,31 @@ pub trait Differentiable:
     + Div<Output = Self>
     + Neg<Output = Self>
 {
+    /// The type accumulating operations compute in before rounding
+    /// back to `Self` once: matmul inner products, the sum
+    /// reductions, `fold`, and the scatter adjoint promote every
+    /// term, accumulate here, and demote the final total.
+    ///
+    /// `Self` for payloads that accumulate in their own precision;
+    /// `f32` for `Bf16`, whose eight significand bits swamp once a
+    /// total reaches 256 times a term. The choice is semantics, not
+    /// an optimization: every representation and every path honors
+    /// it — a constant operand accumulates exactly like a dense one —
+    /// and StableHLO emission states it through
+    /// `Emittable::ACCUMULATION`.
+    type Accumulator: Clone
+        + Debug
+        + Send
+        + Sync
+        + Add<Output = Self::Accumulator>
+        + Mul<Output = Self::Accumulator>;
+
+    /// Returns this value in the accumulator type, exactly.
+    fn promote(&self) -> Self::Accumulator;
+
+    /// Returns an accumulated total rounded back into `Self`.
+    fn demote(accumulated: Self::Accumulator) -> Self;
+
     /// Returns a zero shaped like `self`, used to seed gradient accumulators.
     ///
     /// It takes `&self` rather than being a nullary constructor so the identity
@@ -59,6 +84,16 @@ pub trait Differentiable:
 }
 
 impl Differentiable for f32 {
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        *self
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     fn zero_like(&self) -> Self {
         0.0
     }
@@ -79,6 +114,16 @@ impl Differentiable for f32 {
 }
 
 impl Differentiable for f64 {
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        *self
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     fn zero_like(&self) -> Self {
         0.0
     }

@@ -28,16 +28,16 @@ pub trait Emittable: Differentiable + PartialEq {
     /// The literal of negative infinity, seeding max reduces.
     const NEGATIVE_INFINITY: &'static str;
 
-    /// The MLIR element type contractions accumulate in before
-    /// converting back, or `None` when products accumulate in the
+    /// The MLIR element type accumulating operations compute in
+    /// before converting back, or `None` when they accumulate in the
     /// element type itself.
     ///
-    /// It must state what the home execution actually computes: an
-    /// element whose [`Elementary::gemm`](crate::Elementary::gemm)
-    /// accumulates in a wider type declares that type here, so the
-    /// emitted `dot_general` carries the wider result type and an
-    /// explicit `convert` — the precision is IR semantics, never an
-    /// implementation's private choice.
+    /// It must name the element's
+    /// [`Differentiable::Accumulator`](crate::Differentiable::Accumulator)
+    /// whenever that type differs from the element: matmuls, sum
+    /// reductions, `fold`, and `scatter` then emit the wider result
+    /// type with an explicit `convert` back — the precision is IR
+    /// semantics, never an implementation's private choice.
     const ACCUMULATION: Option<&'static str> = None;
 
     /// Formats this element as an MLIR literal.

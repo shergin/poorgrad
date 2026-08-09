@@ -435,14 +435,34 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                 // already crosses the boundary as its dense matrix.
                 let gradient = operand(0);
                 let selection = operand(1);
-                emitter.line(format!(
-                    "{result} = stablehlo.dot_general {}, {}, contracting_dims = [0] x [0] \
-                     : ({}, {}) -> {result_type}",
-                    emitter.name(selection),
-                    emitter.name(gradient),
-                    tensor_type::<Element>(&shapes[selection]),
-                    tensor_type::<Element>(&shapes[gradient]),
-                ));
+                // Duplicate rows genuinely accumulate, so the
+                // contraction honors the declared accumulation type,
+                // like `MatMul`.
+                if let Some(accumulation) = Element::ACCUMULATION {
+                    let accumulated = format!("%v{index}_accumulated");
+                    let accumulated_type = named_tensor_type(shape, accumulation);
+                    emitter.line(format!(
+                        "{accumulated} = stablehlo.dot_general {}, {}, \
+                         contracting_dims = [0] x [0] : ({}, {}) -> {accumulated_type}",
+                        emitter.name(selection),
+                        emitter.name(gradient),
+                        tensor_type::<Element>(&shapes[selection]),
+                        tensor_type::<Element>(&shapes[gradient]),
+                    ));
+                    emitter.line(format!(
+                        "{result} = stablehlo.convert {accumulated} \
+                         : ({accumulated_type}) -> {result_type}"
+                    ));
+                } else {
+                    emitter.line(format!(
+                        "{result} = stablehlo.dot_general {}, {}, contracting_dims = [0] x [0] \
+                         : ({}, {}) -> {result_type}",
+                        emitter.name(selection),
+                        emitter.name(gradient),
+                        tensor_type::<Element>(&shapes[selection]),
+                        tensor_type::<Element>(&shapes[gradient]),
+                    ));
+                }
             }
             Function::Fold(fold) => {
                 // Fold is a linear map on the window pair, so it lowers
@@ -487,15 +507,37 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                 } else {
                     format!("%v{index}_joined")
                 };
-                emitter.line(format!(
-                    "{joined_name} = stablehlo.dot_general {}, {weights_name}, \
-                     contracting_dims = [{}, {}] x [0, 1] : ({}, {weights_type}) -> {}",
-                    emitter.name(source),
-                    fold.axis,
-                    fold.axis + 1,
-                    tensor_type::<Element>(source_shape),
-                    tensor_type::<Element>(&joined_shape),
-                ));
+                // Overlapping windows genuinely accumulate, so the
+                // contraction honors the declared accumulation type,
+                // like `MatMul`.
+                if let Some(accumulation) = Element::ACCUMULATION {
+                    let accumulated = format!("%v{index}_accumulated");
+                    let accumulated_type = named_tensor_type(&joined_shape, accumulation);
+                    emitter.line(format!(
+                        "{accumulated} = stablehlo.dot_general {}, {weights_name}, \
+                         contracting_dims = [{}, {}] x [0, 1] \
+                         : ({}, {weights_type}) -> {accumulated_type}",
+                        emitter.name(source),
+                        fold.axis,
+                        fold.axis + 1,
+                        tensor_type::<Element>(source_shape),
+                    ));
+                    emitter.line(format!(
+                        "{joined_name} = stablehlo.convert {accumulated} \
+                         : ({accumulated_type}) -> {}",
+                        tensor_type::<Element>(&joined_shape),
+                    ));
+                } else {
+                    emitter.line(format!(
+                        "{joined_name} = stablehlo.dot_general {}, {weights_name}, \
+                         contracting_dims = [{}, {}] x [0, 1] : ({}, {weights_type}) -> {}",
+                        emitter.name(source),
+                        fold.axis,
+                        fold.axis + 1,
+                        tensor_type::<Element>(source_shape),
+                        tensor_type::<Element>(&joined_shape),
+                    ));
+                }
                 if fold.axis != trailing {
                     let order: Vec<usize> = (0..joined_shape.rank())
                         .map(|dim| {
@@ -656,6 +698,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
 
     /// Writes the compact reduce of `source` over `axes` with the named
     /// reducer and its seed literal, producing node `index`'s value.
+    /// An add-reduce honors the element's declared accumulation type.
     fn reduce(
         &self,
         index: usize,
@@ -665,6 +708,22 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         seed: &str,
         emitter: &mut Emitter,
     ) {
+        if reducer == "add" {
+            let prefix = format!("%v{index}");
+            let source_name = emitter.name(source).to_string();
+            let source_shape = self.shapes()[source].clone();
+            let result_shape = self.shapes()[index].clone();
+            self.sum_reduce(
+                &prefix,
+                &source_name,
+                &source_shape,
+                &prefix,
+                &result_shape,
+                axes,
+                emitter,
+            );
+            return;
+        }
         let seed_name = format!("%v{index}_seed");
         emitter.line(format!(
             "{seed_name} = stablehlo.constant dense<{seed}> : tensor<{}>",
@@ -677,6 +736,61 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             tensor_type::<Element>(&self.shapes()[source]),
             Element::ELEMENT,
             tensor_type::<Element>(&self.shapes()[index]),
+        ));
+    }
+
+    /// Writes an add-reduce of `source_name` over `axes` into
+    /// `result_name`, honoring the element's declared accumulation
+    /// type: the operand converts up, the reduction runs there, and
+    /// the total converts back once — exactly what the home
+    /// `Accumulator` contract computes. Temporaries derive from
+    /// `prefix`, which must be unique per call.
+    #[allow(clippy::too_many_arguments)]
+    fn sum_reduce(
+        &self,
+        prefix: &str,
+        source_name: &str,
+        source_shape: &Shape,
+        result_name: &str,
+        result_shape: &Shape,
+        axes: &[usize],
+        emitter: &mut Emitter,
+    ) {
+        let seed_name = format!("{prefix}_seed");
+        if let Some(accumulation) = Element::ACCUMULATION {
+            let promoted = format!("{prefix}_promoted");
+            let promoted_type = named_tensor_type(source_shape, accumulation);
+            emitter.line(format!(
+                "{promoted} = stablehlo.convert {source_name} : ({}) -> {promoted_type}",
+                tensor_type::<Element>(source_shape),
+            ));
+            emitter.line(format!(
+                "{seed_name} = stablehlo.constant dense<0.0> : tensor<{accumulation}>"
+            ));
+            let accumulated = format!("{prefix}_accumulated");
+            let accumulated_type = named_tensor_type(result_shape, accumulation);
+            emitter.line(format!(
+                "{accumulated} = stablehlo.reduce({promoted} init: {seed_name}) \
+                 applies stablehlo.add across dimensions = {axes:?} \
+                 : ({promoted_type}, tensor<{accumulation}>) -> {accumulated_type}",
+            ));
+            emitter.line(format!(
+                "{result_name} = stablehlo.convert {accumulated} : ({accumulated_type}) -> {}",
+                tensor_type::<Element>(result_shape),
+            ));
+            return;
+        }
+        emitter.line(format!(
+            "{seed_name} = stablehlo.constant dense<{}> : tensor<{}>",
+            Element::ZERO,
+            Element::ELEMENT,
+        ));
+        emitter.line(format!(
+            "{result_name} = stablehlo.reduce({source_name} init: {seed_name}) \
+             applies stablehlo.add across dimensions = {axes:?} : ({}, tensor<{}>) -> {}",
+            tensor_type::<Element>(source_shape),
+            Element::ELEMENT,
+            tensor_type::<Element>(result_shape),
         ));
     }
 
@@ -717,18 +831,16 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         emitter.line(format!(
             "{exponentials} = stablehlo.exponential {centered} : {full_type}"
         ));
-        let zero = format!("%v{index}_zero");
-        emitter.line(format!(
-            "{zero} = stablehlo.constant dense<{}> : tensor<{}>",
-            Element::ZERO,
-            Element::ELEMENT,
-        ));
         let total = format!("%v{index}_total");
-        emitter.line(format!(
-            "{total} = stablehlo.reduce({exponentials} init: {zero}) applies stablehlo.add \
-             across dimensions = [{axis}] : ({full_type}, tensor<{}>) -> {reduced_type}",
-            Element::ELEMENT,
-        ));
+        self.sum_reduce(
+            &total,
+            &exponentials,
+            source_shape,
+            &total,
+            &shapes[index],
+            &[axis],
+            emitter,
+        );
         let normalizer = format!("%v{index}_normalizer");
         emitter.line(format!(
             "{normalizer} = stablehlo.log {total} : {reduced_type}"
@@ -776,18 +888,16 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         emitter.line(format!(
             "{exponentials} = stablehlo.exponential {centered} : {full_type}"
         ));
-        let zero = format!("%v{index}_zero");
-        emitter.line(format!(
-            "{zero} = stablehlo.constant dense<{}> : tensor<{}>",
-            Element::ZERO,
-            Element::ELEMENT,
-        ));
         let total = format!("%v{index}_total");
-        emitter.line(format!(
-            "{total} = stablehlo.reduce({exponentials} init: {zero}) applies stablehlo.add \
-             across dimensions = [{axis}] : ({full_type}, tensor<{}>) -> {reduced_type}",
-            Element::ELEMENT,
-        ));
+        self.sum_reduce(
+            &total,
+            &exponentials,
+            shape,
+            &total,
+            &reduced,
+            &[axis],
+            emitter,
+        );
         let normalizer = format!("%v{index}_normalizer");
         emitter.line(format!(
             "{normalizer} = stablehlo.log {total} : {reduced_type}"

@@ -370,7 +370,10 @@ contract is the [`Differentiable`](src/payload/differentiable.rs) trait —
 arithmetic operators, `zero_like`/`one_like`, the shape-derived constant
 constructor `counted` (a payload of a given shape holding an integer
 count, which lets composed formulas mint axis extents — a mean's
-divisor — without borrowing a payload to copy the shape from), and
+divisor — without borrowing a payload to copy the shape from), the
+`Accumulator` associated type naming what accumulating operations
+(matmul, the sum reductions, `fold`, `scatter`) compute in before one
+final rounding — `Self` for the IEEE singles, `f32` for `Bf16` — and
 `Send + Sync`;
 [`Elementary`](src/payload/elementary.rs) adds the transcendentals, the
 correctly rounded `sqrt` (which `powf(0.5)` is not), and the order pair
@@ -404,12 +407,14 @@ to nearest-even. Same range as `f32`, precision of about two decimal
 digits; integers are exact up to 256. Half the memory of `f32` at rest,
 deterministic on every platform, and an ordinary `Differentiable` +
 `Elementary` implementation (plus the scalar-identity `Tensorial`), so
-`Tensor<Bf16>` and `Network<Bf16>` run the engine unchanged. Matmul is
-the one documented exception to the per-op semantic: the `gemm` hook
-accumulates in `f32` and rounds once per output element (the bf16
-hardware convention), and the emitted StableHLO states the same
-semantic as an `f32`-result `dot_general` plus an explicit `convert`.
-In poorgrad: [`Bf16`](src/payload/bf16.rs).
+`Tensor<Bf16>` and `Network<Bf16>` run the engine unchanged. The
+accumulating operations — matmul, the sum reductions, `fold`, and
+`scatter` — are the documented exception to the per-op semantic: its
+`Accumulator` is `f32` (the bf16 hardware convention), every term
+promotes exactly, and only the final total rounds; the emitted
+StableHLO states the same semantic through `f32`-typed contractions
+and reduces with explicit `convert`s. In poorgrad:
+[`Bf16`](src/payload/bf16.rs).
 
 **Storage.** The buffer representation behind a `Tensor`, and the
 extension seam for how elements are held: today an `Arc`-shared row-major

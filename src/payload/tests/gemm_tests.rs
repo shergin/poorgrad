@@ -204,6 +204,16 @@ impl Neg for Probe {
 }
 
 impl Differentiable for Probe {
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        self.clone()
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     fn zero_like(&self) -> Self {
         Probe(0.0)
     }
@@ -310,6 +320,16 @@ impl Neg for LyingProbe {
 }
 
 impl Differentiable for LyingProbe {
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        self.clone()
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     fn zero_like(&self) -> Self {
         LyingProbe(0.0)
     }

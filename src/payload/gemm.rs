@@ -138,7 +138,7 @@ impl<'buffers, Element> GemmTask<'buffers, Element> {
 /// nor pipeline, while per-column accumulators keep every update
 /// independent.
 pub(crate) fn multiply<Element: Differentiable>(task: &GemmTask<'_, Element>) -> Vec<Element> {
-    let mut elements = Vec::with_capacity(task.m * task.n);
+    let mut accumulators = Vec::with_capacity(task.m * task.n);
     for row in 0..task.m {
         let a_row_start = row * task.a_strides[0];
         // Seed the output row with the first term of every product:
@@ -146,41 +146,43 @@ pub(crate) fn multiply<Element: Differentiable>(task: &GemmTask<'_, Element>) ->
         // zero would break parity — `0.0 + -0.0` answers `+0.0`, so
         // a zero-seeded accumulator flips the sign of an all
         // negative-zero sum that the logical path keeps negative.
-        let a_first = task.a[a_row_start].clone();
-        seed_row(&mut elements, &a_first, task);
+        // Terms promote into the element's declared `Accumulator`
+        // (its own type for the IEEE singles) and demote once below.
+        let a_first = task.a[a_row_start].promote();
+        seed_row(&mut accumulators, &a_first, task);
         // The freshly seeded suffix of the buffer is this row's
         // vector of accumulators.
-        let output = &mut elements[row * task.n..];
+        let output = &mut accumulators[row * task.n..];
         for step in 1..task.k {
-            let a_value = task.a[a_row_start + step * task.a_strides[1]].clone();
+            let a_value = task.a[a_row_start + step * task.a_strides[1]].promote();
             accumulate_row(output, &a_value, task, step);
         }
     }
-    elements
+    accumulators.into_iter().map(Element::demote).collect()
 }
 
 /// It appends one seed row, `a_first * b[0, column]` per column, to
-/// the output buffer.
+/// the accumulator buffer.
 fn seed_row<Element: Differentiable>(
-    elements: &mut Vec<Element>,
-    a_first: &Element,
+    accumulators: &mut Vec<Element::Accumulator>,
+    a_first: &Element::Accumulator,
     task: &GemmTask<'_, Element>,
 ) {
     if task.b_strides[1] == 1 {
         let b_row = &task.b[..task.n];
-        elements.extend(
+        accumulators.extend(
             b_row
                 .iter()
-                .map(|b_element| a_first.clone() * b_element.clone()),
+                .map(|b_element| a_first.clone() * b_element.promote()),
         );
         return;
     }
-    elements.extend(
-        (0..task.n).map(|column| a_first.clone() * task.b[column * task.b_strides[1]].clone()),
+    accumulators.extend(
+        (0..task.n).map(|column| a_first.clone() * task.b[column * task.b_strides[1]].promote()),
     );
 }
 
-/// It folds one inner step into an output row:
+/// It folds one inner step into an accumulator row:
 /// `output[column] += a_value * b[step, column]` for every column.
 ///
 /// The contiguous arm hands the compiler two plain slices — the
@@ -189,8 +191,8 @@ fn seed_row<Element: Differentiable>(
 /// most often) reads through the stride and stays scalar, which is
 /// the measured cost of that case.
 fn accumulate_row<Element: Differentiable>(
-    output: &mut [Element],
-    a_value: &Element,
+    output: &mut [Element::Accumulator],
+    a_value: &Element::Accumulator,
     task: &GemmTask<'_, Element>,
     step: usize,
 ) {
@@ -198,13 +200,13 @@ fn accumulate_row<Element: Differentiable>(
     if task.b_strides[1] == 1 {
         let b_row = &task.b[b_row_start..b_row_start + task.n];
         for (output_element, b_element) in output.iter_mut().zip(b_row) {
-            *output_element = output_element.clone() + a_value.clone() * b_element.clone();
+            *output_element = output_element.clone() + a_value.clone() * b_element.promote();
         }
         return;
     }
     for (column, output_element) in output.iter_mut().enumerate() {
         *output_element = output_element.clone()
-            + a_value.clone() * task.b[b_row_start + column * task.b_strides[1]].clone();
+            + a_value.clone() * task.b[b_row_start + column * task.b_strides[1]].promote();
     }
 }
 

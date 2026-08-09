@@ -97,6 +97,19 @@ impl<'network, Data: Differentiable> Neg for Trace<'network, Data> {
 }
 
 impl<'network, Data: Tensorial> Differentiable for Trace<'network, Data> {
+    /// A trace accumulates in itself: promotion would hide recorded
+    /// arithmetic, and the underlying payload's accumulator already
+    /// acts inside each recorded operation.
+    type Accumulator = Self;
+
+    fn promote(&self) -> Self {
+        self.clone()
+    }
+
+    fn demote(accumulated: Self) -> Self {
+        accumulated
+    }
+
     fn zero_like(&self) -> Self {
         self.counted_like(0)
     }

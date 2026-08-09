@@ -132,6 +132,20 @@ impl Neg for Bf16 {
 }
 
 impl Differentiable for Bf16 {
+    /// Sums of bf16 terms accumulate in `f32` and round once — the
+    /// convention bf16 hardware and every mixed-precision recipe
+    /// follow. Promotion is exact (bf16 is a prefix of the single
+    /// format); only the one final demotion rounds.
+    type Accumulator = f32;
+
+    fn promote(&self) -> f32 {
+        self.to_f32()
+    }
+
+    fn demote(accumulated: f32) -> Self {
+        Self::from_f32(accumulated)
+    }
+
     fn zero_like(&self) -> Self {
         Self::ZERO
     }

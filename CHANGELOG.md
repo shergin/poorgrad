@@ -41,6 +41,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking**: `Differentiable` gains the accumulation contract —
+  `type Accumulator` with `promote`/`demote`. Matmul inner products
+  (every path, including the composed fallback a constant operand
+  takes), the sum reductions, `fold`, and `scatter` promote each
+  term, accumulate there, and round back once. The IEEE singles
+  accumulate in themselves (`Accumulator = Self`, bit-identical and
+  bench-checked); `Bf16` accumulates in `f32`, which closes the
+  representation dependence a gemm-hook-only contract left open.
+  Emission follows the contract: add-reduces, `fold`, `scatter`,
+  and the reduces inside the fused `log_sum_exp` and `log_softmax`
+  decompositions emit the declared accumulation type with explicit
+  converts whenever the element names one.
 - **Breaking**: `Tensor::iter` yields owned elements instead of
   references (`Item = Element`, under the `Clone` bound every real
   element type already satisfies), and `PartialEq for Tensor`
