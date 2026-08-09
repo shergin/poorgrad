@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   contract. `Tensor<Bf16>` and `Network<Bf16>` run the engine
   unchanged, autodiff included — the payload contract holding beyond
   the IEEE singles, with no engine changes at all.
+- StableHLO emission for `Bf16`: an `Emittable` implementation
+  (`bf16` element type, literals through the exact `f32` expansion,
+  bit-pattern hex for the non-finite values), and dtype-aware
+  conformance tooling — the evaluator scripts read each argument's
+  element type from the module's own `@main` signature, feeding the
+  reference interpreter through parsed dense literals and XLA
+  through `ml_dtypes` arrays. The execution envelope is per-case,
+  scaled to the element type's epsilon, since bf16's 2^-8 cannot
+  live under an `f32`-shaped fixed tolerance.
 
 ### Changed
 

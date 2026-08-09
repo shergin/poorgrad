@@ -9,7 +9,7 @@
 //! links an MLIR toolchain (parsing, bytecode, execution) lives outside
 //! the crate; the text these helpers produce is the interchange.
 
-use crate::{Differentiable, Shape};
+use crate::{Bf16, Differentiable, Shape};
 
 /// An element type StableHLO emission can render: its MLIR type name
 /// and the literal forms MLIR's float syntax accepts.
@@ -55,6 +55,23 @@ impl Emittable for f64 {
             return dotted(format!("{self:?}"));
         }
         format!("0x{:016X}", self.to_bits())
+    }
+}
+
+impl Emittable for Bf16 {
+    const ELEMENT: &'static str = "bf16";
+    const ZERO: &'static str = "0.0";
+    const NEGATIVE_INFINITY: &'static str = "0xFF80";
+
+    /// Finite values print through the exact `f32` expansion: a value
+    /// that is exactly a bf16 round-trips through its shortest
+    /// decimal, since MLIR parses the decimal to the nearest bf16.
+    fn literal(&self) -> String {
+        let expanded = self.to_f32();
+        if expanded.is_finite() {
+            return dotted(format!("{expanded:?}"));
+        }
+        format!("0x{:04X}", self.to_bits())
     }
 }
 

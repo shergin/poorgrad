@@ -1,13 +1,20 @@
 use std::process::Command;
 
-use crate::{Differentiable, Network, Shape, Tensor, concat, cross_entropy};
+use crate::{Bf16, Differentiable, Network, Shape, Tensor, concat, cross_entropy};
 
 /// One emitted module with the payloads and oracle results the
 /// conformance tests replay: the arguments in the module's own order
 /// (parameters then inputs, each in recording order) and the readable
 /// values the plan's run produced.
+///
+/// Arguments and expectations are carried as `f32` regardless of the
+/// module's element type — a narrower element expands exactly, and
+/// the evaluator scripts read the argument dtype from the module's
+/// own signature. `tolerance` is the case's relative error envelope,
+/// scaled to the element type's epsilon.
 struct Case {
     name: &'static str,
+    tolerance: f64,
     module: String,
     arguments: Vec<Tensor<f32>>,
     expected: Vec<Vec<f32>>,
@@ -26,6 +33,7 @@ fn small_case() -> Case {
     let evaluation = plan.forward(&network, []);
     Case {
         name: "small",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![weights, x],
         expected: vec![evaluation.of(network.resolve(loss.symbol())).to_vec()],
@@ -64,6 +72,7 @@ fn attention_case() -> Case {
     let dense_tokens = Tensor::new(Shape::new([2, 3]), tokens.to_vec());
     Case {
         name: "attention",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![table, dense_tokens],
         expected: vec![evaluation.of(network.resolve(output.symbol())).to_vec()],
@@ -91,6 +100,7 @@ fn cross_entropy_case() -> Case {
     let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
     Case {
         name: "cross-entropy",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![logits, dense_targets],
         expected: vec![evaluation.of(network.resolve(loss.symbol())).to_vec()],
@@ -138,6 +148,7 @@ fn gradient_case() -> Case {
     let dense_tokens = Tensor::new(Shape::new([3, 3]), tokens.to_vec());
     Case {
         name: "gradient",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![signal, mix, table, dense_tokens],
         expected: readable
@@ -168,6 +179,7 @@ fn unfold_case() -> Case {
     let evaluation = plan.forward(&network, []);
     Case {
         name: "unfold",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![x],
         expected: vec![evaluation.of(network.resolve(windows.symbol())).to_vec()],
@@ -252,6 +264,7 @@ fn convolution_case() -> Case {
     let evaluation = plan.forward(&network, []);
     Case {
         name: "convolution",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias],
         expected: vec![evaluation.of(network.resolve(convolved.symbol())).to_vec()],
@@ -297,6 +310,7 @@ fn probe_case() -> Case {
     let evaluation = plan.forward(&network, []);
     Case {
         name: "probe",
+        tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias, dense],
         expected: vec![evaluation.of(network.resolve(scores.symbol())).to_vec()],
@@ -356,6 +370,44 @@ fn temp_file(name: &str, content: &str) -> std::path::PathBuf {
     path
 }
 
+/// Expands a bf16 tensor into the exact `f32` values it denotes, the
+/// form the evaluator line protocol carries.
+fn expanded(tensor: &Tensor<Bf16>) -> Tensor<f32> {
+    let elements: Vec<f32> = tensor.iter().map(Bf16::to_f32).collect();
+    Tensor::new(tensor.shape(), elements)
+}
+
+/// Builds the bf16 twin of the small case: an input times a
+/// parameter, rectified and summed, with every value chosen exactly
+/// representable so the case stays stable across accumulation
+/// semantics.
+fn bf16_case() -> Case {
+    let network = Network::new();
+    let weights_elements: Vec<Bf16> = [1.0_f32, 2.0, 3.0, 4.0].map(Bf16::from_f32).to_vec();
+    let weights = Tensor::new([2, 2], weights_elements);
+    let weights_value = network.parameter(weights.clone());
+    let x_elements: Vec<Bf16> = [0.5_f32, -1.0, 2.0, 3.0].map(Bf16::from_f32).to_vec();
+    let x = Tensor::new([2, 2], x_elements);
+    let x_value = network.input(x.clone());
+    let loss = x_value.matmul(weights_value).relu().sum();
+    let plan = network.compile([loss.symbol()], []);
+    let evaluation = plan.forward(&network, []);
+    let expected: Vec<f32> = evaluation
+        .of(network.resolve(loss.symbol()))
+        .iter()
+        .map(Bf16::to_f32)
+        .collect();
+    Case {
+        name: "bf16-small",
+        // The envelope scales to the element: bf16's epsilon is 2^-8,
+        // doubled for the two-deep accumulation this case performs.
+        tolerance: 7.8125e-3,
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![expanded(&weights), expanded(&x)],
+        expected: vec![expected],
+    }
+}
+
 #[test]
 fn emitted_modules_parse_through_the_toolchain() {
     // Tier-0 conformance: an external StableHLO parser must accept the
@@ -372,6 +424,7 @@ fn emitted_modules_parse_through_the_toolchain() {
         unfold_case(),
         convolution_case(),
         probe_case(),
+        bf16_case(),
     ] {
         let path = temp_file(&format!("parse-{}.mlir", case.name), &case.module);
         let output = Command::new(&command[0])
@@ -431,6 +484,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         unfold_case(),
         convolution_case(),
         probe_case(),
+        bf16_case(),
     ] {
         let module_path = temp_file(&format!("eval-{}.mlir", case.name), &case.module);
         let lines: Vec<String> = case.arguments.iter().map(evaluator_line).collect();
@@ -480,7 +534,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
             assert_eq!(result.len(), expected.len(), "{}: element count", case.name);
             for (&actual, &expected) in result.iter().zip(expected) {
                 let expected = expected as f64;
-                let tolerance = 1e-4 * (1.0 + expected.abs());
+                let tolerance = case.tolerance * (1.0 + expected.abs());
                 assert!(
                     (actual - expected).abs() <= tolerance,
                     "{}: {actual} differs from the oracle's {expected}",

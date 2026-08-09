@@ -12,14 +12,32 @@ backend follows jax's own selection: the default is the CPU, and
 
 Usage: run-stablehlo-xla.py <module.mlir> <arguments.txt>
 
-Each argument line and each printed result line is one `f32` tensor:
-the `x`-joined extents (`-` for rank 0), then the elements in
-row-major order.
+Each argument line and each printed result line is one tensor: the
+`x`-joined extents (`-` for rank 0), then the elements in row-major
+order as plain decimals. The element type of each argument is read
+from the module's own `@main` signature; the narrow floats ride
+`ml_dtypes`, which jax always brings.
 """
 
+import re
 import sys
 
 import numpy as np
+
+
+def numpy_dtype(element):
+    """The numpy dtype of one MLIR element type name."""
+    if element == "f32":
+        return np.float32
+    if element == "f64":
+        return np.float64
+    if element == "f16":
+        return np.float16
+    if element == "bf16":
+        import ml_dtypes
+
+        return ml_dtypes.bfloat16
+    raise SystemExit(f"unsupported element type {element}")
 
 try:
     from jax.extend.backend import get_backend
@@ -30,6 +48,14 @@ except (AttributeError, ImportError):
 with open(sys.argv[1]) as source:
     module_text = source.read()
 
+signature = re.search(r"@main\((.*?)\)\s*->", module_text, re.DOTALL)
+if signature is None:
+    raise SystemExit("the module has no @main signature")
+elements = [
+    tensor_type.split("x")[-1]
+    for tensor_type in re.findall(r"tensor<([^<>]*)>", signature.group(1))
+]
+
 arguments = []
 with open(sys.argv[2]) as source:
     for line in source.read().splitlines():
@@ -39,7 +65,8 @@ with open(sys.argv[2]) as source:
         dimensions = (
             [] if dimensions_text == "-" else [int(d) for d in dimensions_text.split("x")]
         )
-        values = np.array([float(v) for v in values_text.split()], dtype=np.float32)
+        dtype = numpy_dtype(elements[len(arguments)])
+        values = np.array([float(v) for v in values_text.split()], dtype=dtype)
         arguments.append(values.reshape(dimensions))
 
 backend = get_backend()
@@ -53,7 +80,14 @@ except ImportError:
     # Older clients — the era Apple's jax-metal plugin pins — take the
     # module alone.
     executable = backend.compile(module_text)
-buffers = [backend.buffer_from_pyval(argument) for argument in arguments]
+try:
+    buffers = [backend.buffer_from_pyval(argument) for argument in arguments]
+except AttributeError:
+    # Newer clients dropped `buffer_from_pyval`; jax arrays execute
+    # directly, and `device_put` builds them for every float width.
+    import jax
+
+    buffers = [jax.device_put(argument) for argument in arguments]
 results = executable.execute(buffers)
 for result in results:
     array = np.asarray(result)
