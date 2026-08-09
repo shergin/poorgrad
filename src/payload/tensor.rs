@@ -50,31 +50,6 @@ impl<Element> Tensor<Element> {
         }
     }
 
-    /// Returns the element at logical row-major `position`.
-    ///
-    /// It is the general per-element read shared by every operation; a
-    /// dense layout resolves it through the stride and offset arithmetic,
-    /// and a constant answers with its single value.
-    fn get(&self, position: usize) -> &Element {
-        match &self.storage {
-            Storage::Dense { data, layout } => &data[layout.storage_index(position)],
-            Storage::Constant { value, .. } => value,
-            Storage::Selection {
-                indices,
-                shape,
-                zero,
-                one,
-            } => {
-                let vocab = shape.axes()[1];
-                if indices[position / vocab] == position % vocab {
-                    one
-                } else {
-                    zero
-                }
-            }
-        }
-    }
-
     /// Returns the row indices of a `Selection` payload.
     ///
     /// # Panics
@@ -184,6 +159,36 @@ impl<Element: Clone> Tensor<Element> {
     /// Returns the elements in logical row-major order as an owned vector.
     pub fn to_vec(&self) -> Vec<Element> {
         self.iter().cloned().collect()
+    }
+
+    /// Returns the element at logical row-major `position`.
+    ///
+    /// It is the general per-element read shared by every operation; a
+    /// dense layout resolves it through the stride and offset arithmetic,
+    /// and a constant answers with its single value.
+    ///
+    /// It returns an owned element rather than a reference because a
+    /// representation that computes its elements has nothing to lend,
+    /// and because nearly every caller wants the value: for the numeric
+    /// payloads a clone is the same load a borrow-then-copy compiles to.
+    fn get(&self, position: usize) -> Element {
+        match &self.storage {
+            Storage::Dense { data, layout } => data[layout.storage_index(position)].clone(),
+            Storage::Constant { value, .. } => value.clone(),
+            Storage::Selection {
+                indices,
+                shape,
+                zero,
+                one,
+            } => {
+                let vocab = shape.axes()[1];
+                if indices[position / vocab] == position % vocab {
+                    one.clone()
+                } else {
+                    zero.clone()
+                }
+            }
+        }
     }
 }
 
@@ -760,11 +765,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         let mut elements = Vec::with_capacity(rows * columns);
         for row in 0..rows {
             for column in 0..columns {
-                let mut total = self.get(row * inner).clone() * rhs.get(column).clone();
+                let mut total = self.get(row * inner) * rhs.get(column);
                 for step in 1..inner {
-                    total = total
-                        + self.get(row * inner + step).clone()
-                            * rhs.get(step * columns + column).clone();
+                    total = total + self.get(row * inner + step) * rhs.get(step * columns + column);
                 }
                 elements.push(total);
             }
@@ -828,9 +831,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for inner_index in 0..inner {
                 let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
-                let mut total = self.get(position(0)).clone();
+                let mut total = self.get(position(0));
                 for step in 1..extent {
-                    total = total + self.get(position(step)).clone();
+                    total = total + self.get(position(step));
                 }
                 elements.push(total);
             }
@@ -859,9 +862,9 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         for outer_index in 0..outer {
             for inner_index in 0..inner {
                 let position = |step: usize| (outer_index * extent + step) * inner + inner_index;
-                let mut largest = self.get(position(0)).clone();
+                let mut largest = self.get(position(0));
                 for step in 1..extent {
-                    largest = largest.maximum(self.get(position(step)));
+                    largest = largest.maximum(&self.get(position(step)));
                 }
                 elements.push(largest);
             }
@@ -880,7 +883,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             1,
             "broadcast requires a single-element tensor"
         );
-        Self::constant(reference.logical_shape().clone(), self.get(0).clone())
+        Self::constant(reference.logical_shape().clone(), self.get(0))
     }
 
     /// Returns the tensor repeated along `axis` to match `reference`'s
@@ -1060,7 +1063,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                 for inner_index in 0..inner {
                     if position >= start && position < end {
                         let source = (outer_index * len + (position - start)) * inner + inner_index;
-                        elements.push(self.get(source).clone());
+                        elements.push(self.get(source));
                     } else {
                         elements.push(zero.clone());
                     }
@@ -1192,7 +1195,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
                         }
                         let source =
                             ((outer_index * count + window) * size + k) * inner + inner_index;
-                        total = total + self.get(source).clone();
+                        total = total + self.get(source);
                     }
                     elements.push(total);
                 }
@@ -1313,7 +1316,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
         let mut elements = Vec::with_capacity(indices.len() * row_size);
         for &row in indices {
             for offset in 0..row_size {
-                elements.push(self.get(row * row_size + offset).clone());
+                elements.push(self.get(row * row_size + offset));
             }
         }
         let result =
@@ -1353,7 +1356,7 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             for offset in 0..row_size {
                 let position = target * row_size + offset;
                 elements[position] =
-                    elements[position].clone() + self.get(source * row_size + offset).clone();
+                    elements[position].clone() + self.get(source * row_size + offset);
             }
         }
         let result = Shape::new(std::iter::once(rows).chain(gradient.axes()[1..].iter().copied()));
