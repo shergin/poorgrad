@@ -114,13 +114,20 @@ impl<Element> Tensor<Element> {
             layout.rebased(),
         ))
     }
+}
 
+impl<Element: Clone> Tensor<Element> {
     /// Returns the elements in logical row-major order.
     ///
     /// A contiguous dense buffer iterates its slice directly; a strided
     /// view walks its layout with an odometer; a constant repeats its
     /// single value across the shape's volume.
-    pub fn iter(&self) -> impl Iterator<Item = &Element> + '_ {
+    ///
+    /// It yields owned elements rather than references because a
+    /// representation that computes its elements has nothing to lend,
+    /// and for the numeric payloads a clone is the same load a
+    /// borrow-then-copy compiles to.
+    pub fn iter(&self) -> impl Iterator<Item = Element> + '_ {
         match &self.storage {
             Storage::Constant { shape, value } => ElementIter::Constant {
                 value,
@@ -153,12 +160,10 @@ impl<Element> Tensor<Element> {
             },
         }
     }
-}
 
-impl<Element: Clone> Tensor<Element> {
     /// Returns the elements in logical row-major order as an owned vector.
     pub fn to_vec(&self) -> Vec<Element> {
-        self.iter().cloned().collect()
+        self.iter().collect()
     }
 
     /// Returns the element at logical row-major `position`.
@@ -336,7 +341,7 @@ impl<Element: Differentiable> Tensor<Element> {
         }
         Self::dense(
             self.logical_shape().clone(),
-            self.iter().map(transform).collect(),
+            self.iter().map(|element| transform(&element)).collect(),
         )
     }
 
@@ -401,7 +406,7 @@ impl<Element: Differentiable> Tensor<Element> {
             self.logical_shape().clone(),
             self.iter()
                 .zip(other.iter())
-                .map(|(left, right)| combine(left, right))
+                .map(|(left, right)| combine(&left, &right))
                 .collect(),
         )
     }
@@ -477,7 +482,9 @@ fn transpose_shape(shape: &Shape) -> Shape {
     Shape::new([axes[1], axes[0]])
 }
 
-/// Iterator over a tensor's elements in logical row-major order.
+/// Iterator over a tensor's elements in logical row-major order,
+/// yielding owned clones so a representation without a buffer to
+/// borrow from can still answer.
 ///
 /// The variants mirror the storage representations: a repeated constant, a
 /// direct slice walk for a contiguous buffer, and an odometer walk for a
@@ -506,19 +513,19 @@ enum ElementIter<'tensor, Element> {
     },
 }
 
-impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
-    type Item = &'tensor Element;
+impl<'tensor, Element: Clone> Iterator for ElementIter<'tensor, Element> {
+    type Item = Element;
 
-    fn next(&mut self) -> Option<&'tensor Element> {
+    fn next(&mut self) -> Option<Element> {
         match self {
             ElementIter::Constant { value, remaining } => {
                 if *remaining == 0 {
                     return None;
                 }
                 *remaining -= 1;
-                Some(*value)
+                Some((*value).clone())
             }
-            ElementIter::Contiguous(iterator) => iterator.next(),
+            ElementIter::Contiguous(iterator) => iterator.next().cloned(),
             ElementIter::Strided {
                 data,
                 shape,
@@ -530,8 +537,7 @@ impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
                 if *remaining == 0 {
                     return None;
                 }
-                let slice: &'tensor [Element] = data;
-                let element = &slice[*index];
+                let element = data[*index].clone();
                 *remaining -= 1;
                 if *remaining > 0 {
                     // Advance the odometer: step the innermost axis, carrying
@@ -563,13 +569,17 @@ impl<'tensor, Element> Iterator for ElementIter<'tensor, Element> {
                 let row = *position / *vocab;
                 let column = *position % *vocab;
                 *position += 1;
-                Some(if indices[row] == column { *one } else { *zero })
+                Some(if indices[row] == column {
+                    (*one).clone()
+                } else {
+                    (*zero).clone()
+                })
             }
         }
     }
 }
 
-impl<Element: PartialEq> PartialEq for Tensor<Element> {
+impl<Element: PartialEq + Clone> PartialEq for Tensor<Element> {
     /// Compares two tensors by logical value: equal shapes and equal
     /// elements in logical order, independent of storage representation, so
     /// a view compares equal to its materialized twin.
@@ -803,11 +813,8 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     /// pairwise or compensated summation.
     fn sum(&self) -> Self {
         let mut elements = self.iter();
-        let first = elements
-            .next()
-            .expect("sum requires a non-empty tensor")
-            .clone();
-        let total = elements.fold(first, |total, element| total + element.clone());
+        let first = elements.next().expect("sum requires a non-empty tensor");
+        let total = elements.fold(first, |total, element| total + element);
         Self::constant(Shape::scalar(), total)
     }
 
