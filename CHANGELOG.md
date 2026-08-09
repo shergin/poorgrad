@@ -9,6 +9,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking**: `Tensor::iter` yields owned elements instead of
+  references (`Item = Element`, under the `Clone` bound every real
+  element type already satisfies), and `PartialEq for Tensor`
+  gains the same `Clone` bound. The reference bought nothing: for
+  the numeric payloads both spellings compile to the same load, and
+  a storage representation that computes its elements has nothing
+  to lend a reference to. Callers migrate by deleting `.cloned()`
+  or `.copied()` after `iter()`.
 - The `gpt2` example reads JSON through `serde_json` instead of a
   hand-written parser: the safetensors header is a derived struct and
   the vocabulary a `HashMap<String, usize>`, retiring 248 lines of
