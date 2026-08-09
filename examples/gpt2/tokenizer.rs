@@ -1,5 +1,6 @@
 //! GPT-2's byte-level BPE tokenizer, built from the released
-//! `vocab.json` and `merges.txt` with no dependencies.
+//! `vocab.json` and `merges.txt`. The algorithm is hand-rolled and
+//! in view; only the vocabulary's JSON syntax is read by `serde_json`.
 //!
 //! Text splits under GPT-2's pretokenizer rule (contractions, then
 //! space-prefixed letter, number, and punctuation runs, then
@@ -10,8 +11,6 @@
 //! is the reverse table walk.
 
 use std::collections::HashMap;
-
-use super::json::{Json, parse};
 
 /// The tokenizer: vocabulary, merge ranks, and the byte tables.
 pub struct Tokenizer {
@@ -25,16 +24,11 @@ pub struct Tokenizer {
 impl Tokenizer {
     /// Builds the tokenizer from the released vocabulary and merges.
     pub fn new(vocabulary: &str, merges: &str) -> Self {
-        let mut ids = HashMap::new();
+        let ids: HashMap<String, usize> =
+            serde_json::from_str(vocabulary).expect("the vocabulary maps tokens to ids");
         let mut tokens = vec![String::new(); 50257];
-        if let Json::Object(fields) = parse(vocabulary) {
-            for (token, id) in fields {
-                let id = id.count();
-                tokens[id] = token.clone();
-                ids.insert(token, id);
-            }
-        } else {
-            panic!("the vocabulary is a JSON object");
+        for (token, id) in &ids {
+            tokens[*id] = token.clone();
         }
 
         let mut ranks = HashMap::new();

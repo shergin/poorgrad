@@ -7,6 +7,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The `gpt2` example reads JSON through `serde_json` instead of a
+  hand-written parser: the safetensors header is a derived struct and
+  the vocabulary a `HashMap<String, usize>`, retiring 248 lines of
+  parser that taught nothing about autodiff. GPT-2's byte-level BPE
+  and the safetensors layout stay hand-rolled and in view — the
+  dependency reads the syntax, never the algorithm. A dev-dependency
+  only, and no new crate in the tree: `criterion` already brought
+  `serde_json`.
+
 ## [0.9.0] - 2026-08-08
 
 ### Added

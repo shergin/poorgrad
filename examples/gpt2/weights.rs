@@ -1,6 +1,6 @@
 //! The released GPT-2 (124M) checkpoint: download-and-cache of the
-//! safetensors file and the tokenizer pair, plus a dependency-free
-//! reader for the safetensors format — an 8-byte little-endian header
+//! safetensors file and the tokenizer pair, plus a hand-rolled reader
+//! for the safetensors format — an 8-byte little-endian header
 //! length, a JSON header mapping tensor names to dtype, shape, and
 //! byte offsets, then the raw data section.
 //!
@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use poorgrad::Tensor;
-
-use super::json::parse;
+use serde::Deserialize;
+use serde::de::IgnoredAny;
 
 /// The published artifacts of the 124M model.
 const SOURCE: &str = "https://huggingface.co/openai-community/gpt2/resolve/main";
@@ -69,6 +69,24 @@ pub struct Weights {
     tensors: HashMap<String, Tensor<f32>>,
 }
 
+/// The safetensors header: one entry per tensor, plus the release's
+/// `__metadata__` field, which is not a tensor and is discarded.
+#[derive(Deserialize)]
+struct Header {
+    #[serde(rename = "__metadata__")]
+    _metadata: Option<IgnoredAny>,
+    #[serde(flatten)]
+    entries: HashMap<String, Entry>,
+}
+
+/// One tensor's entry in the safetensors header.
+#[derive(Deserialize)]
+struct Entry {
+    dtype: String,
+    shape: Vec<usize>,
+    data_offsets: [usize; 2],
+}
+
 impl Weights {
     /// Loads the checkpoint, downloading on first use.
     pub fn load() -> Self {
@@ -76,33 +94,19 @@ impl Weights {
         let bytes = std::fs::read(&path).expect("the checkpoint reads");
         let header_length =
             u64::from_le_bytes(bytes[..8].try_into().expect("the header length")) as usize;
-        let header =
-            parse(std::str::from_utf8(&bytes[8..8 + header_length]).expect("the header is UTF-8"));
+        let header: Header = serde_json::from_slice(&bytes[8..8 + header_length])
+            .expect("the header describes every tensor");
         let data = &bytes[8 + header_length..];
 
         let mut tensors = HashMap::new();
-        for (name, entry) in header.fields() {
-            if name == "__metadata__" {
-                continue;
-            }
-            assert_eq!(
-                entry.field("dtype").text(),
-                "F32",
-                "the 124M release is f32"
-            );
-            let shape: Vec<usize> = entry
-                .field("shape")
-                .elements()
-                .iter()
-                .map(|extent| extent.count())
-                .collect();
-            let offsets = entry.field("data_offsets").elements();
-            let (start, end) = (offsets[0].count(), offsets[1].count());
+        for (name, entry) in header.entries {
+            assert_eq!(entry.dtype, "F32", "the 124M release is f32");
+            let [start, end] = entry.data_offsets;
             let elements: Vec<f32> = data[start..end]
                 .chunks_exact(4)
                 .map(|chunk| f32::from_le_bytes(chunk.try_into().expect("four bytes")))
                 .collect();
-            tensors.insert(name.clone(), Tensor::new(shape, elements));
+            tensors.insert(name, Tensor::new(entry.shape, elements));
         }
         Self { tensors }
     }

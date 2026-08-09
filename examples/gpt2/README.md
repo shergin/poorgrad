@@ -2,7 +2,7 @@
 
 This example generates text with OpenAI's released GPT-2 (124M)
 weights, the whole model recorded on the tape from the existing op
-surface — no new opcodes, no dependencies, no Python in the loop
+surface — no new opcodes, no ML dependency, no Python in the loop
 unless you opt into the XLA engine. It exists to prove a claim: the
 op surface is done for transformers, and the same compiled plan can
 run at home or be written down as StableHLO and served by an
@@ -123,8 +123,9 @@ forward-only plan serves every step of both engines.
 The checkpoint loads through a hand-rolled safetensors reader (an
 8-byte header length, a JSON header, raw `f32` data) and the prompt
 through GPT-2's byte-level BPE (pretokenizer, byte-to-unicode
-table, ranked merges), both dependency-free and living beside this
-file. The tokenizer round-trips the prompt on every run as a
+table, ranked merges), both living beside this file. Only the JSON
+syntax in each is read by `serde_json`; every format and algorithm
+around it is in view. The tokenizer round-trips the prompt on every run as a
 self-check.
 
 ## Troubleshooting

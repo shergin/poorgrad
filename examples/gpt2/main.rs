@@ -30,7 +30,6 @@
 //! run. Run with:
 //! `cargo run --release --features accelerate --example gpt2 -- "prompt" 40 xla`
 
-mod json;
 mod tokenizer;
 mod weights;
 

@@ -398,6 +398,8 @@ dependencies = [
  "objc2-foundation",
  "objc2-metal",
  "rayon",
+ "serde",
+ "serde_json",
  "smallvec",
  "static_assertions",
 ]
