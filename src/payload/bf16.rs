@@ -1,6 +1,9 @@
 use std::fmt::{self, Debug};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
+use crate::backend;
+
+use super::gemm::{self, GemmTask};
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 /// A brain-float 16 payload: the top half of an `f32`, one sign bit,
@@ -183,6 +186,35 @@ impl Elementary for Bf16 {
         } else {
             Self::ZERO
         }
+    }
+
+    /// Computes the product with `f32` accumulation, rounded to bf16
+    /// once per output element — the convention bf16 hardware and
+    /// every mixed-precision recipe follow, and the documented matmul
+    /// contract of this payload. Per-op bf16 accumulation was
+    /// rejected: with eight significand bits, terms stop landing once
+    /// the total reaches 256 times their size.
+    ///
+    /// The operands expand to `f32` exactly (bf16 is a prefix of the
+    /// single format), the task is offered to the accelerated `f32`
+    /// backend chain, and the composed `f32` kernel answers when no
+    /// backend does, so the default build stays deterministic. The
+    /// emitted StableHLO states the same semantic: a `dot_general`
+    /// with an `f32` result type and an explicit `convert` back.
+    fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
+        let a: Vec<f32> = task.a().iter().map(|element| element.to_f32()).collect();
+        let b: Vec<f32> = task.b().iter().map(|element| element.to_f32()).collect();
+        let expanded = GemmTask::new(
+            &a,
+            task.a_strides(),
+            &b,
+            task.b_strides(),
+            task.m(),
+            task.k(),
+            task.n(),
+        );
+        let product = backend::gemm_f32(&expanded).unwrap_or_else(|| gemm::multiply(&expanded));
+        Some(product.into_iter().map(Self::from_f32).collect())
     }
 }
 

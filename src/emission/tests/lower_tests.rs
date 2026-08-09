@@ -409,6 +409,22 @@ fn bf16_case() -> Case {
 }
 
 #[test]
+fn bf16_matmuls_emit_the_accumulation_form() {
+    // The declared accumulation type is IR semantics: the dot carries
+    // an f32 result type and an explicit convert back, exactly what
+    // the home gemm seam computes.
+    let module = bf16_case().module;
+    assert!(
+        module.contains("-> tensor<2x2xf32>"),
+        "the dot must produce the accumulation type:\n{module}"
+    );
+    assert!(
+        module.contains("stablehlo.convert"),
+        "the accumulated product must convert back to bf16:\n{module}"
+    );
+}
+
+#[test]
 fn emitted_modules_parse_through_the_toolchain() {
     // Tier-0 conformance: an external StableHLO parser must accept the
     // emitted text.

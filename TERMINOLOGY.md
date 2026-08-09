@@ -404,8 +404,12 @@ to nearest-even. Same range as `f32`, precision of about two decimal
 digits; integers are exact up to 256. Half the memory of `f32` at rest,
 deterministic on every platform, and an ordinary `Differentiable` +
 `Elementary` implementation (plus the scalar-identity `Tensorial`), so
-`Tensor<Bf16>` and `Network<Bf16>` run the engine unchanged. In
-poorgrad: [`Bf16`](src/payload/bf16.rs).
+`Tensor<Bf16>` and `Network<Bf16>` run the engine unchanged. Matmul is
+the one documented exception to the per-op semantic: the `gemm` hook
+accumulates in `f32` and rounds once per output element (the bf16
+hardware convention), and the emitted StableHLO states the same
+semantic as an `f32`-result `dot_general` plus an explicit `convert`.
+In poorgrad: [`Bf16`](src/payload/bf16.rs).
 
 **Storage.** The buffer representation behind a `Tensor`, and the
 extension seam for how elements are held: today an `Arc`-shared row-major

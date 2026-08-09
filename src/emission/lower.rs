@@ -20,7 +20,8 @@ use crate::engine::{Function, WindowProduct};
 use crate::{Plan, Shape, Tensor};
 
 use super::builder::{
-    Emittable, dense_index_literal, dense_literal, index_tensor_type, pred_tensor_type, tensor_type,
+    Emittable, dense_index_literal, dense_literal, index_tensor_type, named_tensor_type,
+    pred_tensor_type, tensor_type,
 };
 
 /// Why a plan declined to emit.
@@ -223,18 +224,41 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             Function::MatMul(_) => {
                 let left = operand(0);
                 let right = operand(1);
-                emitter.line(format!(
-                    "{result} = stablehlo.dot_general {}, {}, contracting_dims = [1] x [0] \
-                     : ({}, {}) -> {result_type}",
-                    emitter.name(left),
-                    emitter.name(right),
-                    tensor_type::<Element>(&shapes[left]),
-                    tensor_type::<Element>(&shapes[right]),
-                ));
+                // An element with a declared accumulation type states
+                // it in the IR: the dot produces the wider result type
+                // and converts back, exactly what the home `gemm` seam
+                // computes.
+                if let Some(accumulation) = Element::ACCUMULATION {
+                    let accumulated = format!("%v{index}_accumulated");
+                    let accumulated_type = named_tensor_type(shape, accumulation);
+                    emitter.line(format!(
+                        "{accumulated} = stablehlo.dot_general {}, {}, \
+                         contracting_dims = [1] x [0] : ({}, {}) -> {accumulated_type}",
+                        emitter.name(left),
+                        emitter.name(right),
+                        tensor_type::<Element>(&shapes[left]),
+                        tensor_type::<Element>(&shapes[right]),
+                    ));
+                    emitter.line(format!(
+                        "{result} = stablehlo.convert {accumulated} \
+                         : ({accumulated_type}) -> {result_type}"
+                    ));
+                } else {
+                    emitter.line(format!(
+                        "{result} = stablehlo.dot_general {}, {}, contracting_dims = [1] x [0] \
+                         : ({}, {}) -> {result_type}",
+                        emitter.name(left),
+                        emitter.name(right),
+                        tensor_type::<Element>(&shapes[left]),
+                        tensor_type::<Element>(&shapes[right]),
+                    ));
+                }
             }
             Function::Gather(_) => {
                 // `output[i] = table[selection[i]]` over a one-hot
                 // selection is exactly the one-hot times the table.
+                // No accumulation form is needed: each output sums a
+                // single nonzero term, exact in the element type.
                 let table = operand(0);
                 let selection = operand(1);
                 emitter.line(format!(
@@ -591,21 +615,38 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             emitter.name(group.kernel),
             tensor_type::<Element>(&shapes[group.kernel]),
         ));
+        let windows_shape = Shape::new([batch, out_height, out_width, filters]);
         let windows = format!("%v{index}_windows");
-        let windows_type =
-            tensor_type::<Element>(&Shape::new([batch, out_height, out_width, filters]));
+        let windows_type = tensor_type::<Element>(&windows_shape);
+        // The convolution is the fused matmul, so it carries the same
+        // declared accumulation type as `MatMul` and converts back —
+        // the home fused executor computes through the same gemm seam.
+        let convolved = match Element::ACCUMULATION {
+            Some(_) => format!("%v{index}_accumulated"),
+            None => windows.clone(),
+        };
+        let convolved_type = match Element::ACCUMULATION {
+            Some(accumulation) => named_tensor_type(&windows_shape, accumulation),
+            None => windows_type.clone(),
+        };
         emitter.line(format!(
-            "{windows} = stablehlo.convolution({}, {kernel}) \
+            "{convolved} = stablehlo.convolution({}, {kernel}) \
              dim_numbers = [b, f, 0, 1]x[i, 0, 1, o]->[b, 0, 1, f], \
              window = {{stride = [{stride}, {stride}], \
              pad = [[{pad}, {pad}], [{pad}, {pad}]]}} \
              {{batch_group_count = 1 : i64, feature_group_count = 1 : i64}} \
-             : ({}, {kernel_type}) -> {windows_type}",
+             : ({}, {kernel_type}) -> {convolved_type}",
             emitter.name(group.source),
             tensor_type::<Element>(&shapes[group.source]),
             stride = group.stride,
             pad = group.padding,
         ));
+        if Element::ACCUMULATION.is_some() {
+            emitter.line(format!(
+                "{windows} = stablehlo.convert {convolved} \
+                 : ({convolved_type}) -> {windows_type}"
+            ));
+        }
         emitter.line(format!(
             "%v{index} = stablehlo.reshape {windows} : ({windows_type}) -> {}",
             tensor_type::<Element>(&shapes[index]),

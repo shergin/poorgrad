@@ -94,6 +94,19 @@ fn maximum_and_step_answer_exactly() {
 }
 
 #[test]
+fn matmul_accumulates_in_f32_and_rounds_once() {
+    use crate::Tensorial;
+
+    // Per-op bf16 accumulation would answer 256: the running total
+    // swamps each added one. The pinned contract accumulates in f32
+    // (257, then 258) and rounds once, and 258 is exactly a bf16.
+    let left = Tensor::new([1, 3], [256.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    let right = Tensor::new([3, 1], [1.0_f32, 1.0, 1.0].map(Bf16::from_f32).to_vec());
+    let product = left.matmul(&right);
+    assert_eq!(product.to_vec(), vec![Bf16::from_f32(258.0)]);
+}
+
+#[test]
 fn scalar_networks_differentiate_bf16() {
     let network = Network::new();
     let x = network.parameter(Bf16::from_f32(1.5));

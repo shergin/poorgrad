@@ -17,7 +17,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   `f32`; integers exact up to 256, per the documented `counted`
   contract. `Tensor<Bf16>` and `Network<Bf16>` run the engine
   unchanged, autodiff included — the payload contract holding beyond
-  the IEEE singles, with no engine changes at all.
+  the IEEE singles, with no engine changes at all. Matmul is the one
+  documented exception to the per-op semantic: the `Elementary::gemm`
+  hook accumulates in `f32` and rounds once per output element — the
+  convention bf16 hardware and every mixed-precision recipe follow —
+  expanding the operands exactly and riding the accelerated `f32`
+  backend chain, with the composed `f32` kernel as the deterministic
+  fallback.
 - StableHLO emission for `Bf16`: an `Emittable` implementation
   (`bf16` element type, literals through the exact `f32` expansion,
   bit-pattern hex for the non-finite values), and dtype-aware
@@ -26,7 +32,12 @@ The format is based on [Keep a Changelog], and this project adheres to
   reference interpreter through parsed dense literals and XLA
   through `ml_dtypes` arrays. The execution envelope is per-case,
   scaled to the element type's epsilon, since bf16's 2^-8 cannot
-  live under an `f32`-shaped fixed tolerance.
+  live under an `f32`-shaped fixed tolerance. Accumulation is IR
+  semantics, never an implementation's private choice: `Emittable`
+  gains `ACCUMULATION` (bf16 declares `f32`), and matmuls and fused
+  convolutions of such an element emit the wider result type with an
+  explicit `stablehlo.convert` back — exactly what the home gemm
+  seam computes.
 
 ### Changed
 

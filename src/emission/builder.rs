@@ -28,6 +28,18 @@ pub trait Emittable: Differentiable + PartialEq {
     /// The literal of negative infinity, seeding max reduces.
     const NEGATIVE_INFINITY: &'static str;
 
+    /// The MLIR element type contractions accumulate in before
+    /// converting back, or `None` when products accumulate in the
+    /// element type itself.
+    ///
+    /// It must state what the home execution actually computes: an
+    /// element whose [`Elementary::gemm`](crate::Elementary::gemm)
+    /// accumulates in a wider type declares that type here, so the
+    /// emitted `dot_general` carries the wider result type and an
+    /// explicit `convert` — the precision is IR semantics, never an
+    /// implementation's private choice.
+    const ACCUMULATION: Option<&'static str> = None;
+
     /// Formats this element as an MLIR literal.
     fn literal(&self) -> String;
 }
@@ -62,6 +74,7 @@ impl Emittable for Bf16 {
     const ELEMENT: &'static str = "bf16";
     const ZERO: &'static str = "0.0";
     const NEGATIVE_INFINITY: &'static str = "0xFF80";
+    const ACCUMULATION: Option<&'static str> = Some("f32");
 
     /// Finite values print through the exact `f32` expansion: a value
     /// that is exactly a bf16 round-trips through its shortest
@@ -97,6 +110,18 @@ pub(crate) fn tensor_type<Element: Emittable>(shape: &Shape) -> String {
         dimensions.push('x');
     }
     format!("tensor<{dimensions}{}>", Element::ELEMENT)
+}
+
+/// Returns the MLIR tensor type of `shape` in a named element type
+/// rather than `Element`'s own: the accumulation-typed result a
+/// contraction produces before converting back.
+pub(crate) fn named_tensor_type(shape: &Shape, element: &str) -> String {
+    let mut dimensions = String::new();
+    for extent in shape.axes() {
+        dimensions.push_str(&extent.to_string());
+        dimensions.push('x');
+    }
+    format!("tensor<{dimensions}{element}>")
 }
 
 /// Returns the dense literal of `elements` in row-major `shape`: the
