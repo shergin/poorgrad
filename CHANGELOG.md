@@ -23,7 +23,11 @@ The format is based on [Keep a Changelog], and this project adheres to
   convention bf16 hardware and every mixed-precision recipe follow —
   expanding the operands exactly and riding the accelerated `f32`
   backend chain, with the composed `f32` kernel as the deterministic
-  fallback.
+  fallback. The everyday numeric traits come along: `Display` and
+  `PartialOrd` through the exact `f32` expansion with float
+  semantics, `Default` as the additive identity, `From<f64>`
+  (rounding once — double rounding through `f32` is exact at bf16's
+  precision), and exact widening `From<Bf16> for f64`.
 - `ValueRef`, the unified value reference: `Evaluation::of`,
   `Evaluation::backward`, `Field::of` (so `Gradients::of`), plan
   targets (`compile`, `compile_training`, `compile_training_compact`,

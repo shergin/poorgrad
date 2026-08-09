@@ -1,4 +1,5 @@
-use std::fmt::{self, Debug};
+use std::cmp::Ordering;
+use std::fmt::{self, Debug, Display};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::backend;
@@ -83,9 +84,47 @@ impl PartialEq for Bf16 {
     }
 }
 
+/// Value ordering with float semantics through the exact `f32`
+/// expansion, matching [`PartialEq`]: a NaN orders against nothing.
+impl PartialOrd for Bf16 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.to_f32().partial_cmp(&other.to_f32())
+    }
+}
+
+impl Default for Bf16 {
+    /// The additive identity, matching the IEEE floats' default.
+    fn default() -> Self {
+        Self::ZERO
+    }
+}
+
+impl From<f64> for Bf16 {
+    /// Rounds to the nearest bf16 through `f32`. The double rounding
+    /// is exact: `f32` carries more than twice bf16's significand
+    /// bits plus two, so rounding through it agrees with rounding
+    /// the double directly to the nearest bf16.
+    fn from(value: f64) -> Self {
+        Self::from_f32(value as f32)
+    }
+}
+
+impl From<Bf16> for f64 {
+    /// Widens exactly, through the exact `f32` expansion.
+    fn from(value: Bf16) -> f64 {
+        f64::from(value.to_f32())
+    }
+}
+
 impl Debug for Bf16 {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         Debug::fmt(&self.to_f32(), formatter)
+    }
+}
+
+impl Display for Bf16 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.to_f32(), formatter)
     }
 }
 

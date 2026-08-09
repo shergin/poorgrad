@@ -74,6 +74,22 @@ fn each_operation_rounds_the_f32_result_once() {
 }
 
 #[test]
+fn everyday_numeric_traits_behave_like_floats() {
+    // Display prints the exact expansion, like any float.
+    assert_eq!(format!("{}", Bf16::from_f32(1.5)), "1.5");
+    assert_eq!(format!("{}", Bf16::from_f32(-2.0)), "-2");
+    // Ordering has float semantics: a NaN orders against nothing.
+    assert!(Bf16::from_f32(1.0) < Bf16::from_f32(2.0));
+    assert!(Bf16::from_f32(f32::NAN).partial_cmp(&Bf16::ONE).is_none());
+    // The default is the additive identity.
+    assert_eq!(Bf16::default(), Bf16::ZERO);
+    // An `f64` rounds once (double rounding through `f32` is exact
+    // at bf16's precision), and widening back is exact.
+    assert_eq!(Bf16::from(1.0_f64 / 3.0), Bf16::from_f32(1.0_f32 / 3.0));
+    assert_eq!(f64::from(Bf16::from_f32(1.5)), 1.5_f64);
+}
+
+#[test]
 fn negation_flips_only_the_sign_bit() {
     assert_eq!(-Bf16::from_f32(1.5), Bf16::from_f32(-1.5));
     assert_eq!((-Bf16::ZERO).to_bits(), 0x8000);
