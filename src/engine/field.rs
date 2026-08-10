@@ -66,6 +66,13 @@ impl<Data: Differentiable> Field<Data> {
     /// # Panics
     /// Panics if `value` belongs to a different lineage or a divergent
     /// fork, or was allocated after this field was produced.
+    /// Returns every node's payload in tape order, for the displays
+    /// that plot a whole field rather than read one value out of it.
+    #[cfg(feature = "evcxr")]
+    pub(crate) fn payloads(&self) -> &[Data] {
+        &self.values
+    }
+
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
         let index = match value.designation() {
             Designation::Bound { tape, id } => {

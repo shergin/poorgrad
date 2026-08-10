@@ -564,6 +564,29 @@ impl<Data: Differentiable> Plan<Data> {
         (peak, peak_at, total)
     }
 
+    /// Returns the live volume after every evaluated node under the
+    /// analysis floor: the curve whose peak [`describe`](Plan::describe)
+    /// reports as one number.
+    #[cfg(feature = "evcxr")]
+    pub(crate) fn live_series(&self) -> Vec<f64> {
+        let mut live: usize = 0;
+        let mut series = Vec::new();
+        for (index, slots) in self.releases.iter().enumerate() {
+            if !self.wanted[index] || self.fused_interior[index] {
+                continue;
+            }
+            live += self.shapes[index].volume();
+            series.push(live as f64);
+            for &slot in slots {
+                if self.fused_interior[slot] {
+                    continue;
+                }
+                live -= self.shapes[slot].volume();
+            }
+        }
+        series
+    }
+
     /// Renders the plan's decisions: one line per evaluated node with
     /// its operation, shape, and liveness, then the summary — node and
     /// readable counts, and the static live-volume story (in elements;

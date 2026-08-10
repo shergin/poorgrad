@@ -29,13 +29,14 @@ codegen-units = 1
 
 [dependencies]
 cow_vec = "1.4"
+malevich = { version = "1.14.3", features = ["evcxr"], optional = true }
 matrixmultiply = { version = "0.3.11", optional = true }
 smallvec = "1.15.2"
 static_assertions = "1.1"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", default-features = false, features = ["cargo_bench_support"] }
-malevich = { version = "1.12.0", features = ["pixel"] }
+malevich = { version = "1.14.3", features = ["pixel"] }
 rayon = "1.12.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.151"
@@ -64,6 +65,20 @@ simd = ["dep:matrixmultiply"]
 # declines at run time instead of failing to build. Linux only; a
 # safe stub elsewhere. Unvalidated on hardware so far.
 cuda = ["dep:libloading"]
+
+# Renders poorgrad's own types as rich output in an Evcxr notebook or
+# REPL: every display is a `to_html` string plus an `evcxr_display`
+# that emits it through Evcxr's mime protocol. The core API is
+# untouched — the feature adds inherent methods to existing types and
+# no new vocabulary — and `malevich` draws every chart, so the charts
+# in a notebook and the charts in an example are the same renderer.
+evcxr = ["dep:malevich"]
+
+# Adds real sixel/kitty/iTerm2 images to `evcxr` output in a
+# graphics-capable terminal. Jupyter takes the HTML path and never
+# needs this, so it stays separate rather than riding on `evcxr`: it
+# pulls `rustix` for the terminal capability probe.
+evcxr-pixel = ["evcxr", "malevich?/pixel"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }

@@ -282,9 +282,9 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "malevich"
-version = "1.12.0"
+version = "1.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5156065a3d6bd0bec214c214bdf9b327486fab64831002db1016b86de91f07e"
+checksum = "b9662a622dd750cbc774a0457b053bb6791290a17c46ebe8439efc892e96437c"
 dependencies = [
  "rustix",
  "terminal_size",

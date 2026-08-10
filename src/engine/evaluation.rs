@@ -120,6 +120,13 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     /// after this evaluation ran, or was skipped by a target-sliced run
     /// (see [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
+    /// Returns the run's computed values as a field, for the displays
+    /// that plot a whole pass rather than read one value out of it.
+    #[cfg(feature = "evcxr")]
+    pub(crate) fn field(&self) -> &Field<Data> {
+        &self.values
+    }
+
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
         let index = self.locate(value);
         let payload = self
