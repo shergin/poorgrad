@@ -103,7 +103,7 @@ impl<'network, Data: Tensorial> Differentiable for Trace<'network, Data> {
     type Accumulator = Self;
 
     fn promote(&self) -> Self {
-        self.clone()
+        *self
     }
 
     fn demote(accumulated: Self) -> Self {

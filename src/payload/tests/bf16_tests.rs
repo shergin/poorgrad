@@ -22,6 +22,10 @@ fn every_bit_pattern_round_trips_through_f32() {
     }
 }
 
+/// The tie literals are written to their full exact decimal: each one
+/// names a midpoint the test is about, and shortening it to the digits
+/// `f32` needs to round-trip would hide the tie the comments describe.
+#[allow(clippy::excessive_precision)]
 #[test]
 fn rounding_is_nearest_with_ties_to_even() {
     // 1 + 2^-8 sits exactly between 1.0 (even mantissa) and
