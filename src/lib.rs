@@ -56,6 +56,8 @@ mod backend;
 mod emission;
 mod engine;
 mod neural;
+#[cfg(feature = "evcxr")]
+mod notebook;
 mod payload;
 
 pub use backend::{Backend, BackendUnavailable};

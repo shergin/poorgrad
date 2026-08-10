@@ -32,6 +32,15 @@ pub(crate) enum Designation<'reference, Data> {
     Named(Symbol),
 }
 
+// The sealing pattern trips `private_interfaces`: `ValueRef` is public
+// and names `Sealed` as a supertrait, so `Sealed::designation` counts
+// as reachable at `pub` even though `sealed` is `pub(crate)` and
+// nothing outside the crate can name it. Silencing the lint here keeps
+// `cargo check` warning-free, which Evcxr requires: its variable-type
+// analysis parses rustc's output and treats a dependency's warnings as
+// a compilation failure, so a warning here breaks notebook cells that
+// would otherwise compile.
+#[allow(private_interfaces)]
 pub(crate) mod sealed {
     use super::super::{Symbol, Value};
     use super::Designation;

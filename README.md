@@ -130,6 +130,31 @@ and the reference interpreter agree with each other. Training,
 inspection, and the determinism contract stay at home. The numbers
 and their readings: [ACCELERATION.md](ACCELERATION.md).
 
+## Notebooks
+
+The crate runs in [Evcxr](https://github.com/evcxr/evcxr), the Rust
+Jupyter kernel, with no wrapper API: `Network::leaked()` hands back a
+`&'static Network` so recorded proxies survive a cell boundary, and
+the rest is the ordinary crate.
+
+```rust
+:dep poorgrad = { version = "0.9", features = ["evcxr"] }
+use poorgrad::*;
+
+let mut network: &'static Network<f64> = Network::leaked();
+let w: Value<'static, f64> = network.parameter(0.0);
+```
+
+The `evcxr` feature also draws poorgrad's own types as cell output —
+tensors as tables or heatmaps, gradients as a norm profile along the
+tape, and a `Plan` as its whole schedule with the live volume plotted
+beside it. Nothing about the core API changes: the feature adds
+inherent methods to existing types and no new vocabulary, and the
+charts come from the same `malevich` renderer the examples use.
+
+The idiom, what leaking costs, and the rough edges:
+[NOTEBOOKS.md](NOTEBOOKS.md).
+
 ## Where it fits
 
 - **Learning what an ML compiler does.** The examples are a

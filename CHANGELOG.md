@@ -9,6 +9,38 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `evcxr` feature: rich cell output for Evcxr notebooks and the
+  Evcxr REPL, and `Network::leaked`/`Network::leak`, which return a
+  `&'static Network` so recorded proxies outlive a notebook cell. The
+  feature adds inherent methods to existing types and no new
+  vocabulary — a notebook drives the ordinary API — and every display
+  is a pure `to_html(Theme)` string covered by `cargo test`, with a
+  `text/plain` alternative for the terminal REPL. `Value`, `Tensor`,
+  `Network`, `Plan`, `Field`, `Evaluation`, and `Symbol` all draw;
+  charts come from `malevich`, and `Plan` plots its live volume beside
+  the schedule `describe` prints. A companion `evcxr-pixel` feature
+  upgrades terminal charts to sixel/kitty images. The idiom, what
+  leaking costs, and the rough edges: `NOTEBOOKS.md`.
+
+### Fixed
+
+- The sealed-trait `private_interfaces` warnings on `cargo check`.
+  They were harmless to a normal build and fatal to a notebook: Evcxr
+  determines a cell's variable types by parsing rustc's output and
+  treats a dependency's warnings as a compilation failure, so any
+  warning here broke every cell that bound a variable of a poorgrad
+  type.
+
+### Changed
+
+- `malevich` moved from a dev-dependency to an optional dependency
+  behind the `evcxr` feature, and both entries moved from 1.12 to
+  1.15.0, whose public `evcxr` module supplies the stdout protocol and
+  the card background poorgrad's own cards are drawn on — the same two
+  a `Plot` paints itself with, so a tensor table and a chart in one
+  notebook cell cannot disagree. A default build's dependency tree is
+  unchanged.
+
 - The Module composition tier: `Module`, a named, parameterized
   recording function — `express(&network, input)` records through
   the public op surface, parameters held as detached `Symbol`s, the
