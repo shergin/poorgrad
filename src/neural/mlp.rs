@@ -2,38 +2,40 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Network, Shape, Symbol, Tensorial, Value};
 
-use super::{Activation, Layer};
+use super::{Activation, Linear, Module, Segment, Visitor};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Mlp<f64>: Send, Sync);
 
-/// A multilayer perceptron: dense layers chained by topology.
+/// A multilayer perceptron: affine stages chained by topology, the
+/// convenience constructor over [`Linear`] and [`Activation`].
 ///
-/// A topology such as `[3, 4, 4, 1]` defines three layers that map a
-/// `[batch, 3]` input to a `[batch, 1]` output. Hidden layers use
-/// [`Activation::Tanh`], and the output layer uses [`Activation::Identity`].
-/// The contained layers retain parameter [`Symbol`]s, allowing
-/// [`Mlp::express`] to record the network in each compatible generation.
+/// A topology such as `[3, 4, 4, 1]` defines three stages that map a
+/// `[batch, 3]` input to a `[batch, 1]` output. Hidden stages apply
+/// [`Activation::Tanh`] after their affine transform; the output stage
+/// is affine alone. The contained stages retain parameter [`Symbol`]s,
+/// so the perceptron records in each compatible generation.
 #[derive(Debug, Clone)]
 pub struct Mlp<Data> {
-    layers: Vec<Layer<Data>>,
+    stages: Vec<Linear<Data>>,
 }
 
 impl<Data: Differentiable> Mlp<Data> {
-    /// Allocates the perceptron's layers on `network` and returns it.
+    /// Allocates the perceptron's stages on `network` and returns it.
     ///
     /// `sizes` lists the value widths from the input width to the
     /// output width. `initializer` produces the initial payload for
     /// each parameter from its shape — `[inputs, outputs]` weights and
-    /// `[outputs]` biases, layer by layer. The initializer is responsible for
-    /// returning payloads with the requested shapes, and callers control
-    /// details such as fan-in scaling, randomness, and symmetry breaking.
+    /// `[outputs]` biases, stage by stage. The initializer is responsible
+    /// for returning payloads with the requested shapes, and callers
+    /// control details such as fan-in scaling, randomness, and symmetry
+    /// breaking.
     ///
     /// # Panics
     /// Panics if `sizes` has fewer than two entries. It also propagates
-    /// [`Layer::new`] validation failures if initialized weights and biases do
-    /// not form valid layer parameter shapes.
+    /// [`Linear::new`] validation failures if initialized weights and
+    /// biases do not form valid parameter shapes.
     pub fn new(
         network: &Network<Data>,
         sizes: &[usize],
@@ -43,27 +45,21 @@ impl<Data: Differentiable> Mlp<Data> {
             sizes.len() >= 2,
             "an MLP topology needs an input and an output width"
         );
-        let layers = sizes
+        let stages = sizes
             .windows(2)
-            .enumerate()
-            .map(|(index, pair)| {
-                let activation = if index == sizes.len() - 2 {
-                    Activation::Identity
-                } else {
-                    Activation::Tanh
-                };
+            .map(|pair| {
                 let weights = initializer(&Shape::new([pair[0], pair[1]]));
                 let bias = initializer(&Shape::new([pair[1]]));
-                Layer::new(network, weights, bias, activation)
+                Linear::new(network, weights, bias)
             })
             .collect();
-        Self { layers }
+        Self { stages }
     }
 
-    /// Returns the symbols of all parameters, layer by layer: each
-    /// layer's weights, then its bias.
+    /// Returns the symbols of all parameters, stage by stage: each
+    /// stage's weights, then its bias.
     pub fn parameters(&self) -> impl Iterator<Item = Symbol> + '_ {
-        self.layers.iter().flat_map(Layer::parameters)
+        self.stages.iter().flat_map(Linear::parameters)
     }
 }
 
@@ -74,15 +70,42 @@ impl<Data: Tensorial> Mlp<Data> {
     ///
     /// # Panics
     /// Panics if the parameters or `input` are not allocated on `network`, or
-    /// if `input` and the initialized layer shapes are incompatible.
+    /// if `input` and the initialized stage shapes are incompatible.
     pub fn express<'network>(
         &self,
         network: &'network Network<Data>,
         input: Value<'network, Data>,
     ) -> Value<'network, Data> {
-        self.layers
+        let last = self.stages.len() - 1;
+        self.stages
             .iter()
-            .fold(input, |value, layer| layer.express(network, value))
+            .enumerate()
+            .fold(input, |value, (index, stage)| {
+                let affine = Module::express(stage, network, value);
+                if index == last {
+                    affine
+                } else {
+                    Activation::Tanh.express(affine)
+                }
+            })
+    }
+}
+
+impl<Data: Tensorial> Module<Data> for Mlp<Data> {
+    fn express<'network>(
+        &self,
+        network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        Mlp::express(self, network, input)
+    }
+
+    fn visit(&self, visitor: &mut dyn Visitor) {
+        for (index, stage) in self.stages.iter().enumerate() {
+            visitor.enter(Segment::Index(index));
+            stage.visit(visitor);
+            visitor.leave();
+        }
     }
 }
 

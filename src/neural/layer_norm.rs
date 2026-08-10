@@ -4,6 +4,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Network, Symbol, Tensorial, Value};
 
+use super::{Module, Visitor};
+
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(LayerNorm<f64>: Send, Sync);
@@ -133,3 +135,18 @@ impl<Data: Tensorial> LayerNorm<Data> {
 #[cfg(test)]
 #[path = "tests/layer_norm_tests.rs"]
 mod tests;
+
+impl<Data: Tensorial> Module<Data> for LayerNorm<Data> {
+    fn express<'network>(
+        &self,
+        network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        LayerNorm::express(self, network, input)
+    }
+
+    fn visit(&self, visitor: &mut dyn Visitor) {
+        visitor.parameter("scale", self.scale);
+        visitor.parameter("shift", self.shift);
+    }
+}

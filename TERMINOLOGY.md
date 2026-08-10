@@ -605,29 +605,64 @@ build confines `unsafe` to the backend's module under a crate-wide
 
 ## Neural building blocks
 
+**Module.** A named, parameterized recording function — the unit of
+model composition: `express(&network, input)` records the module's
+formula through the public op surface and answers the output value,
+and `visit` walks its parameter tree for the serialization boundary.
+Modules hold parameter `Symbol`s, never payloads (the network owns
+state), so they are detached: `'static`, storable, and recording
+against whichever compatible generation they are given. Expression is
+record-time only — the cost never reaches a run, a plan, or a
+kernel — which is why composing through `dyn Module` (in
+`Sequential`) sits inside the sanctioned dynamic-dispatch exceptions.
+Programmatic access (tying, freezing) goes through typed accessors
+(`weights()`, struct fields), never names; names exist only as the
+structured `Path`/`Segment` checkpoint identity. Distinct from a Rust
+module (a namespace): this is the ML term of art. In poorgrad:
+[`Module`](src/neural/module.rs).
+
+**Sequential.** The ordered module chain: each stage's output feeds
+the next, stages heterogeneous behind `dyn Module`, appended with the
+boxing `then`. `Residual` is its skip-connection companion —
+`input + inner(input)`, path-transparent. In poorgrad:
+[`Sequential`](src/neural/sequential.rs),
+[`Residual`](src/neural/residual.rs).
+
+**Checkpoint.** A module tree's parameter payloads, captured and
+restored in two identities: positional (`snapshot`/`restore`, visit
+order — sufficient for resuming the same code) and named
+(`named_snapshot`/`named_restore`, matched by structured path — what
+survives code evolution and what foreign name-to-tensor checkpoints
+require). Restoring builds a new network generation through
+`update_each`; nothing mutates. In poorgrad:
+[`checkpoint`](src/neural/checkpoint.rs).
+
 **Neuron.** The smallest learnable unit: a weighted sum of inputs plus a
 bias, passed through an activation —
 `activation(weights . inputs + bias)`. Its parameters are allocated on a
 network at construction but held as symbols, so the neuron itself is
 detached: it survives generations, and `express` records its expression
 against whichever generation it is given. It is the scalar-granularity
-teaching block; `Layer` records at tensor granularity and does not
+teaching block; `Linear` records at tensor granularity and does not
 build on it. In poorgrad: [`Neuron`](src/neural/neuron.rs).
 
-**Layer.** A dense (fully connected) layer at tensor granularity:
-`activation(x . w + b)` over a `[batch, inputs]` value, with one
+**Linear.** The dense (fully connected) affine transform at tensor
+granularity: `x . w + b` over a `[batch, inputs]` value, with one
 `[inputs, outputs]` weight parameter and one `[outputs]` bias met
-through the explicit axis broadcast — a handful of tensor nodes instead
-of one node per scalar weight. Layers chain by feeding one layer's
-output batch to the next. Detached like `Neuron`: parameters live on
-the network, symbols in the layer. In poorgrad:
-[`Layer`](src/neural/layer.rs).
+through the explicit axis broadcast — a handful of tensor nodes
+instead of one node per scalar weight, and deliberately *unfused*: an
+activation is its own composition stage, which unlocks the orderings
+a bundled activation forbids. Detached like `Neuron`, and the
+weight-tying constructor `from_symbols` builds one over another
+module's parameters. In poorgrad:
+[`Linear`](src/neural/linear.rs).
 
-**Mlp.** A multilayer perceptron: dense layers chained by a topology of
-value widths (`[3, 4, 4, 1]`), hidden layers squashing with `Tanh` and
-an affine output layer. A facade over `Layer`, detached the same way,
-with initialization owned by the caller through a shape-to-payload
-initializer. In poorgrad: [`Mlp`](src/neural/mlp.rs).
+**Mlp.** A multilayer perceptron: affine stages chained by a topology
+of value widths (`[3, 4, 4, 1]`), hidden stages squashing with `Tanh`
+and an affine output stage. The convenience constructor over
+`Linear`, with initialization owned by the caller through a
+shape-to-payload initializer. In poorgrad:
+[`Mlp`](src/neural/mlp.rs).
 
 **Batch normalization (BatchNorm).** Standardizing every feature of a
 `[batch, features]` value by minibatch statistics and applying a learned
@@ -756,7 +791,7 @@ poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss module.
 
 **Initializer.** The shape-to-payload closure a caller hands to a
 building block at construction: initialization is caller-owned, and
-`Layer` and `Mlp` record whatever they are given. The `init` module
+`Linear` and `Mlp` record whatever they are given. The `init` module
 manufactures deterministic initializers — `uniform` and `normal` fill
 any shape, while the fan-aware `xavier` and `kaiming` read the fan-in
 off the requested rank-2 shape and zero rank-1 shapes, a bias

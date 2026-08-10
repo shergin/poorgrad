@@ -6,7 +6,9 @@
 //! binary `maximum` over the window lanes, so ties route their
 //! gradient deterministically to the earliest lane.
 
-use crate::{Tensorial, Value};
+use crate::{Network, Tensorial, Value};
+
+use super::Module;
 
 /// Records the square windows of a pooling operation and returns them
 /// as `[batch, channels, out_height, out_width, size * size]` lanes.
@@ -78,3 +80,51 @@ pub fn average_pool<'network, Data: Tensorial>(
 #[cfg(test)]
 #[path = "tests/pooling_tests.rs"]
 mod tests;
+
+/// The module form of [`max_pool`]: a stateless stage carrying its
+/// window geometry.
+pub struct MaxPool {
+    size: usize,
+    stride: usize,
+}
+
+impl MaxPool {
+    /// Creates the stage with the given window `size` and `stride`.
+    pub fn new(size: usize, stride: usize) -> Self {
+        Self { size, stride }
+    }
+}
+
+impl<Data: Tensorial> Module<Data> for MaxPool {
+    fn express<'network>(
+        &self,
+        _network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        max_pool(input, self.size, self.stride)
+    }
+}
+
+/// The module form of [`average_pool`]: a stateless stage carrying
+/// its window geometry.
+pub struct AveragePool {
+    size: usize,
+    stride: usize,
+}
+
+impl AveragePool {
+    /// Creates the stage with the given window `size` and `stride`.
+    pub fn new(size: usize, stride: usize) -> Self {
+        Self { size, stride }
+    }
+}
+
+impl<Data: Tensorial> Module<Data> for AveragePool {
+    fn express<'network>(
+        &self,
+        _network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        average_pool(input, self.size, self.stride)
+    }
+}

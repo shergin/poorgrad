@@ -21,7 +21,7 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Activation, Conv2d, Layer, Network, Plan, Retention, Shape, Symbol, Tensor, Tensorial, Value,
+    Conv2d, Linear, Module, Network, Plan, Retention, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -59,7 +59,7 @@ const STEPS: usize = 2000;
 struct Model {
     conv_1: Conv2d<Tensor<f32>>,
     conv_2: Conv2d<Tensor<f32>>,
-    head: Layer<Tensor<f32>>,
+    head: Linear<Tensor<f32>>,
 }
 
 impl Model {
@@ -88,11 +88,10 @@ impl Model {
                 1,
                 1,
             ),
-            head: Layer::new(
+            head: Linear::new(
                 network,
                 head_weights(&Shape::new([FLAT_LEN, CLASSES])),
                 head_weights(&Shape::new([CLASSES])),
-                Activation::Identity,
             ),
         }
     }

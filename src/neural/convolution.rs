@@ -16,6 +16,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Network, Symbol, Tensorial, Value};
 
+use super::{Module, Visitor};
+
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Conv2d<f64>: Send, Sync);
@@ -224,3 +226,31 @@ impl<Data: Tensorial> Conv2d<Data> {
 #[cfg(test)]
 #[path = "tests/convolution_tests.rs"]
 mod tests;
+
+impl<Data: Differentiable> Conv2d<Data> {
+    /// Returns the symbol of the `[filters, channels, kernel_height,
+    /// kernel_width]` weight bank.
+    pub fn weights(&self) -> Symbol {
+        self.weights
+    }
+
+    /// Returns the symbol of the `[filters]` bias vector.
+    pub fn bias(&self) -> Symbol {
+        self.bias
+    }
+}
+
+impl<Data: Tensorial> Module<Data> for Conv2d<Data> {
+    fn express<'network>(
+        &self,
+        network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        Conv2d::express(self, network, input)
+    }
+
+    fn visit(&self, visitor: &mut dyn Visitor) {
+        visitor.parameter("weights", self.weights);
+        visitor.parameter("bias", self.bias);
+    }
+}

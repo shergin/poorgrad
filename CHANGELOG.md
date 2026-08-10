@@ -9,6 +9,33 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The Module composition tier: `Module`, a named, parameterized
+  recording function — `express(&network, input)` records through
+  the public op surface, parameters held as detached `Symbol`s, the
+  cost never reaching a run — with `Sequential` (heterogeneous
+  stages behind the sanctioned record-time `dyn`, appended with the
+  boxing `then`), the path-transparent `Residual`, the shape
+  adapters `Flatten` and `Reshape`, module forms of pooling
+  (`MaxPool`, `AveragePool`), and implementations for `Activation`,
+  `Conv2d`, `LayerNorm`, `RmsNorm`, and `Mlp`. `BatchNorm` gains
+  the explicit inference-mode adapter (`inference(mean, variance)`);
+  training mode deliberately stays a plain method, because it
+  returns the batch statistics and a module must not hide values
+  its caller needs. Parameter traversal is `visit` over structured
+  `Path`/`Segment` paths (static-literal leaves, integer indices),
+  with `parameters` and `named_parameters` derived; programmatic
+  access — tying, freezing — uses typed accessors (`weights()`,
+  `bias()`, `Linear::from_symbols`), never names.
+- Module checkpoints in two identities, with zero engine changes:
+  positional `checkpoint::snapshot`/`restore` match by visit order —
+  sufficient for resuming the same code — and
+  `checkpoint::named_snapshot`/`named_restore` match by structured
+  path, which survives code evolution and maps to foreign
+  name-to-tensor checkpoints; missing and unexpected paths are loud
+  errors. Restoring builds a new network generation through
+  `update_each`, so shape mismatches panic through the existing
+  validation and nothing mutates; weight tying round-trips.
+
 - `Bf16`, the brain-float payload: a `u16` newtype implementing
   `Differentiable`, `Elementary`, and the scalar-identity
   `Tensorial`, where every operation converts
@@ -67,6 +94,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- **Breaking**: `Layer` is gone, replaced by the *unfused* `Linear` —
+  the affine transform alone, with activation as its own composition
+  stage, unlocking the orderings a bundled activation forbids
+  (pre-norm blocks, activation-before-projection). `Mlp` keeps its
+  constructor and its bit-identical recordings as the convenience
+  over `Linear`.
 - **Breaking**: the compile facade loses its fork —
   `compile_training_compact` is gone, and `compile_training` takes an
   explicit `Retention` policy (`All` or `Compact`) as its third

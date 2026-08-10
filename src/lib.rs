@@ -64,8 +64,10 @@ pub use engine::{
     Evaluation, Field, Gradients, Network, Plan, Retention, Symbol, Value, ValueRef, concat, stack,
 };
 pub use neural::{
-    Activation, Adam, AdamW, BatchNorm, Conv2d, Layer, LayerNorm, Mlp, Neuron, Normalization,
-    Optimizer, RmsNorm, Sgd, average_pool, conv2d, cross_entropy, init, max_pool,
+    Activation, Adam, AdamW, AveragePool, BatchNorm, BatchNormInference, Conv2d, Flatten,
+    LayerNorm, Linear, MaxPool, Mlp, Module, Neuron, Normalization, Optimizer, Path, Reshape,
+    Residual, RmsNorm, Segment, Sequential, Sgd, Visitor, average_pool, checkpoint, conv2d,
+    cross_entropy, init, max_pool, named_parameters, parameters,
 };
 pub use payload::{
     Bf16, Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial,

@@ -4,6 +4,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Network, Symbol, Tensorial, Value};
 
+use super::{Module, Visitor};
+
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(RmsNorm<f64>: Send, Sync);
@@ -115,3 +117,17 @@ impl<Data: Tensorial> RmsNorm<Data> {
 #[cfg(test)]
 #[path = "tests/rms_norm_tests.rs"]
 mod tests;
+
+impl<Data: Tensorial> Module<Data> for RmsNorm<Data> {
+    fn express<'network>(
+        &self,
+        network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        RmsNorm::express(self, network, input)
+    }
+
+    fn visit(&self, visitor: &mut dyn Visitor) {
+        visitor.parameter("scale", self.scale);
+    }
+}

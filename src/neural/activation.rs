@@ -1,4 +1,6 @@
-use crate::{Elementary, Value};
+use crate::{Elementary, Network, Tensorial, Value};
+
+use super::Module;
 
 /// The nonlinearity applied to a neural building block's affine output.
 ///
@@ -90,3 +92,15 @@ impl Activation {
 #[cfg(test)]
 #[path = "tests/activation_tests.rs"]
 mod tests;
+
+impl<Data: Tensorial> Module<Data> for Activation {
+    /// A stateless stage: the network is unused, and the default
+    /// no-op `visit` stands.
+    fn express<'network>(
+        &self,
+        _network: &'network Network<Data>,
+        input: Value<'network, Data>,
+    ) -> Value<'network, Data> {
+        Activation::express(*self, input)
+    }
+}
