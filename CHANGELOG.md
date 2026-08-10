@@ -35,8 +35,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 - `malevich` moved from a dev-dependency to an optional dependency
   behind the `evcxr` feature, and both entries moved from 1.12 to
-  1.14.3, the release carrying the `evcxr` display support. A default
-  build's dependency tree is unchanged.
+  1.15.0, whose public `evcxr` module supplies the stdout protocol and
+  the card background poorgrad's own cards are drawn on — the same two
+  a `Plot` paints itself with, so a tensor table and a chart in one
+  notebook cell cannot disagree. A default build's dependency tree is
+  unchanged.
 
 - The Module composition tier: `Module`, a named, parameterized
   recording function — `express(&network, input)` records through

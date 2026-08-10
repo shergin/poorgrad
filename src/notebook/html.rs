@@ -1,25 +1,16 @@
 //! The Evcxr output protocol and the shared card chrome.
 //!
 //! Evcxr reads mime-typed blocks from a cell's stdout, so emitting
-//! rich output is printing text in a fixed envelope. The helpers here
-//! build that envelope and the themed card every display draws into,
-//! matching `malevich`'s card colors so a chart and a tensor table
-//! rendered side by side look like one system.
+//! rich output is printing text in a fixed envelope. The envelope and
+//! the card background come from `malevich`, which paints its own plot
+//! cards with them, so a chart and a tensor table rendered side by side
+//! cannot disagree. What is local to this module is the chrome poorgrad
+//! adds on top: the header line and the muted color it is drawn in.
 
 use malevich::Theme;
+use malevich::evcxr::card_colors;
 
-/// The card background and foreground for a theme.
-///
-/// These duplicate `malevich`'s own card colors, which are crate
-/// private there. Exporting them from `malevich` would remove the
-/// duplication; until then the values are kept identical on purpose.
-pub(crate) fn card_colors(theme: Theme) -> (&'static str, &'static str) {
-    if theme == Theme::LIGHT {
-        ("#ffffff", "#1f2328")
-    } else {
-        ("#0d1117", "#e6edf3")
-    }
-}
+pub(crate) use malevich::evcxr::mime_bundle;
 
 /// The muted foreground for headers and units, per theme.
 pub(crate) fn muted_color(theme: Theme) -> &'static str {
@@ -63,28 +54,6 @@ pub(crate) fn card(theme: Theme, header: &str, body: &str) -> String {
          <div style=\"color:{muted};margin-bottom:6px\">{header}</div>{body}</div>"
     );
     html
-}
-
-/// Wraps `blocks` in Evcxr's stdout protocol as alternative
-/// representations of one value.
-///
-/// A frontend draws the richest form it supports, so a `text/plain`
-/// block beside `text/html` yields the card in Jupyter and readable
-/// text in the terminal REPL, which cannot draw HTML.
-pub(crate) fn mime_bundle(blocks: &[(&str, &str)]) -> String {
-    use std::fmt::Write as _;
-
-    let mut bundle = String::new();
-    for (mime, content) in blocks {
-        if !bundle.is_empty() {
-            bundle.push('\n');
-        }
-        let _ = write!(
-            bundle,
-            "EVCXR_BEGIN_CONTENT {mime}\n{content}\nEVCXR_END_CONTENT"
-        );
-    }
-    bundle
 }
 
 /// Prints an HTML representation and its plain-text alternative as one

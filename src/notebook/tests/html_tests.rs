@@ -12,16 +12,13 @@ fn escaping_leaves_ordinary_text_untouched() {
 
 #[test]
 fn a_mime_bundle_matches_the_evcxr_protocol() {
+    // The protocol emitter is `malevich`'s; this pins the shape poorgrad
+    // relies on rather than restating its unit tests.
     assert_eq!(
         mime_bundle(&[("text/html", "<b>x</b>"), ("text/plain", "x")]),
         "EVCXR_BEGIN_CONTENT text/html\n<b>x</b>\nEVCXR_END_CONTENT\n\
          EVCXR_BEGIN_CONTENT text/plain\nx\nEVCXR_END_CONTENT"
     );
-}
-
-#[test]
-fn an_empty_bundle_renders_nothing() {
-    assert_eq!(mime_bundle(&[]), "");
 }
 
 #[test]
@@ -38,9 +35,18 @@ fn cards_carry_their_theme_colors_and_place_the_body_verbatim() {
 }
 
 #[test]
-fn card_colors_match_malevichs_own_so_the_two_crates_agree() {
-    // `malevich` renders its plot cards with these exact values; a
-    // chart and a tensor table in one notebook must not disagree.
-    assert_eq!(card_colors(Theme::DARK), ("#0d1117", "#e6edf3"));
-    assert_eq!(card_colors(Theme::LIGHT), ("#ffffff", "#1f2328"));
+fn a_poorgrad_card_and_a_malevich_chart_share_one_background() {
+    // The reason the colors come from `malevich` rather than a local
+    // copy: a tensor table and a chart in one cell must not disagree.
+    let plot = malevich::Plot::new().layer(malevich::Line::y(vec![1.0, 2.0]));
+    for theme in [Theme::DARK, Theme::LIGHT] {
+        let mut frame = malevich::Frame::plain(20, 6);
+        frame.theme = theme;
+        let (background, _) = malevich::evcxr::card_colors(theme);
+        assert!(
+            plot.to_html(&frame)
+                .contains(&format!("background-color:{background}"))
+        );
+        assert!(card(theme, "header", "body").contains(&format!("background-color:{background}")));
+    }
 }
