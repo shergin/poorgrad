@@ -62,7 +62,19 @@ try:
     executable = backend.compile_and_load(module_text, devices)
 except ImportError:
     executable = backend.compile(module_text)
-static_buffers = [backend.buffer_from_pyval(argument) for argument in static]
+
+
+def device_buffer(argument):
+    """Places one numpy argument on the backend's first device."""
+    if hasattr(backend, "buffer_from_pyval"):
+        # The pre-0.11 spelling, the era Apple's jax-metal plugin pins.
+        return backend.buffer_from_pyval(argument)
+    import jax
+
+    return jax.device_put(argument, backend.local_devices()[0])
+
+
+static_buffers = [device_buffer(argument) for argument in static]
 print("serving", file=sys.stderr, flush=True)
 
 reader = sys.stdin.buffer
@@ -76,7 +88,7 @@ while True:
         if not raw:
             sys.exit(0)
         dynamic.append(np.frombuffer(raw, dtype="<f4").reshape(shape))
-    buffers = static_buffers + [backend.buffer_from_pyval(argument) for argument in dynamic]
+    buffers = static_buffers + [device_buffer(argument) for argument in dynamic]
     for result in executable.execute(buffers):
         writer.write(np.asarray(result).astype("<f4").tobytes())
     writer.flush()
