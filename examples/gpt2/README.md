@@ -36,7 +36,7 @@ cargo run --release --features accelerate --example gpt2 -- [PROMPT] [COUNT] [EN
 |---|---|---|
 | 1 | the prompt | `The library of the poor holds one book` |
 | 2 | how many tokens to generate | `40` |
-| 3 | the engine: `tape` or `xla` | `tape` |
+| 3 | the engine: `tape`, `bf16`, or `xla` | `tape` |
 
 The recorded graph attends over a fixed 256-token context, so the
 prompt plus the generation count must fit inside it; the example
@@ -44,14 +44,22 @@ asserts this up front. Sampling is temperature 0.9 with top-k 40
 under a fixed seed, so a given prompt, count, and engine reproduce
 their text exactly.
 
-## The two engines
+## The three engines
 
 **`tape`** runs the plan on poorgrad's own interpreter — the
 oracle. Everything happens in-process; the per-step feeds are the
 embedded token window and the prediction row's one-hot extraction,
 so generation never regrows the tape.
 
-**`xla`** emits the same plan as a textual StableHLO module and
+**`bf16`** records the identical module tree over `Tensor<Bf16>`
+and runs it on the same interpreter: the model code is generic over
+the element type, so the half-precision variant is one type
+argument, with the checkpoint converted at the precision boundary
+and every matmul accumulating in `f32` by the payload's contract.
+Half the memory, its own (coherent) text — bf16 rounding is a
+different model, not a noisy copy of the f32 one.
+
+**`xla`** emits the f32 plan as a textual StableHLO module and
 holds a serving process, [`tools/serve-stablehlo-xla.py`](../../tools/serve-stablehlo-xla.py):
 compile once, keep the 124M parameters resident (they cross the
 boundary once, as a binary sidecar), and answer each step over raw
@@ -78,6 +86,7 @@ Measured on an M1 Pro, same prompt and seed:
 | engine | ms/token | output |
 |---|---|---|
 | `tape` (+`accelerate`) | 194 | the reference text |
+| `bf16` (+`accelerate`) | 341 | its own text, by rounding |
 | `xla` on XLA-CPU | 132 | identical to the tape's |
 | `xla` on Metal (`jax-metal`) | 26 | wrong — see below |
 
@@ -108,19 +117,31 @@ it is the whole conformance story in one command.
 
 ## How it works
 
-The model is twelve pre-norm blocks built from ordinary graph ops:
-`LayerNorm` facades holding the checkpoint's scales, per-head rank-2
-attention sliced by `narrow` out of one fused query-key-value
-projection, heads joined by `concat`, a causal mask as an additive
-`0 / -inf` leaf, and a GELU MLP whose tanh-approximation constants
-ride as scalar leaves. The token embedding lookup is loop-land data
-preparation — a row copy from the table, like makemore's context
-assembly — so the plan's input is the embedded window and the
-vocabulary-sized one-hot never crosses any boundary. The tied
-language-model head is the embedding table transposed. One
-forward-only plan serves every step of both engines.
+The model lives in [`model.rs`](model.rs) as a module tree: twelve
+pre-norm blocks — each a struct of `Linear`s and `LayerNorm`s
+around a custom attention module — stacked in a `Sequential`, with
+the whole tree generic over the element type (that genericity is
+the `bf16` engine). Attention slices per-head rank-2 views by
+`narrow` out of one fused query-key-value `Linear`, joins the heads
+by `concat`, and adds the causal mask as an additive `0 / -inf`
+leaf; the GELU MLP's tanh-approximation constants ride as scalar
+leaves. The token embedding lookup is loop-land data preparation —
+a row copy from the table, like makemore's context assembly — so
+the plan's input is the embedded window and the vocabulary-sized
+one-hot never crosses any boundary. The tied language-model head is
+the embedding table transposed, read through the module's typed
+accessor. One forward-only plan serves every step of every engine.
 
-The checkpoint loads through a hand-rolled safetensors reader (an
+The tree's `visit` paths mirror the checkpoint's own tensor names
+(`h.{i}.attn.c_attn`, `ln_f`, ...), so loading the pretrained
+weights is one `named_restore` over the paths the model announces
+itself: the tree allocates with placeholder payloads, each path is
+rendered as the checkpoint's spelling (only the leaf names differ),
+and the restore builds the generation that carries the weights —
+missing tensors and shape mismatches fail loudly through the
+restore's own validation.
+
+The safetensors file itself is read by a hand-rolled reader (an
 8-byte header length, a JSON header, raw `f32` data) and the prompt
 through GPT-2's byte-level BPE (pretokenizer, byte-to-unicode
 table, ranked merges), both living beside this file. Only the JSON

@@ -137,6 +137,21 @@ The format is based on [Keep a Changelog], and this project adheres to
   dependency reads the syntax, never the algorithm. A dev-dependency
   only, and no new crate in the tree: `criterion` already brought
   `serde_json`.
+- The `gpt2` example rebuilds on the module tier, closing the
+  design's proof milestone: the model is a `model.rs` module tree —
+  blocks as structs of `Linear`s and `LayerNorm`s around a custom
+  attention module, stacked in a `Sequential`, the tied head read
+  through a typed accessor — and the bespoke construction-time
+  loader is gone, replaced by one `checkpoint::named_restore` over
+  the paths the tree announces itself: `visit` mirrors the
+  checkpoint's own layout (`h.{i}.attn.c_attn`, `ln_f`), so the
+  adapter shrinks to the leaf spellings. The tree is generic over
+  the element type, which is the new `bf16` engine — the identical
+  modules over `Tensor<Bf16>`, the checkpoint converted at the
+  precision boundary, 341 ms/token against the f32 tape's 195. The
+  XLA engine's static arguments now come from the positional
+  `checkpoint::snapshot`, whose visit order is recorded to match the
+  emitted argument order.
 
 ## [0.9.0] - 2026-08-08
 
