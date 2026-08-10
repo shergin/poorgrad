@@ -10,6 +10,11 @@ license = "MIT OR Apache-2.0"
 keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
 categories = ["science", "mathematics"]
 
+# The logo is README furniture, not something a dependent compiles
+# against, and as an already-compressed PNG it was about half the
+# published download. The README points at the repository copy.
+exclude = ["poorgrad.png"]
+
 # The default libtest bench harness would intercept criterion's CLI
 # flags (such as `--save-baseline`), so benchmarks run only through the
 # explicit `[[bench]]` targets below. Each also sets `test = false`:

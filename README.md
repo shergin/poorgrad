@@ -1,7 +1,7 @@
 # poorgrad
 
 <p align="center">
-  <img src="poorgrad.png" alt="poorgrad logo" width="480">
+  <img src="https://raw.githubusercontent.com/shergin/poorgrad/master/poorgrad.png" alt="poorgrad logo" width="480">
 </p>
 
 **An autodiff compiler stack in miniature, written the way Rust wants
