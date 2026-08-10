@@ -138,7 +138,7 @@ Jupyter kernel, with no wrapper API: `Network::leaked()` hands back a
 the rest is the ordinary crate.
 
 ```rust
-:dep poorgrad = { version = "0.9", features = ["evcxr"] }
+:dep poorgrad = { version = "0.10", features = ["evcxr"] }
 use poorgrad::*;
 
 let mut network: &'static Network<f64> = Network::leaked();

@@ -13,7 +13,7 @@ evcxr_jupyter --install
 Then, in the first cell:
 
 ```rust
-:dep poorgrad = { version = "0.9", features = ["evcxr"] }
+:dep poorgrad = { version = "0.10", features = ["evcxr"] }
 use poorgrad::*;
 ```
 
@@ -23,7 +23,7 @@ so the difference is felt immediately:
 
 ```
 :cache 500
-:dep poorgrad = { version = "0.9", features = ["evcxr"] }
+:dep poorgrad = { version = "0.10", features = ["evcxr"] }
 ```
 
 ## The two rules

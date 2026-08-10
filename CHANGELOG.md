@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-10
+
 ### Added
 
 - The `evcxr` feature: rich cell output for Evcxr notebooks and the
@@ -21,25 +23,6 @@ The format is based on [Keep a Changelog], and this project adheres to
   the schedule `describe` prints. A companion `evcxr-pixel` feature
   upgrades terminal charts to sixel/kitty images. The idiom, what
   leaking costs, and the rough edges: `NOTEBOOKS.md`.
-
-### Fixed
-
-- The sealed-trait `private_interfaces` warnings on `cargo check`.
-  They were harmless to a normal build and fatal to a notebook: Evcxr
-  determines a cell's variable types by parsing rustc's output and
-  treats a dependency's warnings as a compilation failure, so any
-  warning here broke every cell that bound a variable of a poorgrad
-  type.
-
-### Changed
-
-- `malevich` moved from a dev-dependency to an optional dependency
-  behind the `evcxr` feature, and both entries moved from 1.12 to
-  1.15.0, whose public `evcxr` module supplies the stdout protocol and
-  the card background poorgrad's own cards are drawn on — the same two
-  a `Plot` paints itself with, so a tensor table and a chart in one
-  notebook cell cannot disagree. A default build's dependency tree is
-  unchanged.
 
 - The Module composition tier: `Module`, a named, parameterized
   recording function — `express(&network, input)` records through
@@ -161,6 +144,13 @@ The format is based on [Keep a Changelog], and this project adheres to
   a storage representation that computes its elements has nothing
   to lend a reference to. Callers migrate by deleting `.cloned()`
   or `.copied()` after `iter()`.
+- `malevich` moved from a dev-dependency to an optional dependency
+  behind the `evcxr` feature, and both entries moved from 1.12 to
+  1.15.0, whose public `evcxr` module supplies the stdout protocol and
+  the card background poorgrad's own cards are drawn on — the same two
+  a `Plot` paints itself with, so a tensor table and a chart in one
+  notebook cell cannot disagree. A default build's dependency tree is
+  unchanged.
 - The `gpt2` example reads JSON through `serde_json` instead of a
   hand-written parser: the safetensors header is a derived struct and
   the vocabulary a `HashMap<String, usize>`, retiring 248 lines of
@@ -184,6 +174,15 @@ The format is based on [Keep a Changelog], and this project adheres to
   XLA engine's static arguments now come from the positional
   `checkpoint::snapshot`, whose visit order is recorded to match the
   emitted argument order.
+
+### Fixed
+
+- The sealed-trait `private_interfaces` warnings on `cargo check`.
+  They were harmless to a normal build and fatal to a notebook: Evcxr
+  determines a cell's variable types by parsing rustc's output and
+  treats a dependency's warnings as a compilation failure, so any
+  warning here broke every cell that bound a variable of a poorgrad
+  type.
 
 ## [0.9.0] - 2026-08-08
 
@@ -875,7 +874,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/shergin/poorgrad/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/shergin/poorgrad/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/shergin/poorgrad/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/shergin/poorgrad/compare/v0.6.0...v0.7.0
