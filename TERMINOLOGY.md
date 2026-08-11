@@ -531,14 +531,30 @@ once, shared by all generations of a network; allocations never move or
 drop while the arena lives, which is what makes forks cheap and references
 stable. Provided by the [`cow_vec`](https://crates.io/crates/cow_vec) crate
 inside `Tape`. Training never touches it: parameter payloads live in the
-parameter store, so the arena holds structure only.
+parameter store, so the arena holds structure only. Nodes recorded on a
+sibling after a fork still land in the *shared* arena; they become
+unreachable from the parent but stay allocated until every sharer of that
+arena drops (or a side rebuilds private arenas — see Compaction).
 
 **Fork.** An O(1) copy of a network sharing the underlying arena but owning
 an independent node list; later recordings on either side never affect the
-other. The two sides contend for the current branch on their first
-recording, and the loser diverges onto a fresh one, so their later
-symbols never misbind (see Branch). In poorgrad: `Network::clone`, built
-on [`Tape::fork`](src/engine/tape/tape.rs).
+other's *visible* graph. The two sides contend for the current branch on
+their first recording, and the loser diverges onto a fresh one, so their
+later symbols never misbind (see Branch). Train-only forks (`update`
+without further recording) are memory-clean: the parameter store turns
+over per generation and does not use the arena. Structure recorded on a
+sibling can keep arena memory alive for the lineage — that is the cost of
+O(1) sharing, reclaimed by dropping every sharer or by compaction. In
+poorgrad: `Network::clone`, built on [`Tape::fork`](src/engine/tape/tape.rs).
+
+**Compaction.** Rebuilding a network's structure columns into private
+arenas that hold only its live nodes, so sibling-fork garbage no longer
+pins memory once the compacted form replaces the polluted parent (or the
+polluted side is dropped). Same lineage and generation state as a fork:
+symbols resolve, parameters are shared until the next `update`, tip
+contention is the same. Cost is O(live nodes), not O(1). Prefer a plain
+fork when no post-fork recording is involved. In poorgrad:
+[`Network::compacted`](src/engine/network.rs).
 
 ## Acceleration
 

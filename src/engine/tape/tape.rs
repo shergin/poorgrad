@@ -422,6 +422,44 @@ impl<Data: Differentiable> Tape<Data> {
         }
     }
 
+    /// Returns a lineage-compatible tape whose column arenas hold only
+    /// this tape's live nodes.
+    ///
+    /// A plain [`Tape::fork`] shares the append-only column arena, so
+    /// nodes recorded on a sibling fork stay allocated until every
+    /// sharer of that arena drops. Compaction rebuilds the function,
+    /// operand, and shape columns into fresh arenas from the live
+    /// entries alone, so dropping the compacted tape (or replacing a
+    /// polluted parent with it) can release sibling garbage the parent
+    /// no longer reaches. Parameter and input stores, the branch chain,
+    /// and tip contention match [`Tape::fork`]: same generation state,
+    /// same lineage, same first-writer branch rule.
+    ///
+    /// Cost is O(live nodes) — cloning each live column entry into the
+    /// new arenas — not O(1). Prefer [`Tape::fork`] for train-only
+    /// what-ifs that never record after the clone.
+    pub(crate) fn compacted(&self) -> Self {
+        let mut inner = self.lock();
+        let tip = inner.share_tip();
+        // `From<Vec<_>>` builds a private arena sized to the live
+        // column; `CowVec::clone` would keep sharing any polluted one.
+        let functions: CowVec<Function<Data>> = inner.functions.to_vec().into();
+        let operands: CowVec<Operands> = inner.operands.to_vec().into();
+        let shapes: CowVec<Shape> = inner.shapes.to_vec().into();
+        Self {
+            inner: Mutex::new(TapeInner {
+                functions,
+                operands,
+                shapes,
+                parameters: Arc::clone(&inner.parameters),
+                inputs: Arc::clone(&inner.inputs),
+                chain: Arc::clone(&inner.chain),
+                tip,
+            }),
+            lineage: self.lineage,
+        }
+    }
+
     /// Returns a new tape with every parameter's payload replaced by
     /// `rule(current, gradient)`.
     ///

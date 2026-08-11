@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `Network::compacted`: rebuilds the structure columns into private
+  arenas that hold only this network's live nodes. A plain `clone` is
+  still O(1) and shares the append-only arena — right for train-only
+  forks, wrong when siblings record after the fork and pin sibling
+  garbage for the lineage. Compaction is O(live nodes), stays in the
+  same lineage, and is the explicit unwind for that trade. Documented
+  under Arena / Fork / Compaction in `TERMINOLOGY.md`.
+
+### Fixed
+
+- Docs: the train-loop memory contract is stated accurately — parameter
+  payloads reclaimed per generation since the parameter store (0.7 era);
+  residual arena cost is sibling *structure* after forked recording, not
+  weights per step.
+
 ## [0.10.0] - 2026-08-10
 
 ### Added

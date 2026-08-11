@@ -213,6 +213,34 @@ impl<Data: Differentiable> Network<Data> {
                 }),
         }
     }
+
+    /// Returns a lineage-compatible network whose structural arenas hold
+    /// only this network's live nodes.
+    ///
+    /// [`Network::clone`] is O(1) because it shares the append-only
+    /// column arena. That is the right trade for train-only forks
+    /// (`update` only): parameters live in the per-generation store and
+    /// never touch the arena. It is the wrong trade when siblings
+    /// *record* after the fork — those nodes stay allocated in the
+    /// shared arena until every sharer drops, even after the recording
+    /// forks themselves are gone.
+    ///
+    /// Compaction rebuilds the structure columns into private arenas
+    /// from the live entries alone. Replacing a parent with its
+    /// compacted form (`network = network.compacted()`) after
+    /// experimental forks have dropped lets the process release their
+    /// structural garbage. The result stays in the same lineage:
+    /// symbols resolve, parameter payloads are the current generation's,
+    /// and the first side to record continues the tip branch as after a
+    /// plain fork.
+    ///
+    /// Cost is O(live nodes), not O(1). Prefer [`Network::clone`] when
+    /// no post-fork recording is involved.
+    pub fn compacted(&self) -> Self {
+        Self {
+            tape: self.tape.compacted(),
+        }
+    }
 }
 
 // Running the tape requires the full payload contract (`Tensorial`, for
@@ -495,6 +523,10 @@ impl<Data: Differentiable> Clone for Network<Data> {
     /// The fork shares the underlying arena but keeps an independent tape:
     /// later allocations on either network never affect the other, while
     /// every node allocated before the fork stays reachable in both.
+    /// Parameter payloads live outside the arena (the parameter store);
+    /// structural nodes recorded on a sibling after the fork can keep
+    /// arena memory alive until every sharer drops — see
+    /// [`Network::compacted`].
     fn clone(&self) -> Self {
         Self {
             tape: self.tape.fork(),

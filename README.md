@@ -250,13 +250,18 @@ crate root keeps the public API flat. From tape to training:
   append-only, cloning forks the network in O(1), and the whole structure is
   `Send + Sync`. A gradient step is a state transition: `update` produces
   the next generation, rebuilding only the parameter store while sharing
-  everything else. `input` declares a per-run input with a default
-  payload; `forward_with` binds fed payloads to inputs for one run,
-  validated against their recorded shapes; `forward_for` additionally
-  slices the run to the ancestors of declared targets, so a tape
-  carrying several expressions (a training batch and an evaluation
-  twin) evaluates only the one the run is for — reads of skipped
-  values fail loudly rather than answer with a placeholder.
+  everything else — replaced payloads drop with that generation, so a
+  linear train loop does not retain weights per step. Structure lives in
+  the shared arena: train-only forks stay clean, but nodes recorded on a
+  sibling after `clone` can pin arena memory until every sharer drops;
+  [`Network::compacted`](src/engine/network.rs) rebuilds private arenas
+  from the live nodes when that trade must be unwound. `input` declares a
+  per-run input with a default payload; `forward_with` binds fed payloads
+  to inputs for one run, validated against their recorded shapes;
+  `forward_for` additionally slices the run to the ancestors of declared
+  targets, so a tape carrying several expressions (a training batch and an
+  evaluation twin) evaluates only the one the run is for — reads of
+  skipped values fail loudly rather than answer with a placeholder.
 - [`Symbol`](src/engine/symbol.rs) — a detached, `Copy` identifier for a value.
   `Network::resolve` turns it into a proxy in a compatible generation, while
   rejecting unrelated or divergent networks. Training loops keep symbols of

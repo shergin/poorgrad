@@ -165,6 +165,69 @@ fn update_replaces_parameters_and_keeps_everything_else() {
 }
 
 #[test]
+fn compacted_preserves_values_and_lineage() {
+    let network = Network::new();
+    let weight = network.parameter(2.0_f64);
+    let input = network.input(3.0);
+    let product = weight * input;
+    let weight_symbol = weight.symbol();
+    let input_symbol = input.symbol();
+    let product_symbol = product.symbol();
+
+    let compacted = network.compacted();
+    assert_eq!(compacted.len(), network.len());
+    assert_eq!(compacted.resolve(weight_symbol).payload(), Some(2.0));
+    assert_eq!(compacted.resolve(input_symbol).payload(), Some(3.0));
+    assert_eq!(
+        *compacted.forward().of(product_symbol),
+        *network.forward().of(product_symbol)
+    );
+
+    // Same lineage: a field from the original still steps the compacted
+    // generation, and the reverse.
+    let gradients = network.forward().backward(product_symbol);
+    let next = compacted.update(&gradients, |parameter, gradient| parameter - gradient);
+    assert_eq!(next.resolve(weight_symbol).payload(), Some(-1.0));
+}
+
+#[test]
+fn compacted_detaches_structure_from_sibling_recordings() {
+    let parent = Network::new();
+    let weight = parent.parameter(1.0_f64);
+    let loss = weight * weight;
+    let loss_symbol = loss.symbol();
+    let parent_len = parent.len();
+
+    // Sibling forks record structure the parent never sees; a plain
+    // clone would keep sharing the arena those nodes landed in.
+    for index in 0..8 {
+        let fork = parent.clone();
+        for offset in 0..16 {
+            let leaf = fork.leaf((index * 16 + offset) as f64);
+            let _ = leaf * leaf;
+        }
+        assert!(fork.len() > parent_len);
+        drop(fork);
+    }
+    assert_eq!(parent.len(), parent_len);
+
+    let compacted = parent.compacted();
+    assert_eq!(compacted.len(), parent_len);
+    assert_eq!(
+        *compacted.forward().of(loss_symbol),
+        *parent.forward().of(loss_symbol)
+    );
+
+    // The compacted side records into a private arena: growing it does
+    // not change the parent's live length, and symbols from before the
+    // compact still resolve.
+    let extra = compacted.leaf(9.0);
+    let _ = extra * compacted.resolve(weight.symbol());
+    assert_eq!(parent.len(), parent_len);
+    assert!(compacted.len() > parent_len);
+}
+
+#[test]
 fn gradient_descent_converges() {
     let network = Network::new();
     let parameter = network.parameter(0.0_f64);
