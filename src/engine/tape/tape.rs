@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cow_vec::CowVec;
@@ -9,7 +8,10 @@ use static_assertions::assert_impl_all;
 use crate::engine::{Function, Symbol, ValueId};
 use crate::{Differentiable, Shape};
 
-use super::{Branch, Lineage, Operands, ParameterStore, Segment, SlotId, Tip, chains_agree};
+use super::{
+    Branch, Lineage, Misbinding, Operands, ParameterStore, Segment, SlotId, Tip, chain_probe,
+    chains_agree,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
@@ -234,26 +236,18 @@ impl<Data: Differentiable> Tape<Data> {
             .branch
     }
 
-    /// Returns the index range `branch` owns on this tape, or `None` if
-    /// the branch does not appear in this tape's chain.
-    pub(crate) fn segment_range(&self, branch: Branch) -> Option<Range<usize>> {
-        let inner = self.lock();
-        let chain = inner.chain.as_slice();
-        chain
-            .iter()
-            .position(|segment| segment.branch == branch)
-            .map(|position| {
-                let end = chain
-                    .get(position + 1)
-                    .map_or(inner.functions.len(), |next| next.start);
-                chain[position].start..end
-            })
-    }
-
     /// Returns whether this tape attributes `[0, length)` to the same
     /// branches as `chain`.
     pub(crate) fn agrees_with_chain(&self, chain: &Arc<Vec<Segment>>, length: usize) -> bool {
         chains_agree(&self.lock().chain, chain, length)
+    }
+
+    /// Probes for the node `symbol` names on this tape without
+    /// panicking: the resolution behind
+    /// [`Network::try_resolve`](crate::Network::try_resolve).
+    pub(crate) fn probe(&self, symbol: Symbol) -> Result<ValueId, Misbinding> {
+        let inner = self.lock();
+        chain_probe(self.lineage, &inner.chain, inner.functions.len(), symbol)
     }
 
     /// Locates `symbol` on this tape: the resolution behind
@@ -265,18 +259,16 @@ impl<Data: Differentiable> Tape<Data> {
     /// Panics if `symbol` belongs to a different lineage or a
     /// divergent fork, or no value with that name is allocated here.
     pub(crate) fn locate(&self, symbol: Symbol) -> ValueId {
-        assert!(
-            symbol.lineage == self.lineage(),
-            "symbol belongs to a different network lineage"
-        );
-        let range = self
-            .segment_range(symbol.branch)
-            .expect("symbol belongs to a divergent fork of this network");
-        assert!(
-            range.contains(&symbol.id.index()),
-            "symbol is not allocated in this network"
-        );
-        symbol.id
+        match self.probe(symbol) {
+            Ok(id) => id,
+            Err(Misbinding::ForeignLineage) => {
+                panic!("symbol belongs to a different network lineage")
+            }
+            Err(Misbinding::DivergentBranch) => {
+                panic!("symbol belongs to a divergent fork of this network")
+            }
+            Err(Misbinding::OutOfCoverage) => panic!("symbol is not allocated in this network"),
+        }
     }
 
     /// Returns a clone of the payload behind `id`: a leaf's embedded

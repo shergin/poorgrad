@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use static_assertions::assert_impl_all;
 
+use crate::engine::{Symbol, ValueId};
+
 // The token is what lets symbols and fields cross threads detached from
 // any network, so its thread-safety and `Copy` are load-bearing.
 assert_impl_all!(Lineage: Send, Sync, Copy);
@@ -85,24 +87,54 @@ pub(crate) fn chains_agree(
     left[..trimmed(left)] == right[..trimmed(right)]
 }
 
-/// Returns whether `chain` attributes position `index` to `branch`
-/// within the first `length` covered positions: the detached twin of
-/// a tape-side branch check, answerable by a [`Field`](crate::Field)
-/// that borrows no tape.
-pub(crate) fn chain_attributes(
+/// Why a symbol fails to bind against a lineage and chain: the probing
+/// counterpart of the resolution panics. Callers map each reason to
+/// their own site-specific message, so diagnostics stay as precise as
+/// the open-coded checks this replaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Misbinding {
+    /// The symbol belongs to an unrelated tape family.
+    ForeignLineage,
+    /// The symbol's branch parted ways with this chain: it is absent
+    /// entirely, or its position is owned by another branch.
+    DivergentBranch,
+    /// The symbol names a position beyond the covered prefix.
+    OutOfCoverage,
+}
+
+/// Locates the node `symbol` names on a chain covering `[0, length)`:
+/// the single spelling of symbol resolution behind tape-side lookups
+/// and detached field reads, answerable with or without a tape borrow.
+///
+/// The branch is checked against the whole chain before coverage, so a
+/// symbol from a fork this chain never carried reports divergence even
+/// when its position is also out of coverage — divergence is the
+/// sharper diagnosis.
+pub(crate) fn chain_probe(
+    lineage: Lineage,
     chain: &[Segment],
-    branch: Branch,
-    index: usize,
     length: usize,
-) -> bool {
+    symbol: Symbol,
+) -> Result<ValueId, Misbinding> {
+    if symbol.lineage != lineage {
+        return Err(Misbinding::ForeignLineage);
+    }
+    if !chain.iter().any(|segment| segment.branch == symbol.branch) {
+        return Err(Misbinding::DivergentBranch);
+    }
+    let index = symbol.id.index();
     if index >= length {
-        return false;
+        return Err(Misbinding::OutOfCoverage);
     }
     let owner = chain
         .iter()
         .take_while(|segment| segment.start <= index)
-        .last();
-    matches!(owner, Some(segment) if segment.branch == branch)
+        .last()
+        .expect("the root segment starts at zero");
+    if owner.branch != symbol.branch {
+        return Err(Misbinding::DivergentBranch);
+    }
+    Ok(symbol.id)
 }
 
 #[cfg(test)]

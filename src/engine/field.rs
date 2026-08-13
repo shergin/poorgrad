@@ -5,7 +5,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Designation, Lineage, Segment, ValueRef, chain_attributes, chains_agree};
+use super::{Designation, Lineage, Misbinding, Segment, ValueRef, chain_probe, chains_agree};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -87,20 +87,18 @@ impl<Data: Differentiable> Field<Data> {
                 id.index()
             }
             Designation::Named(symbol) => {
-                assert!(
-                    self.lineage == symbol.lineage,
-                    "symbol belongs to a different network lineage"
-                );
-                let index = symbol.id.index();
-                assert!(
-                    index < self.values.len(),
-                    "symbol was allocated after this field was produced"
-                );
-                assert!(
-                    chain_attributes(&self.chain, symbol.branch, index, self.values.len()),
-                    "symbol belongs to a divergent fork of the network"
-                );
-                index
+                match chain_probe(self.lineage, &self.chain, self.values.len(), symbol) {
+                    Ok(id) => id.index(),
+                    Err(Misbinding::ForeignLineage) => {
+                        panic!("symbol belongs to a different network lineage")
+                    }
+                    Err(Misbinding::DivergentBranch) => {
+                        panic!("symbol belongs to a divergent fork of the network")
+                    }
+                    Err(Misbinding::OutOfCoverage) => {
+                        panic!("symbol was allocated after this field was produced")
+                    }
+                }
             }
         };
         self.values

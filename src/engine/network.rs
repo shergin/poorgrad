@@ -131,14 +131,8 @@ impl<Data: Differentiable> Network<Data> {
     /// value with that name is allocated here: the probing form of
     /// `resolve`.
     pub fn try_resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
-        if symbol.lineage != self.tape.lineage() {
-            return None;
-        }
-        let range = self.tape.segment_range(symbol.branch)?;
-        if !range.contains(&symbol.id.index()) {
-            return None;
-        }
-        Some(Value::bind(&self.tape, symbol.id))
+        let id = self.tape.probe(symbol).ok()?;
+        Some(Value::bind(&self.tape, id))
     }
 
     /// Returns the number of allocated values.

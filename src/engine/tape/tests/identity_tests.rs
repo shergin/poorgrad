@@ -60,14 +60,15 @@ fn resolve_rejects_symbols_from_divergent_forks() {
 }
 
 #[test]
-#[should_panic(expected = "not allocated")]
+#[should_panic(expected = "divergent fork")]
 fn resolve_rejects_continued_branch_symbols_on_the_losing_fork() {
     let network = Network::<f64>::new();
     let _anchor = network.leaf(0.0);
     let fork = network.clone();
 
-    // The winner's symbol stays on the shared branch, but past the
-    // point where the loser's copy of that branch ends.
+    // The winner's symbol stays on the shared branch, past the point
+    // where the loser's copy of that branch ends; the loser filled the
+    // same position under its own branch, so the histories diverged.
     let mine = network.leaf(1.0);
     let _theirs = fork.leaf(2.0);
     fork.resolve(mine.symbol());
