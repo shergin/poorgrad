@@ -71,11 +71,11 @@ impl<Data: Differentiable> Field<Data> {
         let index = match value.designation() {
             Designation::Bound { tape, id } => {
                 assert!(
-                    self.kinship.lineage() == tape.lineage(),
+                    tape.is_family(&self.kinship),
                     "value belongs to a different network lineage"
                 );
                 assert!(
-                    tape.agrees_with_chain(self.kinship.chain(), self.values.len()),
+                    tape.agrees_with(&self.kinship, self.values.len()),
                     "value belongs to a divergent fork of the network"
                 );
                 id.index()

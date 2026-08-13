@@ -69,7 +69,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         if let Some(evaluated) = &evaluated {
             debug_assert_eq!(nodes.len(), evaluated.len());
         }
-        debug_assert!(kinship.lineage() == tape.lineage());
+        debug_assert!(tape.is_family(&kinship));
         Self {
             tape,
             nodes,

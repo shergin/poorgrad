@@ -29,12 +29,18 @@ impl Kinship {
     }
 
     /// Returns the token of the lineage this witness belongs to.
-    pub(crate) fn lineage(&self) -> Lineage {
+    ///
+    /// Module-internal: outside the tape module the witness is opaque,
+    /// and callers go through the check methods.
+    pub(super) fn lineage(&self) -> Lineage {
         self.lineage
     }
 
     /// Returns the branch chain this witness carries.
-    pub(crate) fn chain(&self) -> &Arc<Vec<Segment>> {
+    ///
+    /// Module-internal, like [`Kinship::lineage`]: the chain never
+    /// leaves the tape module.
+    pub(super) fn chain(&self) -> &Arc<Vec<Segment>> {
         &self.chain
     }
 

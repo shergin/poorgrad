@@ -715,7 +715,7 @@ impl<Data: Tensorial> Plan<Data> {
     ) -> Evaluation<'network, Data> {
         let tape = network.tape();
         assert!(
-            self.kinship.lineage() == tape.lineage(),
+            tape.is_family(&self.kinship),
             "plan belongs to a different network lineage"
         );
         // One snapshot serves validation and the run, so both observe

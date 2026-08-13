@@ -236,10 +236,17 @@ impl<Data: Differentiable> Tape<Data> {
             .branch
     }
 
-    /// Returns whether this tape attributes `[0, length)` to the same
-    /// branches as `chain`.
-    pub(crate) fn agrees_with_chain(&self, chain: &Arc<Vec<Segment>>, length: usize) -> bool {
-        chains_agree(&self.lock().chain, chain, length)
+    /// Returns whether `kinship` names this tape's family.
+    pub(crate) fn is_family(&self, kinship: &Kinship) -> bool {
+        kinship.lineage() == self.lineage
+    }
+
+    /// Returns whether `kinship` belongs to this tape's family and
+    /// attributes `[0, length)` to the same branches: the tape-side
+    /// twin of [`Kinship::agrees_with`], answered against the live
+    /// chain under the lock.
+    pub(crate) fn agrees_with(&self, kinship: &Kinship, length: usize) -> bool {
+        self.is_family(kinship) && chains_agree(&self.lock().chain, kinship.chain(), length)
     }
 
     /// Probes for the node `symbol` names on this tape without
