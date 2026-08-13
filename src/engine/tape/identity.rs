@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use static_assertions::assert_impl_all;
 
@@ -103,18 +103,6 @@ pub(crate) fn chain_attributes(
         .take_while(|segment| segment.start <= index)
         .last();
     matches!(owner, Some(segment) if segment.branch == branch)
-}
-
-/// The tape's relationship to its chain's tip branch.
-#[derive(Debug)]
-pub(super) enum Tip {
-    /// This tape alone may extend the tip branch.
-    Owned,
-    /// The tip is shared with sibling tapes after a fork or an update:
-    /// the first sibling to record claims the token and continues the
-    /// branch, every other sibling mints its own branch on its first
-    /// recording. This keeps linear histories from growing the chain.
-    Contended(Arc<AtomicBool>),
 }
 
 #[cfg(test)]

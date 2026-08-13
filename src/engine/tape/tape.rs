@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use cow_vec::CowVec;
@@ -56,46 +55,11 @@ struct TapeInner<Data> {
 }
 
 impl<Data> TapeInner<Data> {
-    /// Secures the right to record at the current tip before a push.
-    ///
-    /// An owned tip records freely. A contended tip races its siblings
-    /// on the shared token: the winner continues the tip branch, a
-    /// loser mints a fresh branch starting at its own length. Either
-    /// way this tape owns its tip afterwards. `AcqRel` documents the
-    /// token as a synchronization point between sibling tapes; the data
-    /// it guards is only the branch continuation decision.
+    /// Secures the right to record at the current tip before a push,
+    /// wiring this tape's chain and length into [`Tip::claim`].
     fn claim_tip(&mut self) {
-        let Tip::Contended(token) = &self.tip else {
-            return;
-        };
-        let won = token
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok();
-        if !won {
-            Arc::make_mut(&mut self.chain).push(Segment {
-                branch: Branch::new(),
-                start: self.functions.len(),
-            });
-        }
-        self.tip = Tip::Owned;
-    }
-
-    /// Prepares the tip for duplication and returns the copy's tip.
-    ///
-    /// Both sides must re-win the right to extend the tip branch, so an
-    /// owned tip becomes contended on a fresh token shared with the
-    /// copy. An already contended tip hands the copy the same token:
-    /// every tape sharing an unextended tip contends on one token, so
-    /// exactly one of them ever continues the branch.
-    fn share_tip(&mut self) -> Tip {
-        match &self.tip {
-            Tip::Contended(token) => Tip::Contended(Arc::clone(token)),
-            Tip::Owned => {
-                let token = Arc::new(AtomicBool::new(false));
-                self.tip = Tip::Contended(Arc::clone(&token));
-                Tip::Contended(token)
-            }
-        }
+        let length = self.functions.len();
+        self.tip.claim(&mut self.chain, length);
     }
 }
 
@@ -407,7 +371,7 @@ impl<Data: Differentiable> Tape<Data> {
     /// misbinding after they diverge.
     pub(crate) fn fork(&self) -> Self {
         let mut inner = self.lock();
-        let tip = inner.share_tip();
+        let tip = inner.tip.share();
         Self {
             inner: Mutex::new(TapeInner {
                 functions: inner.functions.clone(),
@@ -440,7 +404,7 @@ impl<Data: Differentiable> Tape<Data> {
     /// what-ifs that never record after the clone.
     pub(crate) fn compacted(&self) -> Self {
         let mut inner = self.lock();
-        let tip = inner.share_tip();
+        let tip = inner.tip.share();
         // `From<Vec<_>>` builds a private arena sized to the live
         // column; `CowVec::clone` would keep sharing any polluted one.
         let functions: CowVec<Function<Data>> = inner.functions.to_vec().into();
@@ -481,7 +445,7 @@ impl<Data: Differentiable> Tape<Data> {
     ) -> Self {
         let (functions, operands, shapes, parameters, inputs, chain, tip) = {
             let mut inner = self.lock();
-            let tip = inner.share_tip();
+            let tip = inner.tip.share();
             (
                 inner.functions.clone(),
                 inner.operands.clone(),
