@@ -10,7 +10,7 @@ use crate::{Differentiable, Tensorial};
 
 use super::plan::WindowProduct;
 use super::{
-    Designation, Field, Function, Gradients, Operands, Segment, Tape, Value, ValueId, ValueRef,
+    Designation, Field, Function, Gradients, Kinship, Operands, Tape, Value, ValueId, ValueRef,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -30,7 +30,6 @@ pub struct Evaluation<'network, Data> {
     tape: &'network Tape<Data>,
     nodes: CowVec<Function<Data>>,
     operands: CowVec<Operands>,
-    chain: Arc<Vec<Segment>>,
     values: Field<Data>,
     /// Which slots a target-sliced run actually computed; `None` for a
     /// full run, where every slot is genuine. Skipped slots hold
@@ -58,7 +57,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         tape: &'network Tape<Data>,
         nodes: CowVec<Function<Data>>,
         operands: CowVec<Operands>,
-        chain: Arc<Vec<Segment>>,
+        kinship: Kinship,
         values: Vec<Data>,
         evaluated: Option<Vec<bool>>,
         gradients_retained: bool,
@@ -70,12 +69,12 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         if let Some(evaluated) = &evaluated {
             debug_assert_eq!(nodes.len(), evaluated.len());
         }
+        debug_assert!(kinship.lineage() == tape.lineage());
         Self {
             tape,
             nodes,
             operands,
-            values: Field::new(tape.lineage(), Arc::clone(&chain), values),
-            chain,
+            values: Field::new(kinship, values),
             evaluated,
             gradients_retained,
             dropped,
@@ -187,7 +186,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
             );
             field[index] = payload;
         }
-        Field::new(self.tape.lineage(), Arc::clone(&self.chain), field)
+        Field::new(self.values.kinship().clone(), field)
     }
 }
 
@@ -321,7 +320,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             // its rematerialized value.
             recomputed.remove(&index);
         }
-        Field::new(self.tape.lineage(), Arc::clone(&self.chain), gradients)
+        Field::new(self.values.kinship().clone(), gradients)
     }
 
     /// Returns the genuine value at `index`, rematerializing a dropped

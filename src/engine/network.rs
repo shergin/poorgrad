@@ -191,12 +191,12 @@ impl<Data: Differentiable> Network<Data> {
         mut rule: impl FnMut(Value<'_, Data>, &Data, &Data) -> Data,
     ) -> Self {
         assert!(
-            direction.lineage() == self.tape.lineage(),
+            direction.kinship().lineage() == self.tape.lineage(),
             "field belongs to a different network lineage"
         );
         assert!(
             self.tape
-                .agrees_with_chain(direction.chain(), direction.as_slice().len()),
+                .agrees_with_chain(direction.kinship().chain(), direction.as_slice().len()),
             "field belongs to a divergent fork of this network"
         );
         Self {
@@ -397,7 +397,7 @@ impl<Data: Tensorial> Network<Data> {
             &self.tape,
             snapshot.functions,
             snapshot.operands,
-            snapshot.chain,
+            snapshot.kinship,
             values,
             evaluated,
             true,

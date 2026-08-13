@@ -23,8 +23,6 @@ pub use symbol::Symbol;
 pub use value::Value;
 
 pub(crate) use function::Function;
-pub(crate) use tape::{
-    Branch, Lineage, Misbinding, Operands, Segment, SlotId, Tape, chain_probe, chains_agree,
-};
+pub(crate) use tape::{Branch, Kinship, Lineage, Misbinding, Operands, SlotId, Tape};
 pub(crate) use trace::Trace;
 pub(crate) use value::ValueId;

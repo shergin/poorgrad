@@ -9,8 +9,8 @@ use crate::engine::{Function, Symbol, ValueId};
 use crate::{Differentiable, Shape};
 
 use super::{
-    Branch, Lineage, Misbinding, Operands, ParameterStore, Segment, SlotId, Tip, chain_probe,
-    chains_agree,
+    Branch, Kinship, Lineage, Misbinding, Operands, ParameterStore, Segment, SlotId, Tip,
+    chain_probe, chains_agree,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -19,7 +19,7 @@ assert_impl_all!(Tape<f64>: Send, Sync);
 
 /// An atomically taken snapshot of one tape: the recorded nodes with
 /// their operand links, the generation's parameter payloads, input
-/// defaults, and branch chain.
+/// defaults, and kinship witness.
 ///
 /// All parts share their backing storage with the tape, so taking
 /// a snapshot is O(1); replaying it never requires the tape lock.
@@ -29,7 +29,7 @@ pub(crate) struct Snapshot<Data> {
     pub(crate) operands: CowVec<Operands>,
     pub(crate) parameters: Arc<ParameterStore<Data>>,
     pub(crate) inputs: Arc<Vec<Data>>,
-    pub(crate) chain: Arc<Vec<Segment>>,
+    pub(crate) kinship: Kinship,
 }
 
 /// The tape's position-indexed columns and the generation's parameter
@@ -337,8 +337,8 @@ impl<Data: Differentiable> Tape<Data> {
     }
 
     /// Returns an O(1) snapshot of the recorded nodes, the current
-    /// parameter payloads, and the branch chain, taken atomically under
-    /// one lock section.
+    /// parameter payloads, and the kinship witness, taken atomically
+    /// under one lock section.
     ///
     /// The snapshot shares the underlying arena and store but is
     /// isolated from later recordings and updates, so it can be replayed
@@ -350,7 +350,7 @@ impl<Data: Differentiable> Tape<Data> {
             operands: inner.operands.clone(),
             parameters: Arc::clone(&inner.parameters),
             inputs: Arc::clone(&inner.inputs),
-            chain: Arc::clone(&inner.chain),
+            kinship: Kinship::new(self.lineage, Arc::clone(&inner.chain)),
         }
     }
 

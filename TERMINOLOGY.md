@@ -380,6 +380,18 @@ panics instead of misbinding. Linear histories never mint branches:
 chains stay as short as the program's real divergence. In poorgrad: the
 crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
 
+**Kinship.** The relation a detached carrier must prove before acting on
+a network: the same lineage, and the same attribution of positions to
+branches over the prefix the carrier covers. Fields combining, plans
+running against a generation, and symbols resolving are all kinship
+checks. In poorgrad: the crate-internal
+[`Kinship`](src/engine/tape/kinship.rs) witness — a lineage plus a branch
+chain — carried by `Field`, `Plan`, and tape snapshots. It answers
+prefix agreement and symbol probes without panicking (a failed probe
+reports its misbinding reason), while every call site keeps its own
+coverage discipline — length equality, containment, or prefix — and its
+own panic message.
+
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
 contract is the [`Differentiable`](src/payload/differentiable.rs) trait —

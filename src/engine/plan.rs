@@ -7,9 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{
-    Evaluation, Function, Lineage, Network, Operands, Segment, Symbol, ValueRef, chains_agree,
-};
+use super::{Evaluation, Function, Kinship, Network, Operands, Symbol, ValueRef};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -68,8 +66,7 @@ const REMAT_THRESHOLD: usize = 1 << 16;
 /// plan; it simply keeps serving its prefix.
 #[derive(Debug, Clone)]
 pub struct Plan<Data> {
-    lineage: Lineage,
-    chain: Arc<Vec<Segment>>,
+    kinship: Kinship,
     functions: CowVec<Function<Data>>,
     operands: CowVec<Operands>,
     /// The recorded shape of every node, captured at compile time so
@@ -462,8 +459,7 @@ impl<Data: Differentiable> Plan<Data> {
         }
 
         Self {
-            lineage: tape.lineage(),
-            chain: snapshot.chain,
+            kinship: snapshot.kinship,
             functions: snapshot.functions,
             operands: snapshot.operands,
             shapes,
@@ -719,7 +715,7 @@ impl<Data: Tensorial> Plan<Data> {
     ) -> Evaluation<'network, Data> {
         let tape = network.tape();
         assert!(
-            self.lineage == tape.lineage(),
+            self.kinship.lineage() == tape.lineage(),
             "plan belongs to a different network lineage"
         );
         // One snapshot serves validation and the run, so both observe
@@ -732,7 +728,7 @@ impl<Data: Tensorial> Plan<Data> {
             "plan covers a graph prefix this network does not contain"
         );
         assert!(
-            chains_agree(&snapshot.chain, &self.chain, self.len()),
+            self.kinship.agrees_with(&snapshot.kinship, self.len()),
             "plan belongs to a divergent fork of this network"
         );
 
@@ -802,7 +798,7 @@ impl<Data: Tensorial> Plan<Data> {
             tape,
             self.functions.clone(),
             self.operands.clone(),
-            Arc::clone(&self.chain),
+            self.kinship.clone(),
             values,
             Some(self.readable.clone()),
             self.training,
