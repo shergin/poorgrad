@@ -4,7 +4,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Designation, Kinship, Misbinding, ValueRef};
+use super::{Designation, Misbinding, ValueRef, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -25,7 +25,7 @@ assert_impl_all!(Field<f64>: Send, Sync);
 /// using that field to update the larger graph is rejected.
 #[derive(Debug, Clone)]
 pub struct Field<Data> {
-    kinship: Kinship,
+    witness: Witness,
     values: Vec<Data>,
 }
 
@@ -43,8 +43,8 @@ pub struct Field<Data> {
 pub type Gradients<Data> = Field<Data>;
 
 impl<Data: Differentiable> Field<Data> {
-    pub(crate) fn new(kinship: Kinship, values: Vec<Data>) -> Self {
-        Self { kinship, values }
+    pub(crate) fn new(witness: Witness, values: Vec<Data>) -> Self {
+        Self { witness, values }
     }
 
     /// Returns the value assigned to the node named by `value` — a
@@ -71,18 +71,18 @@ impl<Data: Differentiable> Field<Data> {
         let index = match value.designation() {
             Designation::Bound { tape, id } => {
                 assert!(
-                    tape.is_family(&self.kinship),
+                    tape.same_origin(&self.witness),
                     "value belongs to a different network lineage"
                 );
                 assert!(
-                    tape.agrees_with(&self.kinship, self.values.len()),
+                    tape.agrees_with(&self.witness, self.values.len()),
                     "value belongs to a divergent fork of the network"
                 );
                 id.index()
             }
-            Designation::Named(symbol) => match self.kinship.probe(symbol, self.values.len()) {
+            Designation::Named(symbol) => match self.witness.probe(symbol, self.values.len()) {
                 Ok(id) => id.index(),
-                Err(Misbinding::ForeignLineage) => {
+                Err(Misbinding::ForeignOrigin) => {
                     panic!("symbol belongs to a different network lineage")
                 }
                 Err(Misbinding::DivergentBranch) => {
@@ -101,7 +101,7 @@ impl<Data: Differentiable> Field<Data> {
     /// Returns a field with every entry passed through `transform`.
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
-            kinship: self.kinship.clone(),
+            witness: self.witness.clone(),
             values: self.values.iter().map(transform).collect(),
         }
     }
@@ -112,9 +112,9 @@ impl<Data: Differentiable> Field<Data> {
     /// Panics if the fields belong to different lineages or divergent
     /// forks, or cover different numbers of nodes.
     pub fn zip(&self, other: &Self, combine: impl Fn(&Data, &Data) -> Data) -> Self {
-        self.assert_kinship(other);
+        self.assert_compatible_witness(other);
         Self {
-            kinship: self.kinship.clone(),
+            witness: self.witness.clone(),
             values: self
                 .values
                 .iter()
@@ -128,14 +128,14 @@ impl<Data: Differentiable> Field<Data> {
         &self.values
     }
 
-    pub(crate) fn kinship(&self) -> &Kinship {
-        &self.kinship
+    pub(crate) fn witness(&self) -> &Witness {
+        &self.witness
     }
 
     /// Panics if `other` cannot combine with `self`.
-    fn assert_kinship(&self, other: &Self) {
+    fn assert_compatible_witness(&self, other: &Self) {
         assert!(
-            self.kinship.is_family(&other.kinship),
+            self.witness.same_origin(&other.witness),
             "fields belong to different network lineages"
         );
         assert_eq!(
@@ -144,7 +144,7 @@ impl<Data: Differentiable> Field<Data> {
             "fields cover different generations of the network"
         );
         assert!(
-            self.kinship.agrees_with(&other.kinship, self.values.len()),
+            self.witness.agrees_with(&other.witness, self.values.len()),
             "fields belong to divergent forks of the network"
         );
     }

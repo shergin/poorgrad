@@ -4,7 +4,7 @@ use crate::engine::SlotId;
 /// replaces on each training step.
 ///
 /// The node holds only its slot; the payload lives in the generation's
-/// `ParameterStore`, which is what lets a gradient step swap state
+/// parameter slot store, which is what lets a gradient step swap state
 /// without touching the recorded structure. It behaves exactly like
 /// `Leaf` during runs: supplied rather than computed, with no gradients
 /// routed back.

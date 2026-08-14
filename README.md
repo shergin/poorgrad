@@ -309,7 +309,7 @@ crate root keeps the public API flat. From tape to training:
   expressions are recorded — a shape mismatch
   panics at the offending line, before anything runs: the record-once
   answer to type-level shape checking.
-- [`Tape`](src/engine/tape/tape.rs) — internal: the append-only record (a
+- [`Tape`](src/engine/network/tape/tape.rs) — internal: the append-only record (a
   Wengert list) shared by a network and all of its proxies, and the engine's
   single synchronization point.
 - [`Function`](src/engine/function/mod.rs) — internal: a statically sized

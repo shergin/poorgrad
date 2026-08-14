@@ -7,7 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Evaluation, Function, Kinship, Network, Operands, Symbol, ValueRef};
+use super::{Evaluation, Function, Network, Operands, Symbol, ValueRef, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -59,14 +59,14 @@ const REMAT_THRESHOLD: usize = 1 << 16;
 ///
 /// Plans are graph-structural: [`Network::update`] replaces parameter
 /// payloads, never nodes, so one plan compiled once serves every
-/// generation of a training run. [`Plan::forward`] validates kinship
+/// generation of a training run. [`Plan::forward`] validates witness
 /// the way `update` validates a [`Field`](crate::Field), then executes
 /// the plan's own column snapshot with the network's current parameter
 /// and input payloads. Recording after compilation does not disturb a
 /// plan; it simply keeps serving its prefix.
 #[derive(Debug, Clone)]
 pub struct Plan<Data> {
-    kinship: Kinship,
+    witness: Witness,
     functions: CowVec<Function<Data>>,
     operands: CowVec<Operands>,
     /// The recorded shape of every node, captured at compile time so
@@ -265,7 +265,8 @@ impl<Data: Differentiable> Plan<Data> {
     ) -> Self {
         let tape = network.tape();
         let snapshot = tape.snapshot();
-        let length = snapshot.functions.len();
+        let structure = snapshot.structure;
+        let length = structure.len();
 
         let mut wanted = vec![false; length];
         let mut readable = vec![false; length];
@@ -278,7 +279,7 @@ impl<Data: Differentiable> Plan<Data> {
             if !wanted[index] {
                 continue;
             }
-            let links = snapshot
+            let links = structure
                 .operands
                 .get(index)
                 .expect("snapshot cannot shrink");
@@ -287,9 +288,9 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
 
-        let shapes: Vec<Shape> = (0..length)
-            .map(|index| tape.shape(super::ValueId(index)))
-            .collect();
+        // Captured with the rest of the structure so plan compile never
+        // re-locks the tape for shapes.
+        let shapes: Vec<Shape> = structure.shapes.to_vec();
 
         // Fusion: match the canonical im2col chains. Fusing a training
         // plan requires rematerializing the patches during backward, so
@@ -302,8 +303,8 @@ impl<Data: Differentiable> Plan<Data> {
         let compact = remat_threshold != usize::MAX;
         let (fused, fused_interior) = if !training || compact {
             match_window_products(
-                &snapshot.functions,
-                &snapshot.operands,
+                &structure.functions,
+                &structure.operands,
                 &shapes,
                 &wanted,
                 &readable,
@@ -318,7 +319,7 @@ impl<Data: Differentiable> Plan<Data> {
         let mut fused_patches: HashMap<usize, WindowProduct> = HashMap::new();
         for (index, group) in fused.iter().enumerate() {
             if let Some(group) = group {
-                let links = snapshot
+                let links = structure
                     .operands
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -338,7 +339,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if !wanted[index] {
                     continue;
                 }
-                let function = snapshot
+                let function = structure
                     .functions
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -346,7 +347,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if retention.output {
                     required[index] = true;
                 }
-                let links = snapshot
+                let links = structure
                     .operands
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -367,7 +368,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if !wanted[index] || readable[index] {
                     continue;
                 }
-                let function = snapshot
+                let function = structure
                     .functions
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -396,7 +397,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if !dropped[index] {
                     continue;
                 }
-                let links = snapshot
+                let links = structure
                     .operands
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -415,7 +416,7 @@ impl<Data: Differentiable> Plan<Data> {
             if !wanted_node {
                 continue;
             }
-            let links = snapshot
+            let links = structure
                 .operands
                 .get(index)
                 .expect("snapshot cannot shrink");
@@ -459,9 +460,9 @@ impl<Data: Differentiable> Plan<Data> {
         }
 
         Self {
-            kinship: snapshot.kinship,
-            functions: snapshot.functions,
-            operands: snapshot.operands,
+            witness: snapshot.witness,
+            functions: structure.functions,
+            operands: structure.operands,
             shapes,
             wanted,
             readable,
@@ -715,7 +716,7 @@ impl<Data: Tensorial> Plan<Data> {
     ) -> Evaluation<'network, Data> {
         let tape = network.tape();
         assert!(
-            tape.is_family(&self.kinship),
+            tape.same_origin(&self.witness),
             "plan belongs to a different network lineage"
         );
         // One snapshot serves validation and the run, so both observe
@@ -724,11 +725,11 @@ impl<Data: Tensorial> Plan<Data> {
         // to the same branches without carrying the nodes.
         let snapshot = tape.snapshot();
         assert!(
-            snapshot.functions.len() >= self.len(),
+            snapshot.structure.len() >= self.len(),
             "plan covers a graph prefix this network does not contain"
         );
         assert!(
-            self.kinship.agrees_with(&snapshot.kinship, self.len()),
+            self.witness.agrees_with(&snapshot.witness, self.len()),
             "plan belongs to a divergent fork of this network"
         );
 
@@ -748,7 +749,7 @@ impl<Data: Tensorial> Plan<Data> {
         } else {
             let mut overlaid = snapshot.inputs.as_ref().clone();
             for (slot, payload) in bindings {
-                overlaid[slot.index()] = payload;
+                overlaid.set(slot, payload);
             }
             Arc::new(overlaid)
         };
@@ -775,7 +776,8 @@ impl<Data: Tensorial> Plan<Data> {
                     .iter()
                     .map(|link| &values[link.index()])
                     .collect();
-                let value = function.forward(&operands, snapshot.parameters.payloads(), &inputs);
+                let value =
+                    function.forward(&operands, snapshot.parameters.payloads(), inputs.payloads());
                 // The same producing-node contract check the interpreter
                 // run makes: the rule's output must carry the plan's
                 // recorded shape for this slot.
@@ -798,7 +800,7 @@ impl<Data: Tensorial> Plan<Data> {
             tape,
             self.functions.clone(),
             self.operands.clone(),
-            self.kinship.clone(),
+            self.witness.clone(),
             values,
             Some(self.readable.clone()),
             self.training,

@@ -10,7 +10,7 @@ use crate::{Differentiable, Tensorial};
 
 use super::plan::WindowProduct;
 use super::{
-    Designation, Field, Function, Gradients, Kinship, Operands, Tape, Value, ValueId, ValueRef,
+    Designation, Field, Function, Gradients, Operands, Tape, Value, ValueId, ValueRef, Witness,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -57,7 +57,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         tape: &'network Tape<Data>,
         nodes: CowVec<Function<Data>>,
         operands: CowVec<Operands>,
-        kinship: Kinship,
+        witness: Witness,
         values: Vec<Data>,
         evaluated: Option<Vec<bool>>,
         gradients_retained: bool,
@@ -69,12 +69,12 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         if let Some(evaluated) = &evaluated {
             debug_assert_eq!(nodes.len(), evaluated.len());
         }
-        debug_assert!(tape.is_family(&kinship));
+        debug_assert!(tape.same_origin(&witness));
         Self {
             tape,
             nodes,
             operands,
-            values: Field::new(kinship, values),
+            values: Field::new(witness, values),
             evaluated,
             gradients_retained,
             dropped,
@@ -186,7 +186,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
             );
             field[index] = payload;
         }
-        Field::new(self.values.kinship().clone(), field)
+        Field::new(self.values.witness().clone(), field)
     }
 }
 
@@ -320,7 +320,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             // its rematerialized value.
             recomputed.remove(&index);
         }
-        Field::new(self.values.kinship().clone(), gradients)
+        Field::new(self.values.witness().clone(), gradients)
     }
 
     /// Returns the genuine value at `index`, rematerializing a dropped

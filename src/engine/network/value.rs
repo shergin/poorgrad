@@ -6,7 +6,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Elementary, Shape, Tensorial};
 
-use super::{Function, Symbol, Tape};
+use super::super::Function;
+use super::{Symbol, Tape};
 
 // Compile-time contract: proxies stay thread-safe and `Copy`; the anchor
 // rationale is documented in `network.rs`.
@@ -72,7 +73,7 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     /// [`Network::resolve`](crate::Network::resolve).
     pub fn symbol(&self) -> Symbol {
         Symbol {
-            lineage: self.tape.lineage(),
+            origin: self.tape.origin(),
             branch: self.tape.branch_of(self.id),
             id: self.id,
         }

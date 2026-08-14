@@ -6,9 +6,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{
-    Designation, Evaluation, Field, Function, Symbol, Tape, Trace, Value, ValueId, ValueRef,
-};
+use super::super::{Evaluation, Field, Function, Trace};
+use super::{Designation, Symbol, Tape, Value, ValueId, ValueRef};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
 // `Data: Send + Sync`, so only a structural change (an `Rc`, a `RefCell`, a
@@ -40,7 +39,7 @@ impl<Data: Differentiable> Network<Data> {
     }
 
     /// Returns the tape, for the engine's sibling modules (plans
-    /// validate kinship and read columns through it).
+    /// validate witness and read columns through it).
     pub(crate) fn tape(&self) -> &Tape<Data> {
         &self.tape
     }
@@ -81,7 +80,7 @@ impl<Data: Differentiable> Network<Data> {
     /// Proxies borrow the generation that created them, so a proxy taken
     /// before a fork or an update belongs to the old generation; `resolve`
     /// produces the equivalent proxy for this one. The symbol carries its
-    /// lineage and branch, so kinship is verified before the positional
+    /// lineage and branch, so witness is verified before the positional
     /// lookup: an unrelated network and a fork that diverged before the
     /// symbol was minted are both rejected. A failed resolution is a
     /// programmer error, like every other positional misuse;
@@ -191,12 +190,12 @@ impl<Data: Differentiable> Network<Data> {
         mut rule: impl FnMut(Value<'_, Data>, &Data, &Data) -> Data,
     ) -> Self {
         assert!(
-            self.tape.is_family(direction.kinship()),
+            self.tape.same_origin(direction.witness()),
             "field belongs to a different network lineage"
         );
         assert!(
             self.tape
-                .agrees_with(direction.kinship(), direction.as_slice().len()),
+                .agrees_with(direction.witness(), direction.as_slice().len()),
             "field belongs to a divergent fork of this network"
         );
         Self {
@@ -335,15 +334,17 @@ impl<Data: Tensorial> Network<Data> {
         } else {
             let mut overlaid = snapshot.inputs.as_ref().clone();
             for (slot, payload) in bindings {
-                overlaid[slot.index()] = payload;
+                overlaid.set(slot, payload);
             }
             Arc::new(overlaid)
         };
+        let parameters = snapshot.parameters;
+        let structure = snapshot.structure;
         // Reachability doubles the backward scan's trick in reverse:
         // operands live below their consumers, so one descending sweep
         // marks the whole ancestor closure.
         let evaluated = targets.map(|targets| {
-            let mut wanted = vec![false; snapshot.functions.len()];
+            let mut wanted = vec![false; structure.len()];
             for target in targets {
                 wanted[target.index()] = true;
             }
@@ -351,7 +352,7 @@ impl<Data: Tensorial> Network<Data> {
                 if !wanted[index] {
                     continue;
                 }
-                let links = snapshot
+                let links = structure
                     .operands
                     .get(index)
                     .expect("snapshot cannot shrink");
@@ -361,11 +362,11 @@ impl<Data: Tensorial> Network<Data> {
             }
             wanted
         });
-        let mut values = Vec::with_capacity(snapshot.functions.len());
-        for (index, (function, links)) in snapshot
+        let mut values = Vec::with_capacity(structure.len());
+        for (index, (function, links)) in structure
             .functions
             .iter()
-            .zip(snapshot.operands.iter())
+            .zip(structure.operands.iter())
             .enumerate()
         {
             let skipped = matches!(&evaluated, Some(wanted) if !wanted[index]);
@@ -373,20 +374,28 @@ impl<Data: Tensorial> Network<Data> {
                 // A shape-correct, non-allocating zero: never read back
                 // (`of` checks the evaluated set), but shaped so that
                 // gradient buffers and `update` stay coherent.
-                Data::counted(self.tape.shape(ValueId(index)), 0)
+                let shape = structure
+                    .shapes
+                    .get(index)
+                    .expect("shapes cover the snapshot")
+                    .clone();
+                Data::counted(shape, 0)
             } else {
                 let operands: SmallVec<[&Data; 2]> = links
                     .as_slice()
                     .iter()
                     .map(|link| &values[link.index()])
                     .collect();
-                let value = function.forward(&operands, snapshot.parameters.payloads(), &inputs);
+                let value = function.forward(&operands, parameters.payloads(), inputs.payloads());
                 // The recorded shape is the type of this node; a payload
                 // whose rule answers a different shape has broken the
                 // operation contract at exactly this producing node.
                 debug_assert_eq!(
                     value.shape(),
-                    self.tape.shape(ValueId(index)),
+                    *structure
+                        .shapes
+                        .get(index)
+                        .expect("shapes cover the snapshot"),
                     "operation output shape disagrees with the recorded shape at node {index}"
                 );
                 value
@@ -395,9 +404,9 @@ impl<Data: Tensorial> Network<Data> {
         }
         Evaluation::new(
             &self.tape,
-            snapshot.functions,
-            snapshot.operands,
-            snapshot.kinship,
+            structure.functions,
+            structure.operands,
+            snapshot.witness,
             values,
             evaluated,
             true,
@@ -464,6 +473,7 @@ impl<Data: Tensorial> Network<Data> {
                 continue;
             }
             let links = snapshot
+                .structure
                 .operands
                 .get(index)
                 .expect("snapshot cannot shrink")
@@ -474,6 +484,7 @@ impl<Data: Tensorial> Network<Data> {
                 continue;
             }
             let function = snapshot
+                .structure
                 .functions
                 .get(index)
                 .expect("snapshot cannot shrink");

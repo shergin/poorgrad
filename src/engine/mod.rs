@@ -5,24 +5,15 @@ mod function;
 mod literal;
 mod network;
 mod plan;
-mod reference;
-mod symbol;
-mod tape;
 mod trace;
-mod value;
 
 pub use composite::{concat, stack};
 pub use evaluation::Evaluation;
 pub use field::{Field, Gradients};
-pub use network::Network;
+pub use network::{Network, Symbol, Value, ValueRef};
 pub(crate) use plan::WindowProduct;
 pub use plan::{Plan, Retention};
-pub(crate) use reference::Designation;
-pub use reference::ValueRef;
-pub use symbol::Symbol;
-pub use value::Value;
 
 pub(crate) use function::Function;
-pub(crate) use tape::{Branch, Kinship, Lineage, Misbinding, Operands, SlotId, Tape};
+pub(crate) use network::{Designation, Misbinding, Operands, SlotId, Tape, ValueId, Witness};
 pub(crate) use trace::Trace;
-pub(crate) use value::ValueId;

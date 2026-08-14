@@ -1,6 +1,6 @@
 use static_assertions::assert_impl_all;
 
-use super::{Branch, Lineage, ValueId};
+use super::{Branch, Origin, ValueId};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -14,14 +14,14 @@ assert_impl_all!(Symbol: Send, Sync, Copy);
 /// generation-bound value, which is useful when a training loop repeatedly
 /// replaces a network with [`Network::update`](crate::Network::update).
 ///
-/// A symbol records its graph lineage, branch, and node position. Resolution
+/// A symbol records its graph origin, branch, and node position. Resolution
 /// succeeds only when that node exists on a compatible branch; unrelated
 /// networks, divergent forks, and generations that do not contain the node are
 /// rejected. This provenance also participates in equality and hashing, so
 /// equally positioned nodes from unrelated graphs do not compare equal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Symbol {
-    pub(crate) lineage: Lineage,
+    pub(crate) origin: Origin,
     pub(crate) branch: Branch,
     pub(crate) id: ValueId,
 }

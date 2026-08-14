@@ -1,67 +1,53 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use cow_vec::CowVec;
-
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
 use crate::engine::{Function, Symbol, ValueId};
 use crate::{Differentiable, Shape};
 
-use super::{
-    Branch, Kinship, Lineage, Misbinding, Operands, ParameterStore, Segment, SlotId, Tip,
-    chain_probe, chains_agree,
-};
+use super::{Branch, Identity, Misbinding, Operands, SlotId, SlotStore, Structure, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
 assert_impl_all!(Tape<f64>: Send, Sync);
 
-/// An atomically taken snapshot of one tape: the recorded nodes with
-/// their operand links, the generation's parameter payloads, input
-/// defaults, and kinship witness.
+/// An atomically taken snapshot of one tape: the recorded structure,
+/// the generation's parameter payloads, input defaults, and identity
+/// witness.
 ///
-/// All parts share their backing storage with the tape, so taking
-/// a snapshot is O(1); replaying it never requires the tape lock.
+/// All parts share their backing storage with the tape, so taking a
+/// snapshot is O(1); replaying it never requires the tape lock.
 #[derive(Debug)]
 pub(crate) struct Snapshot<Data> {
-    pub(crate) functions: CowVec<Function<Data>>,
-    pub(crate) operands: CowVec<Operands>,
-    pub(crate) parameters: Arc<ParameterStore<Data>>,
-    pub(crate) inputs: Arc<Vec<Data>>,
-    pub(crate) kinship: Kinship,
+    pub(crate) structure: Structure<Data>,
+    pub(crate) parameters: Arc<SlotStore<Data>>,
+    pub(crate) inputs: Arc<SlotStore<Data>>,
+    pub(crate) witness: Witness,
 }
 
-/// The tape's position-indexed columns and the generation's parameter
-/// store, guarded together by one lock.
+/// The tape's structure, generation payloads, and live identity, guarded
+/// together by one lock.
 ///
-/// The layout is data-oriented: functions and operands are the hot
-/// columns replayed by every run — what each node computes and which
-/// earlier nodes it reads — while shapes are the cold column read at
-/// record time. All columns are lineage-invariant — `update` replaces
-/// the parameter store but never touches columns, so one set of columns
-/// serves every generation of a family. The columns always have equal
-/// lengths.
+/// Structure is origin-invariant — `update` replaces the parameter
+/// [`SlotStore`] but never touches columns, so one set of columns serves
+/// every generation of a family. Parameters and inputs share the same
+/// store type; they stay separate fields because their lifecycles differ
+/// (generation vs run). Structural identity (origin, branch chain, tip)
+/// lives in [`Identity`].
 #[derive(Debug)]
 struct TapeInner<Data> {
-    functions: CowVec<Function<Data>>,
-    operands: CowVec<Operands>,
-    shapes: CowVec<Shape>,
-    parameters: Arc<ParameterStore<Data>>,
-    // The default payloads of declared inputs, indexed by slot. Kept
-    // separate from the parameter store because the lifecycles differ:
-    // parameters turn over per generation, inputs per run.
-    inputs: Arc<Vec<Data>>,
-    chain: Arc<Vec<Segment>>,
-    tip: Tip,
+    structure: Structure<Data>,
+    parameters: Arc<SlotStore<Data>>,
+    inputs: Arc<SlotStore<Data>>,
+    identity: Identity,
 }
 
 impl<Data> TapeInner<Data> {
-    /// Secures the right to record at the current tip before a push,
-    /// wiring this tape's chain and length into [`Tip::claim`].
+    /// Secures the right to record at the current tip before a push.
     fn claim_tip(&mut self) {
-        let length = self.functions.len();
-        self.tip.claim(&mut self.chain, length);
+        let length = self.structure.len();
+        self.identity.claim(length);
     }
 }
 
@@ -80,7 +66,6 @@ impl<Data> TapeInner<Data> {
 #[derive(Debug)]
 pub(crate) struct Tape<Data> {
     inner: Mutex<TapeInner<Data>>,
-    lineage: Lineage,
 }
 
 impl<Data: Differentiable> Tape<Data> {
@@ -88,24 +73,17 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn new() -> Self {
         Self {
             inner: Mutex::new(TapeInner {
-                functions: CowVec::new(),
-                operands: CowVec::new(),
-                shapes: CowVec::new(),
-                parameters: Arc::new(ParameterStore::new()),
-                inputs: Arc::new(Vec::new()),
-                chain: Arc::new(vec![Segment {
-                    branch: Branch::new(),
-                    start: 0,
-                }]),
-                tip: Tip::Owned,
+                structure: Structure::new(),
+                parameters: Arc::new(SlotStore::new()),
+                inputs: Arc::new(SlotStore::new()),
+                identity: Identity::new(),
             }),
-            lineage: Lineage::new(),
         }
     }
 
-    /// Returns the token of the lineage this tape belongs to.
-    pub(crate) fn lineage(&self) -> Lineage {
-        self.lineage
+    /// Returns the origin token of this tape's family.
+    pub(crate) fn origin(&self) -> super::Origin {
+        self.lock().identity.origin()
     }
 
     /// Records `function` with its positional `operands` and returns its
@@ -128,12 +106,12 @@ impl<Data: Differentiable> Tape<Data> {
         let mut inner = self.lock();
         for operand in operands {
             assert!(
-                operand.index() < inner.functions.len(),
+                operand.index() < inner.structure.len(),
                 "operand is out of bounds for its tape"
             );
         }
         let shape = {
-            let shapes = &inner.shapes;
+            let shapes = &inner.structure.shapes;
             let operand_shapes: SmallVec<[Shape; 2]> = operands
                 .iter()
                 .map(|operand| {
@@ -146,12 +124,9 @@ impl<Data: Differentiable> Tape<Data> {
             function.infer_shape(&operand_shapes)
         };
         inner.claim_tip();
-        inner.functions.push(function);
-        inner.operands.push(Operands::from_slice(operands));
-        inner.shapes.push(shape);
-        debug_assert_eq!(inner.functions.len(), inner.operands.len());
-        debug_assert_eq!(inner.functions.len(), inner.shapes.len());
-        ValueId(inner.functions.len() - 1)
+        inner
+            .structure
+            .push(function, Operands::from_slice(operands), shape)
     }
 
     /// Records a parameter node and stores its payload, returning the
@@ -166,17 +141,12 @@ impl<Data: Differentiable> Tape<Data> {
         let mut inner = self.lock();
         inner.claim_tip();
         let inner = &mut *inner;
-        let store = Arc::make_mut(&mut inner.parameters);
-        let slot = SlotId::new(store.payloads.len());
-        inner.functions.push(Function::parameter(slot));
-        inner.operands.push(Operands::none());
-        inner.shapes.push(shape);
-        debug_assert_eq!(inner.functions.len(), inner.operands.len());
-        debug_assert_eq!(inner.functions.len(), inner.shapes.len());
-        let id = ValueId(inner.functions.len() - 1);
-        store.payloads.push(data);
-        store.nodes.push(id);
-        id
+        // Disjoint fields: the store borrow and the structure push in
+        // `install`'s closure are simultaneous without conflict.
+        let structure = &mut inner.structure;
+        Arc::make_mut(&mut inner.parameters).install(data, |slot| {
+            structure.push(Function::parameter(slot), Operands::none(), shape)
+        })
     }
 
     /// Records an input node and stores its default payload, returning
@@ -189,15 +159,10 @@ impl<Data: Differentiable> Tape<Data> {
         let mut inner = self.lock();
         inner.claim_tip();
         let inner = &mut *inner;
-        let defaults = Arc::make_mut(&mut inner.inputs);
-        let slot = SlotId::new(defaults.len());
-        inner.functions.push(Function::input(slot));
-        inner.operands.push(Operands::none());
-        inner.shapes.push(shape);
-        debug_assert_eq!(inner.functions.len(), inner.operands.len());
-        debug_assert_eq!(inner.functions.len(), inner.shapes.len());
-        defaults.push(initial);
-        ValueId(inner.functions.len() - 1)
+        let structure = &mut inner.structure;
+        Arc::make_mut(&mut inner.inputs).install(initial, |slot| {
+            structure.push(Function::input(slot), Operands::none(), shape)
+        })
     }
 
     /// Returns the input slot behind `id`, or `None` if the node is not
@@ -208,6 +173,7 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn input_slot(&self, id: ValueId) -> Option<SlotId> {
         let inner = self.lock();
         match inner
+            .structure
             .functions
             .get(id.index())
             .expect("`ValueId` is out of bounds for its tape")
@@ -224,29 +190,23 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn branch_of(&self, id: ValueId) -> Branch {
         let inner = self.lock();
         assert!(
-            id.index() < inner.functions.len(),
+            id.index() < inner.structure.len(),
             "`ValueId` is out of bounds for its tape"
         );
-        inner
-            .chain
-            .iter()
-            .rev()
-            .find(|segment| segment.start <= id.index())
-            .expect("the root segment starts at zero")
-            .branch
+        inner.identity.branch_of(id.index())
     }
 
-    /// Returns whether `kinship` names this tape's family.
-    pub(crate) fn is_family(&self, kinship: &Kinship) -> bool {
-        kinship.lineage() == self.lineage
+    /// Returns whether `witness` names this tape's family.
+    pub(crate) fn same_origin(&self, witness: &Witness) -> bool {
+        self.lock().identity.same_origin(witness)
     }
 
-    /// Returns whether `kinship` belongs to this tape's family and
+    /// Returns whether `witness` belongs to this tape's family and
     /// attributes `[0, length)` to the same branches: the tape-side
-    /// twin of [`Kinship::agrees_with`], answered against the live
+    /// twin of [`Witness::agrees_with`], answered against the live
     /// chain under the lock.
-    pub(crate) fn agrees_with(&self, kinship: &Kinship, length: usize) -> bool {
-        self.is_family(kinship) && chains_agree(&self.lock().chain, kinship.chain(), length)
+    pub(crate) fn agrees_with(&self, witness: &Witness, length: usize) -> bool {
+        self.lock().identity.agrees_with(witness, length)
     }
 
     /// Probes for the node `symbol` names on this tape without
@@ -254,7 +214,7 @@ impl<Data: Differentiable> Tape<Data> {
     /// [`Network::try_resolve`](crate::Network::try_resolve).
     pub(crate) fn probe(&self, symbol: Symbol) -> Result<ValueId, Misbinding> {
         let inner = self.lock();
-        chain_probe(self.lineage, &inner.chain, inner.functions.len(), symbol)
+        inner.identity.probe(symbol, inner.structure.len())
     }
 
     /// Locates `symbol` on this tape: the resolution behind
@@ -263,12 +223,12 @@ impl<Data: Differentiable> Tape<Data> {
     /// checks and panic messages for both.
     ///
     /// # Panics
-    /// Panics if `symbol` belongs to a different lineage or a
+    /// Panics if `symbol` belongs to a different network lineage or a
     /// divergent fork, or no value with that name is allocated here.
     pub(crate) fn locate(&self, symbol: Symbol) -> ValueId {
         match self.probe(symbol) {
             Ok(id) => id,
-            Err(Misbinding::ForeignLineage) => {
+            Err(Misbinding::ForeignOrigin) => {
                 panic!("symbol belongs to a different network lineage")
             }
             Err(Misbinding::DivergentBranch) => {
@@ -287,15 +247,16 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn payload_of(&self, id: ValueId) -> Option<Data> {
         let inner = self.lock();
         let function = inner
+            .structure
             .functions
             .get(id.index())
             .expect("`ValueId` is out of bounds for its tape");
         match function {
             Function::Leaf(leaf) => Some(leaf.0.clone()),
             Function::Parameter(parameter) => {
-                Some(inner.parameters.payloads[parameter.0.index()].clone())
+                Some(inner.parameters.payloads()[parameter.0.index()].clone())
             }
-            Function::Input(input) => Some(inner.inputs[input.0.index()].clone()),
+            Function::Input(input) => Some(inner.inputs.payloads()[input.0.index()].clone()),
             _ => None,
         }
     }
@@ -306,6 +267,7 @@ impl<Data: Differentiable> Tape<Data> {
     /// Panics if `id` is not recorded on this tape.
     pub(crate) fn shape(&self, id: ValueId) -> Shape {
         self.lock()
+            .structure
             .shapes
             .get(id.index())
             .expect("`ValueId` is out of bounds for its tape")
@@ -319,6 +281,7 @@ impl<Data: Differentiable> Tape<Data> {
     #[cfg(test)]
     pub(crate) fn operands_of(&self, id: ValueId) -> Operands {
         self.lock()
+            .structure
             .operands
             .get(id.index())
             .expect("`ValueId` is out of bounds for its tape")
@@ -337,14 +300,15 @@ impl<Data: Differentiable> Tape<Data> {
     ) -> Output {
         let inner = self.lock();
         let function = inner
+            .structure
             .functions
             .get(id.index())
             .expect("`ValueId` is out of bounds for its tape");
         reader(function)
     }
 
-    /// Returns an O(1) snapshot of the recorded nodes, the current
-    /// parameter payloads, and the kinship witness, taken atomically
+    /// Returns an O(1) snapshot of the recorded structure, the current
+    /// parameter payloads, and the identity witness, taken atomically
     /// under one lock section.
     ///
     /// The snapshot shares the underlying arena and store but is
@@ -353,11 +317,10 @@ impl<Data: Differentiable> Tape<Data> {
     pub(crate) fn snapshot(&self) -> Snapshot<Data> {
         let inner = self.lock();
         Snapshot {
-            functions: inner.functions.clone(),
-            operands: inner.operands.clone(),
+            structure: inner.structure.clone(),
             parameters: Arc::clone(&inner.parameters),
             inputs: Arc::clone(&inner.inputs),
-            kinship: Kinship::new(self.lineage, Arc::clone(&inner.chain)),
+            witness: inner.identity.witness(),
         }
     }
 
@@ -370,22 +333,18 @@ impl<Data: Differentiable> Tape<Data> {
     /// misbinding after they diverge.
     pub(crate) fn fork(&self) -> Self {
         let mut inner = self.lock();
-        let tip = inner.tip.share();
+        let identity = inner.identity.share();
         Self {
             inner: Mutex::new(TapeInner {
-                functions: inner.functions.clone(),
-                operands: inner.operands.clone(),
-                shapes: inner.shapes.clone(),
+                structure: inner.structure.clone(),
                 parameters: Arc::clone(&inner.parameters),
                 inputs: Arc::clone(&inner.inputs),
-                chain: Arc::clone(&inner.chain),
-                tip,
+                identity,
             }),
-            lineage: self.lineage,
         }
     }
 
-    /// Returns a lineage-compatible tape whose column arenas hold only
+    /// Returns an origin-compatible tape whose column arenas hold only
     /// this tape's live nodes.
     ///
     /// A plain [`Tape::fork`] shares the append-only column arena, so
@@ -396,42 +355,32 @@ impl<Data: Differentiable> Tape<Data> {
     /// polluted parent with it) can release sibling garbage the parent
     /// no longer reaches. Parameter and input stores, the branch chain,
     /// and tip contention match [`Tape::fork`]: same generation state,
-    /// same lineage, same first-writer branch rule.
+    /// same origin, same first-writer branch rule.
     ///
     /// Cost is O(live nodes) — cloning each live column entry into the
     /// new arenas — not O(1). Prefer [`Tape::fork`] for train-only
     /// what-ifs that never record after the clone.
     pub(crate) fn compacted(&self) -> Self {
         let mut inner = self.lock();
-        let tip = inner.tip.share();
-        // `From<Vec<_>>` builds a private arena sized to the live
-        // column; `CowVec::clone` would keep sharing any polluted one.
-        let functions: CowVec<Function<Data>> = inner.functions.to_vec().into();
-        let operands: CowVec<Operands> = inner.operands.to_vec().into();
-        let shapes: CowVec<Shape> = inner.shapes.to_vec().into();
+        let identity = inner.identity.share();
         Self {
             inner: Mutex::new(TapeInner {
-                functions,
-                operands,
-                shapes,
+                structure: inner.structure.compacted(),
                 parameters: Arc::clone(&inner.parameters),
                 inputs: Arc::clone(&inner.inputs),
-                chain: Arc::clone(&inner.chain),
-                tip,
+                identity,
             }),
-            lineage: self.lineage,
         }
     }
 
     /// Returns a new tape with every parameter's payload replaced by
     /// `rule(current, gradient)`.
     ///
-    /// The new tape shares the function and shape columns untouched and
-    /// builds a fresh parameter store: a gradient step rewrites every
-    /// slot, so both the work and the allocations are O(parameters), and
-    /// the previous store is reclaimed when its generation drops.
-    /// Positions are preserved, so symbols keep resolving across the
-    /// transition.
+    /// The new tape shares the structure columns untouched and builds a
+    /// fresh parameter store: a gradient step rewrites every slot, so
+    /// both the work and the allocations are O(parameters), and the
+    /// previous store is reclaimed when its generation drops. Positions
+    /// are preserved, so symbols keep resolving across the transition.
     ///
     /// # Panics
     /// Panics if `gradients` does not cover the whole tape, or if
@@ -442,28 +391,28 @@ impl<Data: Differentiable> Tape<Data> {
         gradients: &[Data],
         mut rule: impl FnMut(ValueId, &Data, &Data) -> Data,
     ) -> Self {
-        let (functions, operands, shapes, parameters, inputs, chain, tip) = {
+        let (structure, parameters, inputs, identity) = {
             let mut inner = self.lock();
-            let tip = inner.tip.share();
+            let identity = inner.identity.share();
             (
-                inner.functions.clone(),
-                inner.operands.clone(),
-                inner.shapes.clone(),
+                inner.structure.clone(),
                 Arc::clone(&inner.parameters),
                 Arc::clone(&inner.inputs),
-                Arc::clone(&inner.chain),
-                tip,
+                identity,
             )
         };
         assert_eq!(
-            functions.len(),
+            structure.len(),
             gradients.len(),
             "field is stale: the network has grown since it was produced"
         );
-        let mut payloads = Vec::with_capacity(parameters.payloads.len());
-        for (payload, &node) in parameters.payloads.iter().zip(&parameters.nodes) {
+        let mut payloads = Vec::with_capacity(parameters.len());
+        for (node, payload) in parameters.iter() {
             let next = rule(node, payload, &gradients[node.index()]);
-            let declared = shapes.get(node.index()).expect("shapes cover the tape");
+            let declared = structure
+                .shapes
+                .get(node.index())
+                .expect("shapes cover the tape");
             assert_eq!(
                 &next.shape(),
                 declared,
@@ -473,24 +422,17 @@ impl<Data: Differentiable> Tape<Data> {
         }
         Self {
             inner: Mutex::new(TapeInner {
-                functions,
-                operands,
-                shapes,
-                parameters: Arc::new(ParameterStore {
-                    payloads,
-                    nodes: parameters.nodes.clone(),
-                }),
+                structure,
+                parameters: Arc::new(parameters.with_payloads(payloads)),
                 inputs,
-                chain,
-                tip,
+                identity,
             }),
-            lineage: self.lineage,
         }
     }
 
     /// Returns the number of recorded nodes.
     pub(crate) fn len(&self) -> usize {
-        self.lock().functions.len()
+        self.lock().structure.len()
     }
 
     /// Locks the tape's columns.

@@ -42,8 +42,7 @@ pub(crate) enum Designation<'reference, Data> {
 // would otherwise compile.
 #[allow(private_interfaces)]
 pub(crate) mod sealed {
-    use super::super::{Symbol, Value};
-    use super::Designation;
+    use super::{Designation, Symbol, Value};
     use crate::Differentiable;
 
     pub trait Sealed<Data> {

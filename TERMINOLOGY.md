@@ -70,7 +70,7 @@ allocation order is a topological order.
 operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
-poorgrad: [`Tape`](src/engine/tape/tape.rs), crate-internal, shared by a
+poorgrad: [`Tape`](src/engine/network/tape/tape.rs), crate-internal, shared by a
 network and all of its proxies, and the engine's single synchronization
 point. Beside its immutable columns the tape carries the generation's
 parameter store: the one piece of state that changes across generations.
@@ -79,7 +79,7 @@ parameter store: the one piece of state that changes across generations.
 value, its operand links, and its parameters. In poorgrad a node is a
 [`Function<Data>`](src/engine/function/function.rs) (the operation and its
 parameters) stored on the tape beside its operand links (the
-[`Operands`](src/engine/tape/operands.rs) column) and its inferred `Shape`;
+[`Operands`](src/engine/network/tape/operands.rs) column) and its inferred `Shape`;
 none of them change once recorded.
 
 **Shape.** The extent of a payload along every axis; a scalar is rank 0.
@@ -90,8 +90,10 @@ runs. In the record-once model this recovers most of the benefit of
 type-level shapes at no type-system cost. Shapes are lineage-invariant —
 `update` validates every replacement payload against the recorded
 shape — and stored as a separate cold column beside the hot function and
-operands columns (data-oriented layout: runs replay functions and operand
-links, never shapes). Construction boundaries (`Tensor::new`,
+operands columns inside [`Structure`](src/engine/network/tape/structure.rs)
+(data-oriented layout: runs replay functions and operand links, never
+shapes). The three columns always move together: fork, update, and
+snapshot share one `Structure`. Construction boundaries (`Tensor::new`,
 `Tensor::filled`, `Value::reshape`) accept `impl Into<Shape>` — axis
 literals, vectors, slices, and shapes or their references all convert —
 so the nominal type is never decomposed at the rim; `Shape::new` remains
@@ -236,13 +238,14 @@ share the recorded structure through the arena and differ only in their
 parameter store; positions stay stable (symbols keep resolving), and
 older generations remain fully usable — snapshot isolation.
 
-**Parameter store.** The per-generation home of parameter payloads,
-slot-indexed and separate from the immutable tape columns: structure is
-recorded once, state turns over per generation. Forks share the store in
-O(1); `update` rebuilds it in O(parameters), so replaced payloads are
-reclaimed when their generation drops instead of accumulating in the
-arena. In poorgrad: the crate-internal
-[`ParameterStore`](src/engine/tape/parameter_store.rs).
+**Slot store.** A dense table of payloads keyed by [`SlotId`](src/engine/network/tape/slot.rs),
+each row also holding the tape [`ValueId`](src/engine/network/value.rs) of the
+node that names that slot. Parameters and inputs share this layout
+([`SlotStore`](src/engine/network/tape/slot_store.rs)): structure is
+recorded once; the parameter table turns over per generation (`update`
+rebuilds payloads in O(parameters) and reclaims the previous store), and
+the input table holds defaults (runs may overlay feeds without touching
+the graph). Forks share both stores in O(1).
 
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
@@ -360,16 +363,17 @@ alignment to a graph, not differentiation, and Adam's second moment or an
 evaluation's forward payloads are fields that are not gradients at all. In
 poorgrad: [`Field`](src/engine/field.rs).
 
-**Lineage.** The family of networks descending from a common origin
-through forks and updates. Within a lineage, positions are attributed to
+**Origin.** The family of networks descending from a common construction
+through forks and updates. Within an origin, positions are attributed to
 branches, and they are stable within a branch — which is what makes
 symbols resolve and fields combine across generations. Tracked by a
-`Copy` identity minted from a process-global counter at network creation
-and carried through every transition; kinship is equality. In poorgrad: the
-crate-internal [`Lineage`](src/engine/tape/identity.rs), embedded in every
-`Symbol` and `Field`.
+`Copy` token minted from a process-global counter at network creation
+and carried through every transition; same-origin is equality. In
+poorgrad: the crate-internal [`Origin`](src/engine/network/tape/identity.rs),
+embedded in every `Symbol` and in every
+[`Witness`](src/engine/network/tape/witness.rs).
 
-**Branch.** A contiguous run of recordings within a lineage. A fork or an
+**Branch.** A contiguous run of recordings within an origin. A fork or an
 update hands both sides a shared one-shot claim on the current branch:
 the first side to record continues it, and every other sibling starts a
 fresh branch at its own length, so divergent forks stop sharing identity
@@ -378,19 +382,20 @@ owned their position when they were minted, and resolution checks branch
 membership before the positional lookup, so a divergent sibling's symbol
 panics instead of misbinding. Linear histories never mint branches:
 chains stay as short as the program's real divergence. In poorgrad: the
-crate-internal [`Branch`](src/engine/tape/identity.rs) and its segment chain.
+crate-internal [`Branch`](src/engine/network/tape/identity.rs) and its segment chain.
 
-**Kinship.** The relation a detached carrier must prove before acting on
-a network: the same lineage, and the same attribution of positions to
-branches over the prefix the carrier covers. Fields combining, plans
-running against a generation, and symbols resolving are all kinship
-checks. In poorgrad: the crate-internal
-[`Kinship`](src/engine/tape/kinship.rs) witness — a lineage plus a branch
-chain — carried by `Field`, `Plan`, and tape snapshots. It answers
-prefix agreement and symbol probes without panicking (a failed probe
-reports its misbinding reason), while every call site keeps its own
-coverage discipline — length equality, containment, or prefix — and its
-own panic message.
+**Identity.** Live structural identity under the tape lock: origin, branch
+chain, and tip protocol together. Fork and update share the tip; record
+claims it. Detached carriers never hold an `Identity` — they take a
+[`Witness`](src/engine/network/tape/witness.rs). In poorgrad: the crate-internal
+[`Identity`](src/engine/network/tape/identity.rs).
+
+**Witness.** A read-only proof of graph identity: origin plus branch chain,
+without the tip. Fields, plans, and tape snapshots hold one and answer
+same-origin and prefix agreement without borrowing the live tape. A
+failed symbol probe reports a misbinding reason without panicking;
+coverage discipline and panic messages stay at the call site. In
+poorgrad: the crate-internal [`Witness`](src/engine/network/tape/witness.rs).
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
@@ -557,7 +562,7 @@ without further recording) are memory-clean: the parameter store turns
 over per generation and does not use the arena. Structure recorded on a
 sibling can keep arena memory alive for the lineage — that is the cost of
 O(1) sharing, reclaimed by dropping every sharer or by compaction. In
-poorgrad: `Network::clone`, built on [`Tape::fork`](src/engine/tape/tape.rs).
+poorgrad: `Network::clone`, built on [`Tape::fork`](src/engine/network/tape/tape.rs).
 
 **Compaction.** Rebuilding a network's structure columns into private
 arenas that hold only its live nodes, so sibling-fork garbage no longer
