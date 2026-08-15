@@ -30,7 +30,7 @@ pub struct Run<Data> {
     /// Frozen node columns for this run: functions, operands, and the
     /// shapes inferred at record time.
     structure: Structure<Data>,
-    values: Field<Data>,
+    field: Field<Data>,
     /// Which slots a target-sliced run actually computed; `None` for a
     /// full run, where every slot is genuine. Skipped slots hold
     /// shape-correct zero placeholders that reads must never answer
@@ -68,7 +68,7 @@ impl<Data: Differentiable> Run<Data> {
         }
         Self {
             structure,
-            values: Field::new(witness, values),
+            field: Field::new(witness, values),
             evaluated,
             gradients_retained,
             dropped,
@@ -90,20 +90,20 @@ impl<Data: Differentiable> Run<Data> {
     /// with the run's witness over this coverage, while a symbol is
     /// probed against the witness directly.
     fn locate(&self, value: impl ValueRef<Data>) -> usize {
-        let coverage = self.values.as_slice().len();
+        let coverage = self.field.as_slice().len();
         match value.designation() {
             Designation::Bound { tape, id } => {
                 assert!(
-                    tape.same_origin(self.values.witness()),
+                    tape.same_origin(self.field.witness()),
                     "value belongs to a different network lineage"
                 );
                 assert!(
-                    tape.agrees_with(self.values.witness(), coverage),
+                    tape.agrees_with(self.field.witness(), coverage),
                     "value belongs to a divergent fork of the network"
                 );
                 id.index()
             }
-            Designation::Named(symbol) => match self.values.witness().probe(symbol, coverage) {
+            Designation::Named(symbol) => match self.field.witness().probe(symbol, coverage) {
                 Ok(id) => id.index(),
                 Err(Misbinding::ForeignOrigin) => {
                     panic!("symbol belongs to a different network lineage")
@@ -134,13 +134,13 @@ impl<Data: Differentiable> Run<Data> {
     /// that plot a whole pass rather than read one value out of it.
     #[cfg(feature = "evcxr")]
     pub(crate) fn field(&self) -> &Field<Data> {
-        &self.values
+        &self.field
     }
 
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
         let index = self.locate(value);
         let payload = self
-            .values
+            .field
             .as_slice()
             .get(index)
             .expect("value was allocated after this run");
@@ -176,8 +176,8 @@ impl<Data: Differentiable> Run<Data> {
     where
         Data: 'value,
     {
-        let values = self.values.as_slice();
-        let mut field: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
+        let values = self.field.as_slice();
+        let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         for (parameter, gradient) in pairs {
             let index = self.locate(parameter);
             assert!(
@@ -194,9 +194,9 @@ impl<Data: Differentiable> Run<Data> {
                 parameter.shape(),
                 "recorded gradient shape does not match its parameter's"
             );
-            field[index] = payload;
+            gradients[index] = payload;
         }
-        Field::new(self.values.witness().clone(), field)
+        Field::new(self.field.witness().clone(), gradients)
     }
 }
 
@@ -227,7 +227,7 @@ impl<Data: Tensorial> Run<Data> {
     /// ran, or was skipped by a target-sliced run.
     pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
         let output_index = self.locate(output);
-        let values = self.values.as_slice();
+        let values = self.field.as_slice();
         assert!(
             output_index < values.len(),
             "value was allocated after this run"
@@ -339,7 +339,7 @@ impl<Data: Tensorial> Run<Data> {
             // its rematerialized value.
             recomputed.remove(&index);
         }
-        Field::new(self.values.witness().clone(), gradients)
+        Field::new(self.field.witness().clone(), gradients)
     }
 
     /// Returns the genuine value at `index`, rematerializing a dropped
@@ -349,7 +349,7 @@ impl<Data: Tensorial> Run<Data> {
     fn resolved(&self, index: usize, recomputed: &mut HashMap<usize, Data>) -> Data {
         let is_dropped = self.dropped.as_ref().is_some_and(|dropped| dropped[index]);
         if !is_dropped {
-            return self.values.as_slice()[index].clone();
+            return self.field.as_slice()[index].clone();
         }
         if let Some(hit) = recomputed.get(&index) {
             return hit.clone();
