@@ -46,6 +46,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `makemore_mlp_adam` example — the optimizer act: the same
+  model, seeds, and batches as `makemore_mlp_compiled`, trained once
+  with `Sgd` and once with `Adam`, both curves on one chart; the SGD
+  run reproduces that example's losses bit for bit, and Adam
+  converges below it (last-500 mean 2.2287 vs 2.2450) at one flat
+  learning rate. `POORGRAD_GRADIENTS=engine` flips the gradient
+  source to the interpreter's backward — losses identical, but the
+  moment fields densify: ~16.8 MB peak RSS against the recorded
+  route's ~15.0 at makemore scale, confirming that recorded
+  gradients (O(1)-constant non-parameter slots) are the natural
+  optimizer partner.
+
 - The `cifar10_grading` and `mnist_grading` examples: the same
   convnets trained through the gradient routes — engine backward
   over an engine-backward plan, and recorded gradients

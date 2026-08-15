@@ -119,6 +119,10 @@ name = "makemore_mlp_compiled"
 path = "examples/makemore/mlp_compiled.rs"
 
 [[example]]
+name = "makemore_mlp_adam"
+path = "examples/makemore/mlp_adam.rs"
+
+[[example]]
 name = "makemore_mlp_parallel"
 path = "examples/makemore/mlp_parallel.rs"
 
