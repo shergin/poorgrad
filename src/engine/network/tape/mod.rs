@@ -11,6 +11,7 @@ mod structure;
 // module's main concept is the `Tape` itself; the inception is deliberate.
 #[allow(clippy::module_inception)]
 mod tape;
+mod tape_snapshot;
 mod witness;
 
 pub(crate) use chain::chains_agree;
@@ -20,6 +21,7 @@ pub(crate) use slot::SlotId;
 pub(super) use slot_store::SlotStore;
 pub(crate) use structure::Structure;
 pub(crate) use tape::Tape;
+pub(crate) use tape_snapshot::TapeSnapshot;
 pub(crate) use witness::Witness;
 
 #[cfg(test)]

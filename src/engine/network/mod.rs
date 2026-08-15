@@ -14,5 +14,5 @@ pub use symbol::Symbol;
 pub use value::Value;
 
 pub(crate) use reference::Designation;
-pub(crate) use tape::{Branch, Misbinding, Operands, Origin, SlotId, Tape, Witness};
+pub(crate) use tape::{Branch, Misbinding, Operands, Origin, SlotId, Structure, Tape, Witness};
 pub(crate) use value::ValueId;

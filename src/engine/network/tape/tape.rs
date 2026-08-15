@@ -6,25 +6,13 @@ use static_assertions::assert_impl_all;
 use crate::engine::{Function, Symbol, ValueId};
 use crate::{Differentiable, Shape};
 
-use super::{Branch, Identity, Misbinding, Operands, SlotId, SlotStore, Structure, Witness};
+use super::{
+    Branch, Identity, Misbinding, Operands, SlotId, SlotStore, Structure, TapeSnapshot, Witness,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
 assert_impl_all!(Tape<f64>: Send, Sync);
-
-/// An atomically taken snapshot of one tape: the recorded structure,
-/// the generation's parameter payloads, input defaults, and identity
-/// witness.
-///
-/// All parts share their backing storage with the tape, so taking a
-/// snapshot is O(1); replaying it never requires the tape lock.
-#[derive(Debug)]
-pub(crate) struct Snapshot<Data> {
-    pub(crate) structure: Structure<Data>,
-    pub(crate) parameters: Arc<SlotStore<Data>>,
-    pub(crate) inputs: Arc<SlotStore<Data>>,
-    pub(crate) witness: Witness,
-}
 
 /// The tape's structure, generation payloads, and live identity, guarded
 /// together by one lock.
@@ -307,16 +295,16 @@ impl<Data: Differentiable> Tape<Data> {
         reader(function)
     }
 
-    /// Returns an O(1) snapshot of the recorded structure, the current
+    /// Returns an O(1) freeze of the recorded structure, the current
     /// parameter payloads, and the identity witness, taken atomically
     /// under one lock section.
     ///
     /// The snapshot shares the underlying arena and store but is
     /// isolated from later recordings and updates, so it can be replayed
     /// without holding the tape lock.
-    pub(crate) fn snapshot(&self) -> Snapshot<Data> {
+    pub(crate) fn snapshot(&self) -> TapeSnapshot<Data> {
         let inner = self.lock();
-        Snapshot {
+        TapeSnapshot {
             structure: inner.structure.clone(),
             parameters: Arc::clone(&inner.parameters),
             inputs: Arc::clone(&inner.inputs),

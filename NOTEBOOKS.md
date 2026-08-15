@@ -151,6 +151,6 @@ to a second compile with `Debug` formatting when that fails.
   a small cell and one to two seconds when generics instantiate. The
   compilation cache above helps; nothing makes it Python-snappy, and
   that is the honest trade for the rest of the stack.
-- **`Evaluation` cannot persist.** It borrows the tape, so a run has to
-  be consumed in the cell that made it. Keep the `Field` it produces,
-  or read the payloads out — both are owned.
+- **`Evaluation` is owned.** Like a `Field`, it carries structure and a
+  witness rather than borrowing the network, so a run can outlive the
+  cell that produced it (or the generation that ran).

@@ -15,5 +15,5 @@ pub(crate) use plan::WindowProduct;
 pub use plan::{Plan, Retention};
 
 pub(crate) use function::Function;
-pub(crate) use network::{Designation, Misbinding, Operands, SlotId, Tape, ValueId, Witness};
+pub(crate) use network::{Designation, Misbinding, Operands, SlotId, Structure, ValueId, Witness};
 pub(crate) use trace::Trace;

@@ -7,7 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Evaluation, Function, Network, Operands, Symbol, ValueRef, Witness};
+use super::{Evaluation, Function, Network, Operands, Structure, Symbol, ValueRef, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -67,11 +67,8 @@ const REMAT_THRESHOLD: usize = 1 << 16;
 #[derive(Debug, Clone)]
 pub struct Plan<Data> {
     witness: Witness,
-    functions: CowVec<Function<Data>>,
-    operands: CowVec<Operands>,
-    /// The recorded shape of every node, captured at compile time so
-    /// placeholders and the memory accounting never re-touch the tape.
-    shapes: Vec<Shape>,
+    /// Frozen node columns for the plan's graph prefix.
+    structure: Structure<Data>,
     /// The ancestor closure of the targets and keeps: what a run must
     /// evaluate.
     wanted: Vec<bool>,
@@ -120,7 +117,7 @@ pub struct Plan<Data> {
 fn match_window_products<Data: Differentiable>(
     functions: &CowVec<Function<Data>>,
     operands: &CowVec<Operands>,
-    shapes: &[Shape],
+    shapes: &CowVec<Shape>,
     wanted: &[bool],
     readable: &[bool],
 ) -> (Vec<Option<WindowProduct>>, Vec<bool>) {
@@ -288,10 +285,6 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
 
-        // Captured with the rest of the structure so plan compile never
-        // re-locks the tape for shapes.
-        let shapes: Vec<Shape> = structure.shapes.to_vec();
-
         // Fusion: match the canonical im2col chains. Fusing a training
         // plan requires rematerializing the patches during backward, so
         // fusion follows the plan's memory posture: forward-only plans
@@ -305,7 +298,7 @@ impl<Data: Differentiable> Plan<Data> {
             match_window_products(
                 &structure.functions,
                 &structure.operands,
-                &shapes,
+                &structure.shapes,
                 &wanted,
                 &readable,
             )
@@ -375,7 +368,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if function.is_source() {
                     continue;
                 }
-                if shapes[index].volume() >= remat_threshold {
+                if structure.shapes[index].volume() >= remat_threshold {
                     dropped[index] = true;
                 }
             }
@@ -461,9 +454,7 @@ impl<Data: Differentiable> Plan<Data> {
 
         Self {
             witness: snapshot.witness,
-            functions: structure.functions,
-            operands: structure.operands,
-            shapes,
+            structure,
             wanted,
             readable,
             releases,
@@ -478,7 +469,7 @@ impl<Data: Differentiable> Plan<Data> {
 
     /// Returns the number of nodes in the plan's graph prefix.
     pub fn len(&self) -> usize {
-        self.functions.len()
+        self.structure.len()
     }
 
     /// Returns `true` if the plan covers no nodes.
@@ -489,17 +480,17 @@ impl<Data: Differentiable> Plan<Data> {
     /// Returns the plan's function column, for plan consumers such as
     /// the StableHLO emitter — introspection siblings of `describe`.
     pub(crate) fn functions(&self) -> &CowVec<Function<Data>> {
-        &self.functions
+        &self.structure.functions
     }
 
     /// Returns the plan's operand column, parallel to the functions.
     pub(crate) fn operands(&self) -> &CowVec<Operands> {
-        &self.operands
+        &self.structure.operands
     }
 
     /// Returns the recorded shape of every node.
-    pub(crate) fn shapes(&self) -> &[Shape] {
-        &self.shapes
+    pub(crate) fn shapes(&self) -> &CowVec<Shape> {
+        &self.structure.shapes
     }
 
     /// Returns the ancestor closure of the targets and keeps: what a
@@ -542,7 +533,7 @@ impl<Data: Differentiable> Plan<Data> {
             if !self.wanted[index] || self.fused_interior[index] {
                 continue;
             }
-            let volume = self.shapes[index].volume();
+            let volume = self.structure.shapes[index].volume();
             total += volume;
             live += volume;
             if live > peak {
@@ -555,7 +546,7 @@ impl<Data: Differentiable> Plan<Data> {
                 if self.fused_interior[slot] {
                     continue;
                 }
-                live -= self.shapes[slot].volume();
+                live -= self.structure.shapes[slot].volume();
             }
         }
         (peak, peak_at, total)
@@ -572,13 +563,13 @@ impl<Data: Differentiable> Plan<Data> {
             if !self.wanted[index] || self.fused_interior[index] {
                 continue;
             }
-            live += self.shapes[index].volume();
+            live += self.structure.shapes[index].volume();
             series.push(live as f64);
             for &slot in slots {
                 if self.fused_interior[slot] {
                     continue;
                 }
-                live -= self.shapes[slot].volume();
+                live -= self.structure.shapes[slot].volume();
             }
         }
         series
@@ -616,7 +607,11 @@ impl<Data: Differentiable> Plan<Data> {
                 continue;
             }
             evaluated += 1;
-            let function = self.functions.get(index).expect("plan columns are fixed");
+            let function = self
+                .structure
+                .functions
+                .get(index)
+                .expect("plan columns are fixed");
             let liveness = if self.fused_interior[index] {
                 "fused (window-gemm)".to_string()
             } else if self.readable[index] {
@@ -636,7 +631,7 @@ impl<Data: Differentiable> Plan<Data> {
                 lines,
                 "  {index:4}  {:<14} {:<16} {liveness}",
                 function.name(),
-                self.shapes[index].to_string(),
+                self.structure.shapes[index].to_string(),
             )
             .expect("writing to a string cannot fail");
         }
@@ -670,7 +665,7 @@ impl<Data: Differentiable> Plan<Data> {
             let drops = self.dropped.iter().filter(|&&dropped| dropped).count();
             let dropped_volume: usize = (0..self.len())
                 .filter(|&index| self.dropped[index])
-                .map(|index| self.shapes[index].volume())
+                .map(|index| self.structure.shapes[index].volume())
                 .sum();
             writeln!(
                 lines,
@@ -709,11 +704,11 @@ impl<Data: Tensorial> Plan<Data> {
     /// Panics if `network` belongs to a different lineage or a
     /// divergent fork, does not contain the plan's whole graph prefix,
     /// or as `forward_with` panics for `feeds`.
-    pub fn forward<'network>(
+    pub fn forward(
         &self,
-        network: &'network Network<Data>,
+        network: &Network<Data>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<'network, Data> {
+    ) -> Evaluation<Data> {
         let tape = network.tape();
         assert!(
             tape.same_origin(&self.witness),
@@ -757,7 +752,7 @@ impl<Data: Tensorial> Plan<Data> {
         let mut values: Vec<Data> = Vec::with_capacity(self.len());
         for index in 0..self.len() {
             let value = if !self.wanted[index] || self.fused_interior[index] {
-                Data::counted(self.shapes[index].clone(), 0)
+                Data::counted(self.structure.shapes[index].clone(), 0)
             } else if let Some(group) = &self.fused[index] {
                 // The fused call reads the source and kernel directly;
                 // the im2col chain between them was never materialized.
@@ -769,8 +764,16 @@ impl<Data: Tensorial> Plan<Data> {
                     group.padding,
                 )
             } else {
-                let function = self.functions.get(index).expect("plan columns are fixed");
-                let links = self.operands.get(index).expect("plan columns are fixed");
+                let function = self
+                    .structure
+                    .functions
+                    .get(index)
+                    .expect("plan columns are fixed");
+                let links = self
+                    .structure
+                    .operands
+                    .get(index)
+                    .expect("plan columns are fixed");
                 let operands: SmallVec<[&Data; 2]> = links
                     .as_slice()
                     .iter()
@@ -783,7 +786,7 @@ impl<Data: Tensorial> Plan<Data> {
                 // recorded shape for this slot.
                 debug_assert_eq!(
                     value.shape(),
-                    self.shapes[index],
+                    self.structure.shapes[index],
                     "operation output shape disagrees with the recorded shape at node {index}"
                 );
                 value
@@ -792,14 +795,12 @@ impl<Data: Tensorial> Plan<Data> {
             // Liveness: this node was the last consumer of these
             // slots, and the caller may not read them — release now.
             for &slot in &self.frees[index] {
-                values[slot] = Data::counted(self.shapes[slot].clone(), 0);
+                values[slot] = Data::counted(self.structure.shapes[slot].clone(), 0);
             }
         }
 
         Evaluation::new(
-            tape,
-            self.functions.clone(),
-            self.operands.clone(),
+            self.structure.clone(),
             self.witness.clone(),
             values,
             Some(self.readable.clone()),

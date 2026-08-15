@@ -250,9 +250,8 @@ the graph). Forks share both stores in O(1).
 **Run.** One forward or backward execution over a network. Runs never
 mutate the network, so any number can execute concurrently; their results
 are per-run buffers read back with the same proxies that built the graph:
-[`Evaluation`](src/engine/evaluation.rs) (a payload per node,
-generation-pinned, carrying its own tape snapshot so `backward`
-differentiates it without touching the network) and
+[`Evaluation`](src/engine/evaluation.rs) (a payload per node, owning the
+structure freeze and a witness so `backward` needs no network borrow) and
 [`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
 a `Field`, so it combines and carries optimizer state directly). Every
 position-indexed buffer — evaluations, gradients, fields — answers the same

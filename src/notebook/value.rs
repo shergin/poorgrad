@@ -83,7 +83,7 @@ impl Symbol {
 // can name the trait, so there is no leak to close. Silencing it also
 // keeps `cargo check` warning-free, which Evcxr requires.
 #[allow(private_bounds)]
-impl<Data: Renderable> Evaluation<'_, Data> {
+impl<Data: Renderable> Evaluation<Data> {
     /// Renders the run as a self-contained HTML card.
     ///
     /// A run holds a value per node, so the card shows the profile of

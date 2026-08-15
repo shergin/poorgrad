@@ -1,8 +1,6 @@
 use std::collections::HashMap;
-use std::ptr;
 use std::sync::Arc;
 
-use cow_vec::CowVec;
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
@@ -10,26 +8,28 @@ use crate::{Differentiable, Tensorial};
 
 use super::plan::WindowProduct;
 use super::{
-    Designation, Field, Function, Gradients, Operands, Tape, Value, ValueId, ValueRef, Witness,
+    Designation, Field, Function, Gradients, Misbinding, Structure, Value, ValueRef, Witness,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
-assert_impl_all!(Evaluation<'static, f64>: Send, Sync);
+assert_impl_all!(Evaluation<f64>: Send, Sync);
 
 /// The materialized payloads of one forward run over a `Network`.
 ///
-/// An evaluation is immutable, per-run state. It borrows the exact network
-/// generation whose parameter payloads it used and retains the graph snapshot
-/// captured at the start of the run. Later recordings and parameter updates do
-/// not change its values or the operations differentiated by
-/// [`Evaluation::backward`]. Forward and backward passes do not mutate the
-/// network, so evaluations can coexist and be computed concurrently.
+/// An evaluation is immutable, per-run state: the graph structure frozen
+/// at the start of the run and the payloads that run produced. It carries
+/// no borrow of the network — kinship is checked through the same
+/// [`Witness`] a [`Field`] uses — so evaluations outlive the generation
+/// that produced them and can be stashed, moved, or differentiated
+/// concurrently without pinning a `Network`. Later recordings and
+/// parameter updates do not change its values or the operations
+/// differentiated by [`Evaluation::backward`].
 #[derive(Debug)]
-pub struct Evaluation<'network, Data> {
-    tape: &'network Tape<Data>,
-    nodes: CowVec<Function<Data>>,
-    operands: CowVec<Operands>,
+pub struct Evaluation<Data> {
+    /// Frozen node columns for this run: functions, operands, and the
+    /// shapes inferred at record time.
+    structure: Structure<Data>,
     values: Field<Data>,
     /// Which slots a target-sliced run actually computed; `None` for a
     /// full run, where every slot is genuine. Skipped slots hold
@@ -51,12 +51,10 @@ pub struct Evaluation<'network, Data> {
     fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
 }
 
-impl<'network, Data: Differentiable> Evaluation<'network, Data> {
+impl<Data: Differentiable> Evaluation<Data> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        tape: &'network Tape<Data>,
-        nodes: CowVec<Function<Data>>,
-        operands: CowVec<Operands>,
+        structure: Structure<Data>,
         witness: Witness,
         values: Vec<Data>,
         evaluated: Option<Vec<bool>>,
@@ -64,16 +62,12 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         dropped: Option<Arc<Vec<bool>>>,
         fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
     ) -> Self {
-        debug_assert_eq!(nodes.len(), values.len());
-        debug_assert_eq!(nodes.len(), operands.len());
+        debug_assert_eq!(structure.len(), values.len());
         if let Some(evaluated) = &evaluated {
-            debug_assert_eq!(nodes.len(), evaluated.len());
+            debug_assert_eq!(structure.len(), evaluated.len());
         }
-        debug_assert!(tape.same_origin(&witness));
         Self {
-            tape,
-            nodes,
-            operands,
+            structure,
             values: Field::new(witness, values),
             evaluated,
             gradients_retained,
@@ -91,20 +85,36 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         }
     }
 
-    /// Locates `value` in this evaluation's slots: a bound proxy
-    /// proves identity by tape pointer, a symbol resolves against the
-    /// borrowed tape with the checks of
-    /// [`Network::resolve`](crate::Network::resolve).
+    /// Locates `value` in this evaluation's slots, using the same
+    /// kinship proofs as [`Field::of`]: a bound proxy's tape must agree
+    /// with the run's witness over this coverage, while a symbol is
+    /// probed against the witness directly.
     fn locate(&self, value: impl ValueRef<Data>) -> usize {
+        let coverage = self.values.as_slice().len();
         match value.designation() {
             Designation::Bound { tape, id } => {
                 assert!(
-                    ptr::eq(self.tape, tape),
-                    "value belongs to a different network"
+                    tape.same_origin(self.values.witness()),
+                    "value belongs to a different network lineage"
+                );
+                assert!(
+                    tape.agrees_with(self.values.witness(), coverage),
+                    "value belongs to a divergent fork of the network"
                 );
                 id.index()
             }
-            Designation::Named(symbol) => self.tape.locate(symbol).index(),
+            Designation::Named(symbol) => match self.values.witness().probe(symbol, coverage) {
+                Ok(id) => id.index(),
+                Err(Misbinding::ForeignOrigin) => {
+                    panic!("symbol belongs to a different network lineage")
+                }
+                Err(Misbinding::DivergentBranch) => {
+                    panic!("symbol belongs to a divergent fork of the network")
+                }
+                Err(Misbinding::OutOfCoverage) => {
+                    panic!("symbol was allocated after this evaluation ran")
+                }
+            },
         }
     }
 
@@ -115,9 +125,10 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     /// buffer: evaluations, gradients, and fields all answer `of(value)`.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different network, was allocated
-    /// after this evaluation ran, or was skipped by a target-sliced run
-    /// (see [`Network::forward_for`](crate::Network::forward_for)): a
+    /// Panics if `value` belongs to a different lineage or a divergent
+    /// fork, was allocated after this evaluation ran, or was skipped by
+    /// a target-sliced run (see
+    /// [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
     /// Returns the run's computed values as a field, for the displays
     /// that plot a whole pass rather than read one value out of it.
@@ -168,13 +179,12 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
         let values = self.values.as_slice();
         let mut field: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         for (parameter, gradient) in pairs {
+            let index = self.locate(parameter);
             assert!(
-                ptr::eq(self.tape, parameter.tape()),
-                "value belongs to a different network"
-            );
-            let index = parameter.id().index();
-            assert!(
-                matches!(self.nodes.get(index), Some(Function::Parameter(_))),
+                matches!(
+                    self.structure.functions.get(index),
+                    Some(Function::Parameter(_))
+                ),
                 "recorded gradients pair each parameter with its gradient; the first \
                  value of a pair is not a parameter"
             );
@@ -190,7 +200,7 @@ impl<'network, Data: Differentiable> Evaluation<'network, Data> {
     }
 }
 
-impl<'network, Data: Tensorial> Evaluation<'network, Data> {
+impl<Data: Tensorial> Evaluation<Data> {
     /// Propagates gradients backward from `output`, returning the
     /// gradient of `output` with respect to every value of this run.
     ///
@@ -200,21 +210,21 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
     ///
     /// It seeds the output gradient with `one_like` and accumulates into
     /// a fresh buffer initialized with `zero_like`, scanning this
-    /// evaluation's own tape snapshot in reverse allocation order. Only
-    /// the ancestors of `output` execute their derivative rules: every
-    /// other value's gradient is exactly zero, and expressions the target
-    /// does not depend on — including singular ones such as a division by
+    /// evaluation's own structure in reverse allocation order. Only the
+    /// ancestors of `output` execute their derivative rules: every other
+    /// value's gradient is exactly zero, and expressions the target does
+    /// not depend on — including singular ones such as a division by
     /// zero, even when the target uses them purely as a shape or index
-    /// reference — cannot disturb the result. The network is not even locked,
-    /// so any number of threads can differentiate one shared evaluation
-    /// for their own targets at once. Values recorded after this
-    /// evaluation ran are absent from the result, exactly as they are
-    /// absent from `of`.
+    /// reference — cannot disturb the result. The evaluation holds no
+    /// network borrow, so any number of threads can differentiate one
+    /// shared evaluation for their own targets at once. Values recorded
+    /// after this evaluation ran are absent from the result, exactly as
+    /// they are absent from `of`.
     ///
     /// # Panics
     /// Panics if `output` is not a scalar, belongs to a different
-    /// network, was allocated after this evaluation ran, or was skipped
-    /// by a target-sliced run.
+    /// lineage or divergent fork, was allocated after this evaluation
+    /// ran, or was skipped by a target-sliced run.
     pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
         let output_index = self.locate(output);
         let values = self.values.as_slice();
@@ -243,7 +253,11 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
         // and the recorded column here, so a payload that ignored a
         // recorded movement cannot smuggle a non-scalar target through.
         assert_eq!(
-            self.tape.shape(ValueId(output_index)).rank(),
+            self.structure
+                .shapes
+                .get(output_index)
+                .expect("shapes cover the evaluation")
+                .rank(),
             0,
             "backward requires a scalar target; reduce it with `sum` first"
         );
@@ -269,8 +283,13 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             if !ancestors[index] {
                 continue;
             }
-            let function = self.nodes.get(index).expect("snapshot cannot shrink");
+            let function = self
+                .structure
+                .functions
+                .get(index)
+                .expect("snapshot cannot shrink");
             let links = self
+                .structure
                 .operands
                 .get(index)
                 .expect("snapshot cannot shrink")
@@ -354,6 +373,7 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             return value;
         }
         let links = self
+            .structure
             .operands
             .get(index)
             .expect("snapshot cannot shrink")
@@ -363,7 +383,11 @@ impl<'network, Data: Tensorial> Evaluation<'network, Data> {
             .map(|link| self.resolved(link.index(), recomputed))
             .collect();
         let operands: SmallVec<[&Data; 2]> = operand_values.iter().collect();
-        let function = self.nodes.get(index).expect("snapshot cannot shrink");
+        let function = self
+            .structure
+            .functions
+            .get(index)
+            .expect("snapshot cannot shrink");
         // Sources are never dropped, so the parameter and input arms
         // are unreachable here and their slots can stay empty.
         let value = function.forward(&operands, &[], &[]);

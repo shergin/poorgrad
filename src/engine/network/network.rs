@@ -242,7 +242,7 @@ impl<Data: Differentiable> Network<Data> {
 impl<Data: Tensorial> Network<Data> {
     /// Evaluates every node in allocation order with every input at its
     /// default payload; see `forward_with`.
-    pub fn forward(&self) -> Evaluation<'_, Data> {
+    pub fn forward(&self) -> Evaluation<Data> {
         self.forward_with(std::iter::empty())
     }
 
@@ -258,8 +258,9 @@ impl<Data: Tensorial> Network<Data> {
     /// atomically, so the network is never locked during the run and
     /// concurrent recordings and updates do not disturb it. Allocation
     /// order is dependency order by construction, which is what makes
-    /// the single forward scan sufficient. The snapshot travels with the
-    /// returned evaluation, whose `backward` replays it in reverse.
+    /// the single forward scan sufficient. The returned evaluation owns
+    /// the structure freeze and a witness, so `backward` needs no
+    /// network borrow.
     ///
     /// # Panics
     /// Panics if a fed symbol does not resolve in this generation, names
@@ -268,7 +269,7 @@ impl<Data: Tensorial> Network<Data> {
     pub fn forward_with(
         &self,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<'_, Data> {
+    ) -> Evaluation<Data> {
         self.run(None, feeds)
     }
 
@@ -297,7 +298,7 @@ impl<Data: Tensorial> Network<Data> {
         &self,
         targets: impl IntoIterator<Item = impl ValueRef<Data>>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<'_, Data> {
+    ) -> Evaluation<Data> {
         let targets: Vec<ValueId> = targets
             .into_iter()
             .map(|target| self.locate(target))
@@ -312,7 +313,7 @@ impl<Data: Tensorial> Network<Data> {
         &self,
         targets: Option<Vec<ValueId>>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<'_, Data> {
+    ) -> Evaluation<Data> {
         let mut bindings = Vec::new();
         for (symbol, payload) in feeds {
             let value = self.resolve(symbol);
@@ -403,9 +404,7 @@ impl<Data: Tensorial> Network<Data> {
             values.push(value);
         }
         Evaluation::new(
-            &self.tape,
-            structure.functions,
-            structure.operands,
+            structure,
             snapshot.witness,
             values,
             evaluated,
