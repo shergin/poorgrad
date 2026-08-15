@@ -111,36 +111,26 @@ impl<Data: Differentiable> Run<Data> {
         }
     }
 
-    /// Locates `value` in this run's slots, using the same
-    /// kinship proofs as [`Field::of`]: a bound proxy's tape must agree
-    /// with the run's witness over this coverage, while a symbol is
-    /// probed against the witness directly.
+    /// Locates `value` in this run's slots through the field's one
+    /// kinship probe ([`Field::locate`]), formatting misbindings into
+    /// this run's own panic messages.
     fn locate(&self, value: impl ValueRef<Data>) -> usize {
-        let coverage = self.field.payloads().len();
-        match value.designation() {
-            Designation::Bound { tape, id } => {
-                assert!(
-                    tape.same_origin(self.field.witness()),
-                    "value belongs to a different network lineage"
-                );
-                assert!(
-                    tape.agrees_with(self.field.witness(), coverage),
-                    "value belongs to a divergent fork of the network"
-                );
-                id.index()
+        let designation = value.designation();
+        let subject = match &designation {
+            Designation::Bound { .. } => "value",
+            Designation::Named(_) => "symbol",
+        };
+        match self.field.locate(designation) {
+            Ok(index) => index,
+            Err(Misbinding::ForeignOrigin) => {
+                panic!("{subject} belongs to a different network lineage")
             }
-            Designation::Named(symbol) => match self.field.witness().probe(symbol, coverage) {
-                Ok(id) => id.index(),
-                Err(Misbinding::ForeignOrigin) => {
-                    panic!("symbol belongs to a different network lineage")
-                }
-                Err(Misbinding::DivergentBranch) => {
-                    panic!("symbol belongs to a divergent fork of the network")
-                }
-                Err(Misbinding::OutOfCoverage) => {
-                    panic!("symbol was allocated after this run")
-                }
-            },
+            Err(Misbinding::DivergentBranch) => {
+                panic!("{subject} belongs to a divergent fork of the network")
+            }
+            Err(Misbinding::OutOfCoverage) => {
+                panic!("{subject} was allocated after this run")
+            }
         }
     }
 
@@ -158,16 +148,11 @@ impl<Data: Differentiable> Run<Data> {
     /// placeholder must never read as a result.
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
         let index = self.locate(value);
-        let payload = self
-            .field
-            .payloads()
-            .get(index)
-            .expect("value was allocated after this run");
         assert!(
             self.computed(index),
             "value was not computed by this target-sliced run; add it to the targets"
         );
-        payload
+        &self.field.payloads()[index]
     }
 
     /// Returns the run's computed values as a field, for the displays
@@ -254,10 +239,6 @@ impl<Data: Tensorial> Run<Data> {
     pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
         let output_index = self.locate(output);
         let values = self.field.payloads();
-        assert!(
-            output_index < values.len(),
-            "value was allocated after this run"
-        );
         // A sliced run evaluates the whole ancestor closure of its
         // targets, so any computed output has every operand its
         // backward needs.

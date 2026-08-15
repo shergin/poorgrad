@@ -47,48 +47,61 @@ impl<Data: Differentiable> Field<Data> {
         Self { witness, payloads }
     }
 
+    /// Locates `designation` within this field's coverage — the one
+    /// kinship probe behind every buffer read.
+    ///
+    /// A field borrows no tape, so the two forms present different
+    /// proofs: a bound proxy's tape must agree with the field's
+    /// branch chain over the covered prefix, while a symbol's own
+    /// lineage, branch, and position are checked against the chain
+    /// directly — the detachment fields were built for. Callers
+    /// format the returned [`Misbinding`] into their own panic
+    /// messages, so the probe stays diagnosis-only.
+    pub(crate) fn locate(&self, designation: Designation<'_, Data>) -> Result<usize, Misbinding> {
+        let coverage = self.payloads.len();
+        match designation {
+            Designation::Bound { tape, id } => {
+                if !tape.same_origin(&self.witness) {
+                    return Err(Misbinding::ForeignOrigin);
+                }
+                if !tape.agrees_with(&self.witness, coverage) {
+                    return Err(Misbinding::DivergentBranch);
+                }
+                if id.index() >= coverage {
+                    return Err(Misbinding::OutOfCoverage);
+                }
+                Ok(id.index())
+            }
+            Designation::Named(symbol) => self.witness.probe(symbol, coverage).map(|id| id.index()),
+        }
+    }
+
     /// Returns the value assigned to the node named by `value` — a
     /// bound [`Value`](super::Value) or a detached
     /// [`Symbol`](super::Symbol).
-    ///
-    /// A field borrows no tape, so the two forms present different
-    /// proofs: a bound value's tape must agree with the field's
-    /// branch chain, while a symbol's own lineage, branch, and
-    /// position are checked against the chain directly — the
-    /// detachment fields were built for.
     ///
     /// # Panics
     /// Panics if `value` belongs to a different lineage or a divergent
     /// fork, or was allocated after this field was produced.
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
-        let index = match value.designation() {
-            Designation::Bound { tape, id } => {
-                assert!(
-                    tape.same_origin(&self.witness),
-                    "value belongs to a different network lineage"
-                );
-                assert!(
-                    tape.agrees_with(&self.witness, self.payloads.len()),
-                    "value belongs to a divergent fork of the network"
-                );
-                id.index()
-            }
-            Designation::Named(symbol) => match self.witness.probe(symbol, self.payloads.len()) {
-                Ok(id) => id.index(),
-                Err(Misbinding::ForeignOrigin) => {
-                    panic!("symbol belongs to a different network lineage")
-                }
-                Err(Misbinding::DivergentBranch) => {
-                    panic!("symbol belongs to a divergent fork of the network")
-                }
-                Err(Misbinding::OutOfCoverage) => {
-                    panic!("symbol was allocated after this field was produced")
-                }
-            },
+        let designation = value.designation();
+        let subject = match &designation {
+            Designation::Bound { .. } => "value",
+            Designation::Named(_) => "symbol",
         };
-        self.payloads
-            .get(index)
-            .expect("value was allocated after this field was produced")
+        let index = match self.locate(designation) {
+            Ok(index) => index,
+            Err(Misbinding::ForeignOrigin) => {
+                panic!("{subject} belongs to a different network lineage")
+            }
+            Err(Misbinding::DivergentBranch) => {
+                panic!("{subject} belongs to a divergent fork of the network")
+            }
+            Err(Misbinding::OutOfCoverage) => {
+                panic!("{subject} was allocated after this field was produced")
+            }
+        };
+        &self.payloads[index]
     }
 
     /// Returns a field with every entry passed through `transform`.
