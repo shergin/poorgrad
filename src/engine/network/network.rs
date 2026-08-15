@@ -6,7 +6,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::super::{Field, Function, Run, Trace};
+use super::super::{Field, Function, Posture, Run, Trace};
 use super::{Designation, Symbol, Tape, Value, ValueId, ValueRef};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
@@ -400,15 +400,11 @@ impl<Data: Tensorial> Network<Data> {
             };
             values.push(value);
         }
-        Run::new(
-            structure,
-            snapshot.witness,
-            values,
-            computed,
-            true,
-            None,
-            None,
-        )
+        let posture = match computed {
+            Some(computed) => Posture::Sliced { computed },
+            None => Posture::Complete,
+        };
+        Run::new(structure, snapshot.witness, values, posture)
     }
 }
 

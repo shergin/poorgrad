@@ -250,7 +250,13 @@ the graph). Forks share both stores in O(1).
 **Run.** One forward or backward execution over a network, and the type
 that reifies the forward one: [`Run`](src/engine/run.rs) is a payload
 per node, owning the structure freeze and a witness so `backward` needs
-no network borrow. Runs never mutate the network, so any number can
+no network borrow. Each run carries its *posture*, the
+producer-specific state as one explicit sum: complete or target-sliced
+from the interpreter, observed from a forward-only plan (only the
+keep-set answers reads, `backward` refused), training from a training
+plan (dropped slots rematerialized on demand) — so an impossible
+combination, such as remat recipes on a run that refuses `backward`,
+cannot be represented. Runs never mutate the network, so any number can
 execute concurrently; a backward sweep reads a `Run` and returns
 [`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
 a `Field`, so it combines and carries optimizer state directly). Both

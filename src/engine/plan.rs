@@ -7,7 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Function, Network, Operands, Run, Structure, Symbol, ValueRef, Witness};
+use super::{Function, Network, Operands, Posture, Run, Structure, Symbol, ValueRef, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -76,7 +76,7 @@ pub struct Plan<Data> {
     /// answer [`Run::of`]; an interior value stays unreadable
     /// even when liveness happens to retain it, so the contract does
     /// not depend on the optimizer's choices.
-    readable: Vec<bool>,
+    readable: Arc<Vec<bool>>,
     /// Per node, the slots whose last forward reader this node is and
     /// which the analysis licenses for release: everything outside the
     /// keep-set and retention contract, plus the dropped
@@ -456,7 +456,7 @@ impl<Data: Differentiable> Plan<Data> {
             witness: snapshot.witness,
             structure,
             wanted,
-            readable,
+            readable: Arc::new(readable),
             releases,
             frees,
             dropped: Arc::new(dropped),
@@ -799,14 +799,22 @@ impl<Data: Tensorial> Plan<Data> {
             }
         }
 
+        let posture = if self.training {
+            Posture::Training {
+                readable: Arc::clone(&self.readable),
+                dropped: Arc::clone(&self.dropped),
+                fused_patches: Arc::clone(&self.fused_patches),
+            }
+        } else {
+            Posture::Observed {
+                readable: Arc::clone(&self.readable),
+            }
+        };
         Run::new(
             self.structure.clone(),
             self.witness.clone(),
             values,
-            Some(self.readable.clone()),
-            self.training,
-            Some(Arc::clone(&self.dropped)),
-            Some(Arc::clone(&self.fused_patches)),
+            posture,
         )
     }
 }

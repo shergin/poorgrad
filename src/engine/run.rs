@@ -25,62 +25,88 @@ assert_impl_all!(Run<f64>: Send, Sync);
 /// concurrently without pinning a `Network`. Later recordings and
 /// parameter updates do not change its values or the operations
 /// differentiated by [`Run::backward`].
+/// The producer-specific shape of one run: which slots answer reads,
+/// and whether `backward` may differentiate it.
+///
+/// Every forward path yields the same `Run`, but the four producers
+/// leave it in genuinely different states; the posture names that
+/// state as one explicit sum, so an impossible combination — remat
+/// recipes on a run that refuses `backward` — cannot be represented.
+/// Masked slots hold shape-correct zero placeholders that reads must
+/// never answer with, so `of` and `backward` consult the posture
+/// first.
+#[derive(Debug)]
+pub(crate) enum Posture {
+    /// Full interpreter run: every slot is genuine.
+    Complete,
+    /// Target-sliced interpreter run: the ancestor closure of the
+    /// declared targets was computed; every slot outside it holds a
+    /// placeholder.
+    Sliced { computed: Vec<bool> },
+    /// Forward-only plan run: only the keep-set answers reads, and
+    /// `backward` is refused — the liveness pass freed the buffers
+    /// it would need.
+    Observed { readable: Arc<Vec<bool>> },
+    /// Training plan run: the keep-set answers reads, and `backward`
+    /// rematerializes the dropped slots through the fused recipes.
+    Training {
+        readable: Arc<Vec<bool>>,
+        dropped: Arc<Vec<bool>>,
+        fused_patches: Arc<HashMap<usize, WindowProduct>>,
+    },
+}
+
+impl Posture {
+    /// Returns the mask of slots that answer reads, `None` for a
+    /// complete run where every slot does.
+    fn mask(&self) -> Option<&[bool]> {
+        match self {
+            Posture::Complete => None,
+            Posture::Sliced { computed } => Some(computed),
+            Posture::Observed { readable } | Posture::Training { readable, .. } => Some(readable),
+        }
+    }
+
+    /// Returns whether runs of this posture may differentiate: only a
+    /// forward-only plan run refuses, because its liveness pass freed
+    /// the forward values the derivative rules read.
+    fn differentiable(&self) -> bool {
+        !matches!(self, Posture::Observed { .. })
+    }
+}
+
 #[derive(Debug)]
 pub struct Run<Data> {
     /// Frozen node columns for this run: functions, operands, and the
     /// shapes inferred at record time.
     structure: Structure<Data>,
     field: Field<Data>,
-    /// Which slots a target-sliced run actually computed; `None` for a
-    /// full run, where every slot is genuine. Skipped slots hold
-    /// shape-correct zero placeholders that reads must never answer
-    /// with, so `of` and `backward` check this set first.
-    computed: Option<Vec<bool>>,
-    /// Whether this run may differentiate: true for interpreter runs
-    /// and training plans, whose forward values are all present or
-    /// rematerializable, false for forward-only plan runs, whose
-    /// liveness pass freed buffers the derivative rules would need.
-    differentiable: bool,
-    /// Which slots a training plan dropped for rematerialization:
-    /// their placeholders must never feed a derivative rule, so
-    /// `backward` recomputes their values on demand.
-    dropped: Option<Arc<Vec<bool>>>,
-    /// The fused patch recipes by reshape slot: rematerializing those
-    /// slots takes one fast fill from the source instead of replaying
-    /// the view chain through the general element walk.
-    fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
+    posture: Posture,
 }
 
 impl<Data: Differentiable> Run<Data> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         structure: Structure<Data>,
         witness: Witness,
         values: Vec<Data>,
-        computed: Option<Vec<bool>>,
-        differentiable: bool,
-        dropped: Option<Arc<Vec<bool>>>,
-        fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
+        posture: Posture,
     ) -> Self {
         debug_assert_eq!(structure.len(), values.len());
-        if let Some(computed) = &computed {
-            debug_assert_eq!(structure.len(), computed.len());
+        if let Some(mask) = posture.mask() {
+            debug_assert_eq!(structure.len(), mask.len());
         }
         Self {
             structure,
             field: Field::new(witness, values),
-            computed,
-            differentiable,
-            dropped,
-            fused_patches,
+            posture,
         }
     }
 
-    /// Returns whether this run computed the slot at `index`, as
-    /// opposed to skipping it in a target-sliced run.
+    /// Returns whether this run computed the slot at `index` as a
+    /// readable value, as opposed to leaving a placeholder there.
     fn computed(&self, index: usize) -> bool {
-        match &self.computed {
-            Some(computed) => computed[index],
+        match self.posture.mask() {
+            Some(mask) => mask[index],
             None => true,
         }
     }
@@ -240,7 +266,7 @@ impl<Data: Tensorial> Run<Data> {
             "value was not computed by this target-sliced run; add it to the targets"
         );
         assert!(
-            self.differentiable,
+            self.posture.differentiable(),
             "this run came from a forward-only plan, whose liveness pass freed \
              the buffers backward reads; compile with `compile_training` to differentiate"
         );
@@ -347,8 +373,15 @@ impl<Data: Tensorial> Run<Data> {
     /// bit-identical to the forward, since the rules are pure and
     /// sources are never dropped.
     fn resolved(&self, index: usize, recomputed: &mut HashMap<usize, Data>) -> Data {
-        let is_dropped = self.dropped.as_ref().is_some_and(|dropped| dropped[index]);
-        if !is_dropped {
+        let Posture::Training {
+            dropped,
+            fused_patches,
+            ..
+        } = &self.posture
+        else {
+            return self.field.payloads()[index].clone();
+        };
+        if !dropped[index] {
             return self.field.payloads()[index].clone();
         }
         if let Some(hit) = recomputed.get(&index) {
@@ -356,11 +389,7 @@ impl<Data: Tensorial> Run<Data> {
         }
         // A fused chain's patches rebuild with one fast fill from the
         // source; the interior views beneath never resolve at all.
-        if let Some(recipe) = self
-            .fused_patches
-            .as_ref()
-            .and_then(|patches| patches.get(&index))
-        {
+        if let Some(recipe) = fused_patches.get(&index) {
             let recipe = recipe.clone();
             let source = self.resolved(recipe.source, recomputed);
             let value = source.windowed_patches(

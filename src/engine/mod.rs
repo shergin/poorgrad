@@ -16,4 +16,5 @@ pub use run::Run;
 
 pub(crate) use function::Function;
 pub(crate) use network::{Designation, Misbinding, Operands, SlotId, Structure, ValueId, Witness};
+pub(crate) use run::Posture;
 pub(crate) use trace::Trace;
