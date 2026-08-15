@@ -46,6 +46,21 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `makemore_mlp_emitted` example — E2, emitted training: the
+  `makemore_mlp_compiled` model's loss and recorded gradients
+  compiled as one forward-only plan and emitted as a single StableHLO
+  function `(parameters, batch) -> (loss, gradients...)`, executed by
+  XLA per training step while the host keeps the update loop as plain
+  payload arithmetic (parameters never re-enter the tape). The
+  emitted result order is pinned by recording one same-shape
+  `reshape` alias per gradient in caller order — results are the
+  readable set in recording order — and every argument stages
+  dynamic, since parameters change each generation. Graded against
+  the in-crate oracle trajectory in the same binary: step-0 relative
+  drift 6.8e-8, every 500-step window mean equal to four decimals
+  over 5000 steps, final window 2.2450 exactly; 0.82 ms/step through
+  XLA-CPU against the in-crate plan's 0.39 at this scale.
+
 - The `makemore_mlp_adam` example — the optimizer act: the same
   model, seeds, and batches as `makemore_mlp_compiled`, trained once
   with `Sgd` and once with `Adam`, both curves on one chart; the SGD
