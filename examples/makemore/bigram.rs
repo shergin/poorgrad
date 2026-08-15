@@ -74,7 +74,7 @@ fn main() {
 
         let loss_value = network.resolve(loss_symbol);
         // Slice the run to the loss it reads.
-        let evaluation = network.forward_for(
+        let run = network.forward_for(
             [loss_symbol],
             [
                 (
@@ -87,12 +87,12 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step % 100 == 0 {
             println!("step {step:4}: minibatch loss = {batch_loss:.4}");
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
@@ -113,8 +113,8 @@ fn main() {
     let probabilities = network.resolve(table_symbol).softmax(1);
     // Slice to the freshly recorded softmax: the training expression
     // does not re-run just to render the table.
-    let evaluation = network.forward_for([probabilities.symbol()], std::iter::empty());
-    let probabilities = evaluation
+    let run = network.forward_for([probabilities.symbol()], std::iter::empty());
+    let probabilities = run
         .of(probabilities)
         .as_slice()
         .expect("a computed softmax is contiguous")

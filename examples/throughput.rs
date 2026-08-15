@@ -92,8 +92,8 @@ fn main() {
             started = Instant::now();
         }
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward_with([(features_symbol, batch.clone())]);
-        let gradients = evaluation.backward(loss_value);
+        let run = network.forward_with([(features_symbol, batch.clone())]);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });

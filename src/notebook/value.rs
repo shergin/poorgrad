@@ -4,7 +4,7 @@ use malevich::Theme;
 
 use super::render::Renderable;
 use super::{html, render};
-use crate::{Evaluation, Symbol, Value};
+use crate::{Run, Symbol, Value};
 
 // `Renderable` is deliberately crate private: it names the closed set of
 // payload types a card can draw, and it is a rendering detail rather
@@ -83,14 +83,14 @@ impl Symbol {
 // can name the trait, so there is no leak to close. Silencing it also
 // keeps `cargo check` warning-free, which Evcxr requires.
 #[allow(private_bounds)]
-impl<Data: Renderable> Evaluation<Data> {
+impl<Data: Renderable> Run<Data> {
     /// Renders the run as a self-contained HTML card.
     ///
     /// A run holds a value per node, so the card shows the profile of
     /// their magnitudes: the shape of the forward pass, where it grew,
     /// and whether anything went non-finite.
     pub fn to_html(&self, theme: Theme) -> String {
-        super::field::profile_card(theme, "evaluation", self.field())
+        super::field::profile_card(theme, "run", self.field())
     }
 
     /// Displays the run when it is the last expression in an Evcxr
@@ -98,7 +98,7 @@ impl<Data: Renderable> Evaluation<Data> {
     pub fn evcxr_display(&self) {
         html::show(
             &self.to_html(Theme::detect()),
-            &super::field::profile_text("evaluation", self.field()),
+            &super::field::profile_text("run", self.field()),
         );
     }
 }

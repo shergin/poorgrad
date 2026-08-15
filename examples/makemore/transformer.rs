@@ -261,7 +261,7 @@ fn main() {
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = training_plan.forward(
+        let run = training_plan.forward(
             &network,
             [
                 (
@@ -274,7 +274,7 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -292,7 +292,7 @@ fn main() {
             window_loss = 0.0;
         }
 
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         let learning_rate = if step < 4000 { &fast } else { &slow };
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
@@ -315,14 +315,14 @@ fn main() {
         let mut window = [0usize; CONTEXT_LEN];
         let mut name = String::new();
         loop {
-            let evaluation = sampling_plan.forward(
+            let run = sampling_plan.forward(
                 &network,
                 [(
                     sample_tokens_symbol,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = evaluation
+            let row = run
                 .of(network.resolve(sample_probabilities_symbol))
                 .to_vec();
             let token = draw(&row, &mut state);

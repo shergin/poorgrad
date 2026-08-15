@@ -128,7 +128,7 @@ it instead of dumping `Debug`:
 | a `Network` | how much graph is recorded |
 | a `Plan` | the whole schedule, and the live volume plotted along it |
 | a `Field` of gradients | one Euclidean norm per node, plotted along the tape |
-| an `Evaluation` | the same profile for a completed forward pass |
+| a `Run` | the same profile for a completed forward pass |
 | a `Symbol` | what it is, and that resolving is how you read through it |
 
 Every card is a pure `to_html(Theme)` string with an `evcxr_display`
@@ -151,6 +151,6 @@ to a second compile with `Debug` formatting when that fails.
   a small cell and one to two seconds when generics instantiate. The
   compilation cache above helps; nothing makes it Python-snappy, and
   that is the honest trade for the rest of the stack.
-- **`Evaluation` is owned.** Like a `Field`, it carries structure and a
+- **`Run` is owned.** Like a `Field`, it carries structure and a
   witness rather than borrowing the network, so a run can outlive the
   cell that produced it (or the generation that ran).

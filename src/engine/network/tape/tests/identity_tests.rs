@@ -102,8 +102,8 @@ fn update_rejects_fields_from_divergent_forks() {
     let _mine = network.leaf(2.0);
     let _theirs = fork.leaf(3.0);
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(w);
+    let run = network.forward();
+    let gradients = run.backward(w);
     fork.update(&gradients, |parameter, gradient| parameter - gradient);
 }
 

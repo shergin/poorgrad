@@ -26,8 +26,8 @@ fn a_computed_value_shows_the_payload_of_its_own_generation() {
     let network: Network<f64> = Network::new();
     let w = network.parameter(3.0);
     let doubled = w + w;
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(doubled), 6.0);
+    let run = network.forward();
+    assert_eq!(*run.of(doubled), 6.0);
 
     // The proxy still reports its generation's parameter, which is the
     // contract the notebook documentation warns about.
@@ -44,14 +44,14 @@ fn a_symbol_card_explains_that_it_carries_no_payload() {
 }
 
 #[test]
-fn an_evaluation_card_profiles_the_whole_pass() {
+fn an_run_card_profiles_the_whole_pass() {
     let network: Network<f64> = Network::new();
     let w = network.parameter(2.0);
     let squared = w * w;
     let _ = squared;
-    let evaluation = network.forward();
-    let html = evaluation.to_html(Theme::DARK);
-    assert!(html.contains("evaluation"));
+    let run = network.forward();
+    let html = run.to_html(Theme::DARK);
+    assert!(html.contains("run"));
     assert!(html.contains("nodes"));
 }
 

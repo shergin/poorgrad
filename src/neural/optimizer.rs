@@ -19,8 +19,8 @@ pub trait Optimizer<Data: Tensorial> {
     /// Returns the next network generation stepped by `gradients` at
     /// `learning_rate`, updating this optimizer's own state.
     ///
-    /// The gradients may come from [`Evaluation::backward`](crate::Evaluation::backward)
-    /// or from [`Evaluation::recorded_gradients`](crate::Evaluation::recorded_gradients)
+    /// The gradients may come from [`Run::backward`](crate::Run::backward)
+    /// or from [`Run::recorded_gradients`](crate::Run::recorded_gradients)
     /// over a compiled gradient plan — a field is a field.
     fn step(
         &mut self,

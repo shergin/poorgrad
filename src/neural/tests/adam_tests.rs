@@ -29,8 +29,8 @@ fn two_steps_match_the_paper_trace() {
     let (mut m, mut v) = (0.0_f64, 0.0);
     let (mut beta1_power, mut beta2_power) = (1.0_f64, 1.0);
     for _ in 0..2 {
-        let evaluation = network.forward();
-        let gradients = evaluation.backward(network.resolve(loss));
+        let run = network.forward();
+        let gradients = run.backward(network.resolve(loss));
         network = adam.step(&network, &gradients, &rate);
 
         let gradient = 2.0 * expected_w;
@@ -66,8 +66,8 @@ fn identical_runs_are_bitwise_identical() {
         let rate = Tensor::new([], [0.05_f64]);
         let mut network = network;
         for _ in 0..5 {
-            let evaluation = network.forward();
-            let gradients = evaluation.backward(network.resolve(loss));
+            let run = network.forward();
+            let gradients = run.backward(network.resolve(loss));
             network = adam.step(&network, &gradients, &rate);
         }
         network.resolve(w).payload().unwrap().to_vec()
@@ -99,8 +99,8 @@ fn adamw_decays_weights_and_spares_biases() {
     let mut decoupled = AdamW::new(beta1, beta2, epsilon, Tensor::new([], [0.1_f64]));
     let rate = Tensor::new([], [0.05_f64]);
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(network.resolve(loss));
+    let run = network.forward();
+    let gradients = run.backward(network.resolve(loss));
     let by_adam = plain.step(&network, &gradients, &rate);
     let by_adamw = decoupled.step(&network, &gradients, &rate);
 
@@ -136,8 +136,8 @@ fn step_where_overrides_the_structural_policy() {
     let mut decoupled = AdamW::new(beta1, beta2, epsilon, Tensor::new([], [0.1_f64]));
     let rate = Tensor::new([], [0.05_f64]);
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(network.resolve(loss));
+    let run = network.forward();
+    let gradients = run.backward(network.resolve(loss));
     let by_adam = plain.step(&network, &gradients, &rate);
     // Decay nothing: AdamW must reproduce Adam bitwise.
     let spared = decoupled.step_where(&network, &gradients, &rate, |_| false);
@@ -178,12 +178,12 @@ fn recorded_gradients_feed_adam_bitwise() {
     let mut recorded_network = recorded_network;
 
     for _ in 0..4 {
-        let evaluation = engine_network.forward();
-        let gradients = evaluation.backward(engine_network.resolve(engine_loss));
+        let run = engine_network.forward();
+        let gradients = run.backward(engine_network.resolve(engine_loss));
         engine_network = engine_adam.step(&engine_network, &gradients, &rate);
 
-        let evaluation = plan.forward(&recorded_network, []);
-        let gradients = evaluation.recorded_gradients([(
+        let run = plan.forward(&recorded_network, []);
+        let gradients = run.recorded_gradients([(
             recorded_network.resolve(recorded_w),
             recorded_network.resolve(gradient_symbols[0]),
         )]);
@@ -215,12 +215,12 @@ fn adam_descends_faster_than_sgd_on_a_skewed_bowl() {
         let rate = Tensor::new([], [0.01_f64]);
         let mut network = network;
         for _ in 0..100 {
-            let evaluation = network.forward();
-            let gradients = evaluation.backward(network.resolve(loss));
+            let run = network.forward();
+            let gradients = run.backward(network.resolve(loss));
             network = strategy.step(&network, &gradients, &rate);
         }
-        let evaluation = network.forward();
-        evaluation.of(network.resolve(loss)).to_vec()[0]
+        let run = network.forward();
+        run.of(network.resolve(loss)).to_vec()[0]
     };
 
     let (beta1, beta2, epsilon) = conventional();

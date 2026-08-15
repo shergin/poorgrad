@@ -70,11 +70,11 @@ fn express_standardizes_every_feature() {
     assert_eq!(normalization.mean.shape(), Shape::new([2]));
     assert_eq!(normalization.variance.shape(), Shape::new([2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(normalization.mean).to_vec(), &[2.0, 4.0]);
-    assert_eq!(evaluation.of(normalization.variance).to_vec(), &[1.0, 4.0]);
+    let run = network.forward();
+    assert_eq!(run.of(normalization.mean).to_vec(), &[2.0, 4.0]);
+    assert_eq!(run.of(normalization.variance).to_vec(), &[1.0, 4.0]);
     assert_eq!(
-        evaluation.of(normalization.output).to_vec(),
+        run.of(normalization.output).to_vec(),
         &[-1.0, -1.0, 1.0, 1.0]
     );
 }
@@ -92,9 +92,9 @@ fn express_applies_the_learned_affine() {
 
     let normalization = norm.express(&network, input);
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(normalization.output).to_vec(),
+        run.of(normalization.output).to_vec(),
         &[8.0, 17.0, 12.0, 23.0]
     );
 }
@@ -114,8 +114,8 @@ fn epsilon_keeps_a_constant_feature_finite() {
 
     let normalization = norm.express(&network, input);
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(normalization.output).to_vec(), &[0.0, 0.0]);
+    let run = network.forward();
+    assert_eq!(run.of(normalization.output).to_vec(), &[0.0, 0.0]);
 }
 
 #[test]
@@ -152,21 +152,21 @@ fn express_with_normalizes_by_the_fed_statistics() {
 
     let output = norm.express_with(&network, input, mean, variance);
 
-    let evaluation = network.forward_with([
+    let run = network.forward_with([
         (input.symbol(), Tensor::new([1, 2], [3.0, 8.0])),
         (mean.symbol(), Tensor::new([2], [1.0, 4.0])),
         (variance.symbol(), Tensor::new([2], [4.0, 16.0])),
     ]);
-    assert_eq!(evaluation.of(output).to_vec(), &[1.0, 1.0]);
+    assert_eq!(run.of(output).to_vec(), &[1.0, 1.0]);
 
     // A later run feeds updated running estimates through the same
     // recorded expression.
-    let evaluation = network.forward_with([
+    let run = network.forward_with([
         (input.symbol(), Tensor::new([1, 2], [3.0, 8.0])),
         (mean.symbol(), Tensor::new([2], [3.0, 0.0])),
         (variance.symbol(), Tensor::new([2], [1.0, 4.0])),
     ]);
-    assert_eq!(evaluation.of(output).to_vec(), &[0.0, 4.0]);
+    assert_eq!(run.of(output).to_vec(), &[0.0, 4.0]);
 }
 
 #[test]
@@ -203,8 +203,8 @@ fn gradients_flow_through_the_batch_statistics() {
     let normalization = norm.express(&network, input);
     let target = normalization.output.narrow(0, 0, 1).sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(target);
+    let run = network.forward();
+    let gradients = run.backward(target);
 
     let computed = gradients.of(input).to_vec();
     assert!((computed[0] - 0.1875).abs() < 1e-12);

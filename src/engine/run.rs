@@ -13,20 +13,20 @@ use super::{
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
-assert_impl_all!(Evaluation<f64>: Send, Sync);
+assert_impl_all!(Run<f64>: Send, Sync);
 
 /// The materialized payloads of one forward run over a `Network`.
 ///
-/// An evaluation is immutable, per-run state: the graph structure frozen
+/// A run is immutable, per-run state: the graph structure frozen
 /// at the start of the run and the payloads that run produced. It carries
 /// no borrow of the network — kinship is checked through the same
-/// [`Witness`] a [`Field`] uses — so evaluations outlive the generation
+/// [`Witness`] a [`Field`] uses — so runs outlive the generation
 /// that produced them and can be stashed, moved, or differentiated
 /// concurrently without pinning a `Network`. Later recordings and
 /// parameter updates do not change its values or the operations
-/// differentiated by [`Evaluation::backward`].
+/// differentiated by [`Run::backward`].
 #[derive(Debug)]
-pub struct Evaluation<Data> {
+pub struct Run<Data> {
     /// Frozen node columns for this run: functions, operands, and the
     /// shapes inferred at record time.
     structure: Structure<Data>,
@@ -51,7 +51,7 @@ pub struct Evaluation<Data> {
     fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
 }
 
-impl<Data: Differentiable> Evaluation<Data> {
+impl<Data: Differentiable> Run<Data> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         structure: Structure<Data>,
@@ -85,7 +85,7 @@ impl<Data: Differentiable> Evaluation<Data> {
         }
     }
 
-    /// Locates `value` in this evaluation's slots, using the same
+    /// Locates `value` in this run's slots, using the same
     /// kinship proofs as [`Field::of`]: a bound proxy's tape must agree
     /// with the run's witness over this coverage, while a symbol is
     /// probed against the witness directly.
@@ -112,7 +112,7 @@ impl<Data: Differentiable> Evaluation<Data> {
                     panic!("symbol belongs to a divergent fork of the network")
                 }
                 Err(Misbinding::OutOfCoverage) => {
-                    panic!("symbol was allocated after this evaluation ran")
+                    panic!("symbol was allocated after this run")
                 }
             },
         }
@@ -122,11 +122,11 @@ impl<Data: Differentiable> Evaluation<Data> {
     /// [`Value`] or a detached [`Symbol`](crate::Symbol).
     ///
     /// It is the shared read-back accessor of every position-indexed
-    /// buffer: evaluations, gradients, and fields all answer `of(value)`.
+    /// buffer: runs, gradients, and fields all answer `of(value)`.
     ///
     /// # Panics
     /// Panics if `value` belongs to a different lineage or a divergent
-    /// fork, was allocated after this evaluation ran, or was skipped by
+    /// fork, was allocated after this run, or was skipped by
     /// a target-sliced run (see
     /// [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
@@ -143,7 +143,7 @@ impl<Data: Differentiable> Evaluation<Data> {
             .values
             .as_slice()
             .get(index)
-            .expect("value was allocated after this evaluation ran");
+            .expect("value was allocated after this run");
         assert!(
             self.computed(index),
             "value was not evaluated by this target-sliced run; add it to the targets"
@@ -153,8 +153,8 @@ impl<Data: Differentiable> Evaluation<Data> {
 
     /// Assembles a [`Gradients`] field from recorded gradient values:
     /// each `(parameter, gradient)` pair copies the gradient node's
-    /// payload from this evaluation into the parameter's slot, with
-    /// zeros everywhere else — the field [`Evaluation::backward`]
+    /// payload from this run into the parameter's slot, with
+    /// zeros everywhere else — the field [`Run::backward`]
     /// would produce for those parameters, when the gradients were
     /// recorded by [`Network::differentiate`](crate::Network::differentiate)
     /// instead of computed by the engine.
@@ -166,7 +166,7 @@ impl<Data: Differentiable> Evaluation<Data> {
     /// pins the two routes bitwise.
     ///
     /// # Panics
-    /// Panics as [`Evaluation::of`] panics for either half of a pair,
+    /// Panics as [`Run::of`] panics for either half of a pair,
     /// if a pair's first value is not a parameter, or if a gradient's
     /// payload shape differs from its parameter's recorded shape.
     pub fn recorded_gradients<'value>(
@@ -200,7 +200,7 @@ impl<Data: Differentiable> Evaluation<Data> {
     }
 }
 
-impl<Data: Tensorial> Evaluation<Data> {
+impl<Data: Tensorial> Run<Data> {
     /// Propagates gradients backward from `output`, returning the
     /// gradient of `output` with respect to every value of this run.
     ///
@@ -210,27 +210,27 @@ impl<Data: Tensorial> Evaluation<Data> {
     ///
     /// It seeds the output gradient with `one_like` and accumulates into
     /// a fresh buffer initialized with `zero_like`, scanning this
-    /// evaluation's own structure in reverse allocation order. Only the
+    /// run's own structure in reverse allocation order. Only the
     /// ancestors of `output` execute their derivative rules: every other
     /// value's gradient is exactly zero, and expressions the target does
     /// not depend on — including singular ones such as a division by
     /// zero, even when the target uses them purely as a shape or index
-    /// reference — cannot disturb the result. The evaluation holds no
+    /// reference — cannot disturb the result. The run holds no
     /// network borrow, so any number of threads can differentiate one
-    /// shared evaluation for their own targets at once. Values recorded
-    /// after this evaluation ran are absent from the result, exactly as
+    /// shared run for their own targets at once. Values recorded
+    /// after this run are absent from the result, exactly as
     /// they are absent from `of`.
     ///
     /// # Panics
     /// Panics if `output` is not a scalar, belongs to a different
-    /// lineage or divergent fork, was allocated after this evaluation
+    /// lineage or divergent fork, was allocated after this run
     /// ran, or was skipped by a target-sliced run.
     pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
         let output_index = self.locate(output);
         let values = self.values.as_slice();
         assert!(
             output_index < values.len(),
-            "value was allocated after this evaluation ran"
+            "value was allocated after this run"
         );
         // A sliced run evaluates the whole ancestor closure of its
         // targets, so any evaluated output has every operand its
@@ -241,7 +241,7 @@ impl<Data: Tensorial> Evaluation<Data> {
         );
         assert!(
             self.gradients_retained,
-            "this evaluation came from a forward-only plan, whose liveness pass freed \
+            "this run came from a forward-only plan, whose liveness pass freed \
              the buffers backward reads; compile with `compile_training` to differentiate"
         );
         assert_eq!(
@@ -256,7 +256,7 @@ impl<Data: Tensorial> Evaluation<Data> {
             self.structure
                 .shapes
                 .get(output_index)
-                .expect("shapes cover the evaluation")
+                .expect("shapes cover the run")
                 .rank(),
             0,
             "backward requires a scalar target; reduce it with `sum` first"
@@ -397,5 +397,5 @@ impl<Data: Tensorial> Evaluation<Data> {
 }
 
 #[cfg(test)]
-#[path = "tests/evaluation_tests.rs"]
+#[path = "tests/run_tests.rs"]
 mod tests;

@@ -120,13 +120,13 @@ fn main() {
     let training = Instant::now();
     for step in 0..STEP_COUNT {
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward();
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let run = network.forward();
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step % (STEP_COUNT / 5) == 0 {
             println!("step {step:4}: loss = {batch_loss:.4}");
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
@@ -150,8 +150,8 @@ fn main() {
 
     // One forward serves both readouts: the training points' signs for
     // the accuracy line and the grid twin for the surface chart.
-    let evaluation = network.forward();
-    let classified = evaluation
+    let run = network.forward();
+    let classified = run
         .of(network.resolve(predicted_symbol))
         .to_vec()
         .iter()
@@ -163,7 +163,7 @@ fn main() {
         2 * MOON_LEN
     );
 
-    let surface = evaluation.of(network.resolve(surface_symbol)).to_vec();
+    let surface = run.of(network.resolve(surface_symbol)).to_vec();
     println!(
         "{}",
         Plot::new()

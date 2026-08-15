@@ -11,8 +11,8 @@ fn uniform_logits_cost_the_log_of_the_class_count() {
     let loss = cross_entropy(logits, targets);
     assert_eq!(loss.shape(), Shape::scalar());
 
-    let evaluation = network.forward();
-    let cost = evaluation.of(loss).to_vec()[0];
+    let run = network.forward();
+    let cost = run.of(loss).to_vec()[0];
     assert!((cost - 3.0_f64.ln()).abs() < 1e-12);
 }
 
@@ -26,8 +26,8 @@ fn confident_correct_logits_cost_nothing() {
 
     let loss = cross_entropy(logits, targets);
 
-    let evaluation = network.forward();
-    let cost = evaluation.of(loss).to_vec()[0];
+    let run = network.forward();
+    let cost = run.of(loss).to_vec()[0];
     assert!(cost.is_finite());
     assert!(cost.abs() < 1e-12);
 }
@@ -42,8 +42,8 @@ fn gradient_is_probabilities_minus_targets_over_the_batch() {
 
     let loss = cross_entropy(logits, targets);
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     let expected = [-0.375, 0.375, 0.25, -0.25];
     for (computed, expected) in gradients.of(logits).to_vec().into_iter().zip(expected) {
         assert!((computed - expected).abs() < 1e-12);
@@ -64,8 +64,8 @@ fn served_batches_vary_per_run() {
     // toward zero, while the recorded graph stays fixed.
     let confident = Tensor::new([2, 3], [50.0_f64, 0.0, 0.0, 0.0, 50.0, 0.0]);
     let labels = Tensor::selection(vec![0usize, 1], 3, 1.0);
-    let evaluation = network.forward_with([(logits_symbol, confident), (targets_symbol, labels)]);
-    let cost = evaluation.of(loss).to_vec()[0];
+    let run = network.forward_with([(logits_symbol, confident), (targets_symbol, labels)]);
+    let cost = run.of(loss).to_vec()[0];
     assert!(cost.abs() < 1e-12);
 }
 
@@ -99,10 +99,10 @@ fn extreme_finite_logits_keep_the_loss_and_gradients_finite() {
         let targets = network.input(Tensor::selection(vec![class], 2, 1.0));
 
         let loss = cross_entropy(logits, targets);
-        let evaluation = network.forward();
-        assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+        let run = network.forward();
+        assert_eq!(run.of(loss).to_vec()[0], 0.0);
 
-        let gradients = evaluation.backward(loss);
+        let gradients = run.backward(loss);
         for gradient in gradients.of(logits).to_vec() {
             assert!(gradient.is_finite());
         }
@@ -116,8 +116,8 @@ fn extreme_finite_logits_keep_the_loss_finite_f32() {
     let targets = network.input(Tensor::selection(vec![1_usize], 2, 1.0));
 
     let loss = cross_entropy(logits, targets);
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+    let run = network.forward();
+    assert_eq!(run.of(loss).to_vec()[0], 0.0);
 }
 
 #[test]
@@ -130,6 +130,6 @@ fn zero_target_lanes_contribute_exact_zero() {
     let targets = network.input(Tensor::new([1, 2], [0.0_f64, 1.0]));
 
     let loss = cross_entropy(logits, targets);
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(loss).to_vec()[0], 0.0);
+    let run = network.forward();
+    assert_eq!(run.of(loss).to_vec()[0], 0.0);
 }

@@ -6,10 +6,10 @@ fn reads_answer_symbols_and_values_alike() {
     let x = network.parameter(3.0_f64);
     let loss = x * x;
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(loss), evaluation.of(loss.symbol()));
+    let run = network.forward();
+    assert_eq!(run.of(loss), run.of(loss.symbol()));
 
-    let gradients = evaluation.backward(loss.symbol());
+    let gradients = run.backward(loss.symbol());
     assert_eq!(*gradients.of(x.symbol()), 6.0);
     assert_eq!(gradients.of(x), gradients.of(x.symbol()));
 }
@@ -28,7 +28,7 @@ fn field_reads_survive_a_generation_update() {
     // reads it without any network at hand — the detachment fields
     // were built for.
     assert_eq!(*gradients.of(symbol), 2.0);
-    // The same symbol resolves in the new generation's evaluation.
+    // The same symbol resolves in the new generation's run.
     assert_eq!(*updated.forward().of(symbol), 0.5);
 }
 
@@ -45,9 +45,9 @@ fn plans_and_derivatives_accept_bound_values() {
         std::iter::once(loss.into()).chain(gradient_symbols.iter().copied()),
         [],
     );
-    let evaluation = plan.forward(&network, []);
-    assert_eq!(evaluation.of(loss).to_vec(), vec![5.0]);
-    assert_eq!(evaluation.of(gradient_symbols[0]).to_vec(), vec![2.0, 4.0]);
+    let run = plan.forward(&network, []);
+    assert_eq!(run.of(loss).to_vec(), vec![5.0]);
+    assert_eq!(run.of(gradient_symbols[0]).to_vec(), vec![2.0, 4.0]);
 }
 
 #[test]
@@ -58,21 +58,21 @@ fn sliced_runs_take_targets_in_either_form() {
     let product = a * b;
     let _unrelated = a + b;
 
-    let evaluation = network.forward_for([product], []);
-    assert_eq!(*evaluation.of(product.symbol()), 6.0);
+    let run = network.forward_for([product], []);
+    assert_eq!(*run.of(product.symbol()), 6.0);
 }
 
 #[test]
 #[should_panic(expected = "symbol belongs to a different network lineage")]
-fn foreign_symbols_are_rejected_by_evaluation_reads() {
+fn foreign_symbols_are_rejected_by_run_reads() {
     let network = Network::new();
     let x = network.parameter(1.0_f64);
     let _loss = x * x;
     let foreign = Network::new();
     let stranger = foreign.parameter(1.0_f64);
 
-    let evaluation = network.forward();
-    let _ = evaluation.of(stranger.symbol());
+    let run = network.forward();
+    let _ = run.of(stranger.symbol());
 }
 
 #[test]
@@ -84,8 +84,8 @@ fn sliced_runs_stay_loud_for_skipped_symbols() {
     let product = a * b;
     let unrelated = a + b;
 
-    let evaluation = network.forward_for([product], []);
-    let _ = evaluation.of(unrelated.symbol());
+    let run = network.forward_for([product], []);
+    let _ = run.of(unrelated.symbol());
 }
 
 #[test]

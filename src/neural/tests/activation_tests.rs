@@ -8,8 +8,8 @@ fn evaluated(activation: Activation, inputs: &[f64]) -> Vec<f64> {
     let network = Network::new();
     let value = network.leaf(Tensor::new([inputs.len()], inputs.to_vec()));
     let expressed = activation.express(value);
-    let evaluation = network.forward();
-    evaluation.of(expressed).to_vec()
+    let run = network.forward();
+    run.of(expressed).to_vec()
 }
 
 /// Evaluates `activation`'s gradient over `inputs`.
@@ -17,8 +17,8 @@ fn gradient(activation: Activation, inputs: &[f64]) -> Vec<f64> {
     let network = Network::new();
     let value = network.parameter(Tensor::new([inputs.len()], inputs.to_vec()));
     let loss = activation.express(value).sum();
-    let evaluation = network.forward();
-    evaluation.backward(loss).of(value).to_vec()
+    let run = network.forward();
+    run.backward(loss).of(value).to_vec()
 }
 
 #[test]
@@ -92,9 +92,9 @@ fn compositions_differentiate_as_tape_bitwise() {
         let value = network.parameter(Tensor::new([3], [0.8_f64, -1.3, 0.0]));
         let loss = activation.express(value).sum();
         let recorded = network.differentiate(loss.symbol(), [value.symbol()]);
-        let evaluation = network.forward();
-        let engine = evaluation.backward(network.resolve(loss.symbol()));
-        for (recorded, computed) in evaluation
+        let run = network.forward();
+        let engine = run.backward(network.resolve(loss.symbol()));
+        for (recorded, computed) in run
             .of(network.resolve(recorded[0]))
             .to_vec()
             .iter()

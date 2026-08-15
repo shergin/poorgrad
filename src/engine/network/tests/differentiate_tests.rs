@@ -1,7 +1,7 @@
 use crate::{Differentiable, Network, Symbol, Tensor};
 
 /// Asserts the closure contract for one recorded graph: the gradients
-/// `differentiate` records must reproduce `Evaluation::backward`
+/// `differentiate` records must reproduce `Run::backward`
 /// **bitwise** — same seed, same masking, same accumulation order —
 /// for every `wrt` entry. This fixture family is the no-fork
 /// guarantee: it fails if a rule uses an untraceable payload call, if
@@ -9,10 +9,10 @@ use crate::{Differentiable, Network, Symbol, Tensor};
 /// arithmetic drifts apart.
 fn assert_closure(network: &Network<Tensor<f64>>, loss: Symbol, wrt: &[Symbol]) {
     let gradients = network.differentiate(loss, wrt.iter().copied());
-    let evaluation = network.forward();
-    let engine = evaluation.backward(network.resolve(loss));
+    let run = network.forward();
+    let engine = run.backward(network.resolve(loss));
     for (&target, gradient) in wrt.iter().zip(gradients) {
-        let recorded = evaluation.of(network.resolve(gradient)).to_vec();
+        let recorded = run.of(network.resolve(gradient)).to_vec();
         let computed = engine.of(network.resolve(target)).to_vec();
         assert_eq!(recorded.len(), computed.len());
         for (recorded, computed) in recorded.iter().zip(&computed) {
@@ -353,11 +353,8 @@ fn non_ancestors_answer_recorded_zeros() {
     let unrelated = network.parameter(varied([3], 2));
     let loss = a.sum();
     let gradients = network.differentiate(loss.symbol(), [unrelated.symbol()]);
-    let evaluation = network.forward();
-    assert_eq!(
-        evaluation.of(network.resolve(gradients[0])).to_vec(),
-        &[0.0; 3]
-    );
+    let run = network.forward();
+    assert_eq!(run.of(network.resolve(gradients[0])).to_vec(), &[0.0; 3]);
 }
 
 #[test]
@@ -392,8 +389,8 @@ fn second_derivative_of_a_cubic_is_exact() {
     let first_value = network.resolve(first[0]);
     let second = network.differentiate(first_value.sum().symbol(), [x.symbol()]);
 
-    let evaluation = network.forward();
-    let computed = evaluation.of(network.resolve(second[0])).to_vec();
+    let run = network.forward();
+    let computed = run.of(network.resolve(second[0])).to_vec();
     for (computed, x) in computed.iter().zip([0.5_f64, -1.25, 2.0]) {
         assert_eq!(*computed, 6.0 * x);
     }
@@ -408,8 +405,8 @@ fn second_derivative_of_tanh_matches_finite_differences() {
     let first = network.differentiate(loss.symbol(), [x.symbol()]);
     let second = network.differentiate(network.resolve(first[0]).sum().symbol(), [x.symbol()]);
 
-    let evaluation = network.forward();
-    let computed = evaluation.of(network.resolve(second[0])).to_vec()[0];
+    let run = network.forward();
+    let computed = run.of(network.resolve(second[0])).to_vec()[0];
     let step = 1e-6;
     let derivative_at = |x: f64| 1.0 - x.tanh().powi(2);
     let expected = (derivative_at(probe + step) - derivative_at(probe - step)) / (2.0 * step);
@@ -426,11 +423,8 @@ fn relu_hessians_are_exact_zeros() {
     let first = network.differentiate(loss.symbol(), [x.symbol()]);
     let second = network.differentiate(network.resolve(first[0]).sum().symbol(), [x.symbol()]);
 
-    let evaluation = network.forward();
-    assert_eq!(
-        evaluation.of(network.resolve(second[0])).to_vec(),
-        &[0.0; 3]
-    );
+    let run = network.forward();
+    assert_eq!(run.of(network.resolve(second[0])).to_vec(), &[0.0; 3]);
 }
 
 #[test]
@@ -493,15 +487,15 @@ fn a_recorded_training_loop_matches_the_engine_bitwise() {
     for step in 0..12 {
         let batch = varied([4, 3], 10 + step);
 
-        let engine_evaluation = engine_network.forward_with([(engine_x, batch.clone())]);
-        let engine_gradients = engine_evaluation.backward(engine_network.resolve(engine_loss));
+        let engine_run = engine_network.forward_with([(engine_x, batch.clone())]);
+        let engine_gradients = engine_run.backward(engine_network.resolve(engine_loss));
         engine_network = engine_network.update(&engine_gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * Tensor::filled(gradient.shape(), 0.05)
         });
 
-        let recorded_evaluation = plan.forward(&recorded_network, [(recorded_x, batch)]);
+        let recorded_run = plan.forward(&recorded_network, [(recorded_x, batch)]);
         let recorded_field =
-            recorded_evaluation.recorded_gradients(recorded_params.iter().zip(&gradients).map(
+            recorded_run.recorded_gradients(recorded_params.iter().zip(&gradients).map(
                 |(&parameter, &gradient)| {
                     (
                         recorded_network.resolve(parameter),
@@ -540,6 +534,6 @@ fn recorded_gradients_reject_swapped_pairs() {
     let a = network.parameter(varied([2], 1));
     let loss = a.sum();
     let gradients = network.differentiate(loss.symbol(), [a.symbol()]);
-    let evaluation = network.forward();
-    evaluation.recorded_gradients([(network.resolve(gradients[0]), network.resolve(a.symbol()))]);
+    let run = network.forward();
+    run.recorded_gradients([(network.resolve(gradients[0]), network.resolve(a.symbol()))]);
 }

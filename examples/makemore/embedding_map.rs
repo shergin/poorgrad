@@ -206,7 +206,7 @@ fn main() {
 
         let loss_value = network.resolve(loss_symbol);
         // Slice the run to the loss it reads.
-        let evaluation = network.forward_for(
+        let run = network.forward_for(
             [loss_symbol],
             [
                 (
@@ -219,7 +219,7 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         window_loss += batch_loss;
         if (step + 1) % 1000 == 0 {
@@ -231,7 +231,7 @@ fn main() {
             );
             window_loss = 0.0;
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         let learning_rate = if step < 4000 { &fast } else { &slow };
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)

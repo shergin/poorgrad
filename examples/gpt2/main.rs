@@ -304,7 +304,7 @@ where
         let logits = match &mut server {
             Some(server) => server.step(&widened(&stream), &widened(&extraction.to_vec())),
             None => {
-                let evaluation = compiled.plan.forward(
+                let run = compiled.plan.forward(
                     &network,
                     [
                         (
@@ -314,7 +314,7 @@ where
                         (compiled.extraction, extraction),
                     ],
                 );
-                widened(&evaluation.of(compiled.logits).to_vec())
+                widened(&run.of(compiled.logits).to_vec())
             }
         };
         let token = draw(&logits, 0.9, 40, &mut state);

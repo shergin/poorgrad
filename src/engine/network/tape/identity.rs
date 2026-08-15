@@ -27,7 +27,7 @@ fn next_id() -> u64 {
 /// an origin exactly when they descend from a common construction;
 /// same-origin checks are plain equality. Being a `Copy` integer rather
 /// than a reference-counted token, it rides inside every `Symbol`
-/// without costing `Copy`, and creating fields and evaluations never
+/// without costing `Copy`, and creating fields and runs never
 /// touches an atomic counter. Within an origin, positions are
 /// attributed to branches: divergent forks stop sharing identity
 /// exactly where their recordings part ways.

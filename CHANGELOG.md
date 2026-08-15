@@ -7,6 +7,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `Evaluation` is now `Run`, and it no longer borrows the network: a
+  run owns its frozen structure columns and an identity witness, so it
+  can be stashed, moved across threads, and differentiated after the
+  generation that produced it is gone. `Network::forward*` and
+  `Plan::forward` return `Run<Data>` (no lifetime parameter); `of`,
+  `backward`, and `recorded_gradients` are unchanged. Documented under
+  Run in `TERMINOLOGY.md`.
+
 ### Added
 
 - `Network::compacted`: rebuilds the structure columns into private

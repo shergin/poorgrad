@@ -176,10 +176,10 @@ fn scalar_networks_differentiate_bf16() {
     let x = network.parameter(Bf16::from_f32(1.5));
     let loss = x * x;
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(loss), Bf16::from_f32(2.25));
+    let run = network.forward();
+    assert_eq!(*run.of(loss), Bf16::from_f32(2.25));
 
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(*gradients.of(x), Bf16::from_f32(3.0));
 }
 
@@ -242,10 +242,10 @@ fn tensor_networks_differentiate_bf16() {
     let x = network.leaf(Tensor::new([3], elements));
     let loss = x.abs().sum();
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(loss).to_vec(), vec![Bf16::from_f32(5.0)]);
+    let run = network.forward();
+    assert_eq!(run.of(loss).to_vec(), vec![Bf16::from_f32(5.0)]);
 
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     let expected: Vec<Bf16> = [-1.0, 1.0, 1.0].map(Bf16::from_f32).to_vec();
     assert_eq!(gradients.of(x).to_vec(), expected);
 }

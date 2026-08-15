@@ -103,8 +103,8 @@ fn concurrent_forwards_feed_independent_batches() {
         for fed in [2.0, 3.0, 4.0] {
             let network = &network;
             scope.spawn(move || {
-                let evaluation = network.forward_with([(input_symbol, fed)]);
-                assert_eq!(*evaluation.of(squared), fed * fed);
+                let run = network.forward_with([(input_symbol, fed)]);
+                assert_eq!(*run.of(squared), fed * fed);
             });
         }
     });
@@ -132,9 +132,9 @@ fn training_feeds_batches_without_regrowing_the_tape() {
     for step in 0..600 {
         let (sample_input, sample_target) = samples[step % samples.len()];
         let loss = network.resolve(loss_symbol);
-        let evaluation =
+        let run =
             network.forward_with([(input_symbol, sample_input), (target_symbol, sample_target)]);
-        let gradients = evaluation.backward(loss);
+        let gradients = run.backward(loss);
         network = network.update(&gradients, |parameter, gradient| {
             parameter - 0.05 * gradient
         });
@@ -154,8 +154,8 @@ fn update_replaces_parameters_and_keeps_everything_else() {
     let input = network.leaf(2.0);
     let output = parameter * input;
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(output);
+    let run = network.forward();
+    let gradients = run.backward(output);
     let next = network.update(&gradients, |parameter, gradient| parameter - gradient);
 
     assert_eq!(next.len(), network.len());
@@ -304,12 +304,12 @@ fn forward_for_evaluates_only_the_ancestor_closure() {
     let wanted = (x * x).sum();
     let unwanted = (x + x).sum();
 
-    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
-    assert_eq!(evaluation.of(wanted).to_vec(), &[13.0]);
+    let run = network.forward_for([wanted.symbol()], std::iter::empty());
+    assert_eq!(run.of(wanted).to_vec(), &[13.0]);
 
     // The skipped expression is differentiable from a full run, and the
     // sliced gradients match the full ones exactly.
-    let sliced = evaluation.backward(wanted);
+    let sliced = run.backward(wanted);
     let full = network.forward().backward(wanted);
     assert_eq!(sliced.of(x).to_vec(), full.of(x).to_vec());
     let _ = unwanted;
@@ -323,8 +323,8 @@ fn sliced_reads_outside_the_closure_are_rejected() {
     let wanted = x * x;
     let unwanted = x + x;
 
-    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
-    evaluation.of(unwanted);
+    let run = network.forward_for([wanted.symbol()], std::iter::empty());
+    run.of(unwanted);
 }
 
 #[test]
@@ -335,8 +335,8 @@ fn sliced_backward_outside_the_closure_is_rejected() {
     let wanted = x * x;
     let unwanted = x + x;
 
-    let evaluation = network.forward_for([wanted.symbol()], std::iter::empty());
-    evaluation.backward(unwanted);
+    let run = network.forward_for([wanted.symbol()], std::iter::empty());
+    run.backward(unwanted);
 }
 
 #[test]
@@ -345,11 +345,11 @@ fn forward_for_binds_feeds_like_forward_with() {
     let x = network.input(Tensor::new([2], [0.0_f64, 0.0]));
     let doubled = x * Tensor::new([2], [2.0, 2.0]);
 
-    let evaluation = network.forward_for(
+    let run = network.forward_for(
         [doubled.symbol()],
         [(x.symbol(), Tensor::new([2], [4.0, 5.0]))],
     );
-    assert_eq!(evaluation.of(doubled).to_vec(), &[8.0, 10.0]);
+    assert_eq!(run.of(doubled).to_vec(), &[8.0, 10.0]);
 }
 
 #[test]
@@ -367,8 +367,8 @@ fn sliced_gradients_step_parameters_like_full_gradients() {
     let first_symbol = first.symbol();
     let second_symbol = second.symbol();
 
-    let evaluation = network.forward_for([first_loss.symbol()], std::iter::empty());
-    let gradients = evaluation.backward(first_loss);
+    let run = network.forward_for([first_loss.symbol()], std::iter::empty());
+    let gradients = run.backward(first_loss);
     let stepped = network.update(
         &gradients,
         |parameter: &Tensor<f64>, gradient: &Tensor<f64>| parameter.clone() - gradient.clone(),

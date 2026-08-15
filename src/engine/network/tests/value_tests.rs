@@ -60,11 +60,11 @@ fn payload_literals_mix_into_expressions() {
     // 1, the sum, 6, and the quotient.
     assert_eq!(network.len(), 7);
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(y), 7.0);
-    assert_eq!(*evaluation.of(z), 2.0);
+    let run = network.forward();
+    assert_eq!(*run.of(y), 7.0);
+    assert_eq!(*run.of(z), 2.0);
 
-    let gradients = evaluation.backward(y);
+    let gradients = run.backward(y);
     assert_eq!(*gradients.of(x), 2.0);
 }
 

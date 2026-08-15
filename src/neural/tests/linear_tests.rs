@@ -48,10 +48,10 @@ fn express_records_the_affine_transform() {
     let input = network.leaf(Tensor::new([1, 2], [1.0_f64, 1.0]));
     let output = linear.express(&network, input);
 
-    let evaluation = network.forward();
+    let run = network.forward();
     // [1, 1] x [[1, 2], [3, 4]] + [10, 20] = [14, 26]: affine alone,
     // no bundled activation.
-    assert_eq!(evaluation.of(output).to_vec(), vec![14.0, 26.0]);
+    assert_eq!(run.of(output).to_vec(), vec![14.0, 26.0]);
 }
 
 #[test]
@@ -68,9 +68,6 @@ fn from_symbols_ties_existing_parameters() {
     let input = network.leaf(Tensor::new([1, 2], [1.0_f64, 1.0]));
     let first = original.express(&network, input);
     let second = tied.express(&network, input);
-    let evaluation = network.forward();
-    assert_eq!(
-        evaluation.of(first).to_vec(),
-        evaluation.of(second).to_vec()
-    );
+    let run = network.forward();
+    assert_eq!(run.of(first).to_vec(), run.of(second).to_vec());
 }

@@ -61,14 +61,13 @@ fn main() {
     for step in 0..4000 {
         let (batch_x, batch_y) = &minibatches[step % minibatches.len()];
         let loss_value = network.resolve(loss_symbol);
-        let evaluation =
-            network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let run = network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step % 800 == 0 {
             println!("step {step:4}: minibatch loss = {batch_loss:.6}");
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
@@ -98,9 +97,8 @@ fn main() {
 
     println!("predictions (target in parentheses):");
     for (batch_x, batch_y) in &minibatches {
-        let evaluation =
-            network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
-        let outputs = evaluation.of(network.resolve(predicted_symbol));
+        let run = network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
+        let outputs = run.of(network.resolve(predicted_symbol));
         for (sample, (prediction, target)) in outputs.iter().zip(batch_y.iter()).enumerate() {
             let features = batch_x.as_slice().expect("a fed minibatch is contiguous");
             let features = &features[sample * 2..sample * 2 + 2];
@@ -129,8 +127,8 @@ fn main() {
         let &[(x0, y0), (x1, y1)] = pair else {
             unreachable!("the even grid splits into exact pairs");
         };
-        let evaluation = network.forward_with([(x_symbol, Tensor::new([2, 2], [x0, y0, x1, y1]))]);
-        surface.extend(evaluation.of(network.resolve(predicted_symbol)).to_vec());
+        let run = network.forward_with([(x_symbol, Tensor::new([2, 2], [x0, y0, x1, y1]))]);
+        surface.extend(run.of(network.resolve(predicted_symbol)).to_vec());
     }
     println!(
         "{}",

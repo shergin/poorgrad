@@ -56,8 +56,8 @@ fn express_standardizes_every_sample() {
     let output = norm.express(&network, input);
     assert_eq!(output.shape(), Shape::new([2, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[-1.0, 1.0, -1.0, 1.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[-1.0, 1.0, -1.0, 1.0]);
 }
 
 #[test]
@@ -73,8 +73,8 @@ fn express_applies_the_learned_affine() {
 
     let output = norm.express(&network, input);
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[8.0, 23.0, 8.0, 23.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[8.0, 23.0, 8.0, 23.0]);
 }
 
 #[test]
@@ -95,10 +95,10 @@ fn samples_normalize_independently() {
     let lone_output = norm.express(&network, lone);
     let paired_output = norm.express(&network, paired);
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(lone_output).to_vec(),
-        evaluation.of(paired_output).to_vec()[..2]
+        run.of(lone_output).to_vec(),
+        run.of(paired_output).to_vec()[..2]
     );
 }
 
@@ -155,8 +155,8 @@ fn gradients_flow_through_the_sample_statistics() {
     let output = norm.express(&network, input);
     let target = output.narrow(1, 0, 1).sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(target);
+    let run = network.forward();
+    let gradients = run.backward(target);
 
     let computed = gradients.of(input).to_vec();
     assert!((computed[0] - 0.1875).abs() < 1e-12);

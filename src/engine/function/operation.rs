@@ -48,7 +48,7 @@ impl Retention {
 /// by the engine, results are returned rather than written, and no rule
 /// ever sees the tape, a `ValueId`, or a run buffer. Gradient
 /// accumulation — the multivariate chain rule — is the engine's job,
-/// stated once in `Evaluation::backward`.
+/// stated once in `Run::backward`.
 pub(crate) trait Operation<Data: Differentiable> {
     /// Computes this node's payload from its operands' payloads.
     fn forward(&self, operands: &[&Data]) -> Data;

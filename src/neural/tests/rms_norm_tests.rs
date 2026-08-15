@@ -53,8 +53,8 @@ fn express_normalizes_by_the_root_mean_square() {
     let output = norm.express(&network, input);
     assert_eq!(output.shape(), Shape::new([2, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[1.0, 1.0, 1.0, -1.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[1.0, 1.0, 1.0, -1.0]);
 }
 
 #[test]
@@ -69,8 +69,8 @@ fn express_applies_the_learned_scale() {
 
     let output = norm.express(&network, input);
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[2.0, 5.0, 2.0, -5.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[2.0, 5.0, 2.0, -5.0]);
 }
 
 #[test]
@@ -122,8 +122,8 @@ fn gradients_flow_through_the_root_mean_square() {
     let output = norm.express(&network, input);
     let target = output.narrow(1, 0, 1).sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(target);
+    let run = network.forward();
+    let gradients = run.backward(target);
 
     assert_eq!(gradients.of(input).to_vec(), &[0.25, 0.0]);
 

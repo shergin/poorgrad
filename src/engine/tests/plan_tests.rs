@@ -29,8 +29,8 @@ fn plan_skips_what_the_targets_cannot_observe() {
     let unwanted = x + x;
 
     let plan = network.compile([wanted.symbol()], []);
-    let evaluation = plan.forward(&network, no_feeds());
-    assert_eq!(*evaluation.of(wanted), 4.0);
+    let run = plan.forward(&network, no_feeds());
+    assert_eq!(*run.of(wanted), 4.0);
     let _ = unwanted;
 }
 
@@ -45,8 +45,8 @@ fn plan_reads_outside_the_readable_set_are_rejected() {
     let target = interior + wanted;
 
     let plan = network.compile([target.symbol()], []);
-    let evaluation = plan.forward(&network, no_feeds());
-    evaluation.of(interior);
+    let run = plan.forward(&network, no_feeds());
+    run.of(interior);
 }
 
 #[test]
@@ -57,9 +57,9 @@ fn keep_makes_an_interior_value_readable() {
     let target = interior + x;
 
     let plan = network.compile([target.symbol()], [interior.symbol()]);
-    let evaluation = plan.forward(&network, no_feeds());
-    assert_eq!(*evaluation.of(target), 6.0);
-    assert_eq!(*evaluation.of(interior), 4.0);
+    let run = plan.forward(&network, no_feeds());
+    assert_eq!(*run.of(target), 6.0);
+    assert_eq!(*run.of(interior), 4.0);
 }
 
 #[test]
@@ -70,8 +70,8 @@ fn forward_only_plans_refuse_backward() {
     let target = x * x;
 
     let plan = network.compile([target.symbol()], []);
-    let evaluation = plan.forward(&network, no_feeds());
-    evaluation.backward(target);
+    let run = plan.forward(&network, no_feeds());
+    run.backward(target);
 }
 
 #[test]
@@ -148,8 +148,8 @@ fn plan_forward_binds_feeds() {
     let doubled = x * Tensor::new([2], [2.0, 2.0]);
 
     let plan = network.compile([doubled.symbol()], []);
-    let evaluation = plan.forward(&network, [(x.symbol(), Tensor::new([2], [4.0, 5.0]))]);
-    assert_eq!(evaluation.of(doubled).to_vec(), &[8.0, 10.0]);
+    let run = plan.forward(&network, [(x.symbol(), Tensor::new([2], [4.0, 5.0]))]);
+    assert_eq!(run.of(doubled).to_vec(), &[8.0, 10.0]);
 }
 
 #[test]
@@ -174,8 +174,8 @@ fn plans_keep_serving_their_prefix_after_recording() {
     let plan = network.compile([target.symbol()], []);
     // Later recordings grow the tape past the plan's prefix.
     let _later = x + x;
-    let evaluation = plan.forward(&network, no_feeds());
-    assert_eq!(*evaluation.of(target), 4.0);
+    let run = plan.forward(&network, no_feeds());
+    assert_eq!(*run.of(target), 4.0);
 }
 
 #[test]
@@ -536,9 +536,9 @@ fn kept_interiors_bar_fusion() {
 
     let barred = network.compile_training(loss.symbol(), [patches.symbol()], Retention::Compact);
     assert!(!barred.describe().contains("window-gemm"));
-    let evaluation = barred.forward(&network, std::iter::empty());
+    let run = barred.forward(&network, std::iter::empty());
     assert_eq!(
-        evaluation.of(patches).to_vec(),
+        run.of(patches).to_vec(),
         network.forward().of(patches).to_vec()
     );
 }

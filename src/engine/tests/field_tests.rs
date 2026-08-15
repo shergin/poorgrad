@@ -8,9 +8,9 @@ fn algebra_combines_elementwise() {
     let product = a * b;
     let sum = a + b;
 
-    let evaluation = network.forward();
-    let d_product = evaluation.backward(product);
-    let d_sum = evaluation.backward(sum);
+    let run = network.forward();
+    let d_product = run.backward(product);
+    let d_sum = run.backward(sum);
 
     let combined = &d_product + &d_sum;
     assert_eq!(*combined.of(a), 4.0);
@@ -34,10 +34,10 @@ fn combination_rejects_foreign_lineages() {
     let a = first.leaf(1.0_f64);
     let b = second.leaf(1.0);
 
-    let evaluation_first = first.forward();
-    let evaluation_second = second.forward();
-    let field_first = evaluation_first.backward(a);
-    let field_second = evaluation_second.backward(b);
+    let run_first = first.forward();
+    let run_second = second.forward();
+    let field_first = run_first.backward(a);
+    let field_second = run_second.backward(b);
 
     let _ = &field_first + &field_second;
 }
@@ -66,8 +66,8 @@ fn fields_survive_generations_within_a_lineage() {
     let w = network.parameter(1.0_f64);
     let w_symbol = w.symbol();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(w);
+    let run = network.forward();
+    let gradients = run.backward(w);
 
     // The next generation is kin to the previous one, so the field still
     // resolves against its values and can drive its update.

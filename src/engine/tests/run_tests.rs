@@ -25,8 +25,8 @@ fn assert_gradients_match<const INPUTS: usize>(
     let network = Network::new();
     let leaves = inputs.map(|value| network.leaf(value));
     let target = expression(leaves);
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(target);
+    let run = network.forward();
+    let gradients = run.backward(target);
 
     for (index, leaf) in leaves.iter().enumerate() {
         let mut nudged_up = inputs;
@@ -115,8 +115,8 @@ fn dense_layer_gradients_match_finite_differences() {
     let activated = (product + bias.broadcast_along(0, product)).tanh();
     let error = activated - y;
     let loss = (error * error).sum();
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     let analytic = [
         gradients.of(x).clone(),
         gradients.of(w).clone(),
@@ -175,8 +175,8 @@ fn tensor_gradients_match_finite_differences() {
     let shifted = product + bias.broadcast_like(product);
     let error = shifted - y;
     let loss = (error * error).sum();
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     let analytic = [
         gradients.of(x).clone(),
         gradients.of(w).clone(),
@@ -209,9 +209,9 @@ fn forward_materializes_every_value() {
     let c = network.leaf(4.0);
     let expression = -((a + b) * c);
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(a), 2.0);
-    assert_eq!(*evaluation.of(expression), -20.0);
+    let run = network.forward();
+    assert_eq!(*run.of(a), 2.0);
+    assert_eq!(*run.of(expression), -20.0);
 }
 
 #[test]
@@ -221,10 +221,10 @@ fn backward_accumulates_gradients_through_fan_out() {
     let b = network.leaf(3.0);
     let output = a * b + a;
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(output), 8.0);
+    let run = network.forward();
+    assert_eq!(*run.of(output), 8.0);
 
-    let gradients = evaluation.backward(output);
+    let gradients = run.backward(output);
     assert_eq!(*gradients.of(output), 1.0);
     assert_eq!(*gradients.of(a), 4.0);
     assert_eq!(*gradients.of(b), 2.0);
@@ -236,9 +236,9 @@ fn backward_routes_negation() {
     let input = network.leaf(2.0_f64);
     let output = -(input * input);
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(output), -4.0);
-    assert_eq!(*evaluation.backward(output).of(input), -4.0);
+    let run = network.forward();
+    assert_eq!(*run.of(output), -4.0);
+    assert_eq!(*run.backward(output).of(input), -4.0);
 }
 
 #[test]
@@ -271,9 +271,9 @@ fn tanh_routes_gradient_through_its_output() {
     let input = network.leaf(0.5_f64);
     let output = input.tanh();
 
-    let evaluation = network.forward();
+    let run = network.forward();
     let expected = 1.0 - 0.5_f64.tanh().powi(2);
-    assert!((evaluation.backward(output).of(input) - expected).abs() < 1e-12);
+    assert!((run.backward(output).of(input) - expected).abs() < 1e-12);
 }
 
 #[test]
@@ -282,10 +282,10 @@ fn exp_reuses_its_output_in_backward() {
     let input = network.leaf(1.0_f64);
     let output = input.exp();
 
-    let evaluation = network.forward();
-    let value = *evaluation.of(output);
+    let run = network.forward();
+    let value = *run.of(output);
     assert!((value - std::f64::consts::E).abs() < 1e-12);
-    assert!((evaluation.backward(output).of(input) - value).abs() < 1e-12);
+    assert!((run.backward(output).of(input) - value).abs() < 1e-12);
 }
 
 #[test]
@@ -305,19 +305,19 @@ fn sigmoid_composes_from_primitives() {
     let one = network.leaf(1.0);
     let sigmoid = one / (one + (-input).exp());
 
-    let evaluation = network.forward();
-    assert!((evaluation.of(sigmoid) - 0.5).abs() < 1e-12);
-    assert!((evaluation.backward(sigmoid).of(input) - 0.25).abs() < 1e-12);
+    let run = network.forward();
+    assert!((run.of(sigmoid) - 0.5).abs() < 1e-12);
+    assert!((run.backward(sigmoid).of(input) - 0.25).abs() < 1e-12);
 }
 
 #[test]
 fn backward_survives_later_recordings() {
     let network = Network::new();
     let input = network.leaf(2.0_f64);
-    let evaluation = network.forward();
+    let run = network.forward();
     network.leaf(3.0);
 
-    assert_eq!(*evaluation.backward(input).of(input), 1.0);
+    assert_eq!(*run.backward(input).of(input), 1.0);
 }
 
 #[test]
@@ -352,13 +352,13 @@ fn backward_skips_singular_producers_of_broadcast_references() {
     let source = network.leaf(2.0);
     let output = source.broadcast_like(singular_reference);
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(output), 2.0);
+    let run = network.forward();
+    assert_eq!(*run.of(output), 2.0);
 
     // The reference contributes only its shape, so the target has no
     // differentiable dependence on `input`: its gradient is exactly
     // zero, never the NaN of the singular quotient's derivative rule.
-    let gradients = evaluation.backward(output);
+    let gradients = run.backward(output);
     assert_eq!(*gradients.of(input), 0.0);
     assert_eq!(*gradients.of(singular_reference), 0.0);
     assert_eq!(*gradients.of(source), 1.0);
@@ -397,9 +397,9 @@ fn backward_skips_nodes_recorded_after_the_target() {
 fn backward_rejects_later_targets() {
     let network = Network::new();
     let _ = network.leaf(2.0_f64);
-    let evaluation = network.forward();
+    let run = network.forward();
     let late = network.leaf(3.0);
-    evaluation.backward(late);
+    run.backward(late);
 }
 
 #[test]
@@ -424,13 +424,13 @@ fn pad_places_the_window_and_narrows_the_gradient() {
     ));
     let loss = (padded * weights).sum();
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(padded).to_vec(),
+        run.of(padded).to_vec(),
         &[0.0, 1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 0.0]
     );
 
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     // The pad gradient is the weights with the zero lanes narrowed away.
     assert_eq!(gradients.of(x).to_vec(), &[2.0, 3.0, 6.0, 7.0]);
 }
@@ -445,13 +445,13 @@ fn unfold_slides_windows_and_folds_the_gradient() {
     let windows = x.unfold(0, 3, 2, 1);
     let loss = windows.sum();
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(windows).to_vec(),
+        run.of(windows).to_vec(),
         &[1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 5.0, 6.0, 7.0]
     );
 
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     // Summing all windows grades each position by its window coverage;
     // position 7 is beyond the last window and receives zero.
     assert_eq!(
@@ -467,10 +467,10 @@ fn narrow_of_pad_roundtrips_the_value() {
     let roundtrip = x.pad(0, 2, 7).narrow(0, 2, 3);
     let loss = roundtrip.sum();
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(roundtrip).to_vec(), &[1.0, 2.0, 3.0]);
+    let run = network.forward();
+    assert_eq!(run.of(roundtrip).to_vec(), &[1.0, 2.0, 3.0]);
 
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(x).to_vec(), &[1.0, 1.0, 1.0]);
 }
 

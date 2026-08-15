@@ -1,7 +1,7 @@
 //! Trains a linear model `w * x + b` with gradient descent, exercising one
 //! shared network across threads.
 //!
-//! Two things run in parallel here. First, a single evaluation of the
+//! Two things run in parallel here. First, a single run of the
 //! shared network feeds concurrent backward sweeps, one per target: runs
 //! are per-thread state, the network is never mutated. Second, several
 //! training runs proceed simultaneously, each on its own O(1) fork of the
@@ -42,17 +42,17 @@ fn main() {
         .reduce(|total, squared| total + squared)
         .expect("at least one sample");
 
-    // One evaluation feeds many backward sweeps: each rayon thread
+    // One run feeds many backward sweeps: each rayon thread
     // differentiates the same shared network for its own target.
-    let evaluation = network.forward();
+    let run = network.forward();
     let per_sample: Vec<f64> = sample_losses
         .par_iter()
         .map(|&sample_loss| {
-            let gradients = evaluation.backward(sample_loss);
+            let gradients = run.backward(sample_loss);
             *gradients.of(w)
         })
         .collect();
-    let total_gradient = *evaluation.backward(loss).of(w);
+    let total_gradient = *run.backward(loss).of(w);
     println!("per-sample d/dw, computed on separate threads: {per_sample:?}");
     println!(
         "their sum {} equals the total-loss d/dw {} by linearity",
@@ -78,16 +78,16 @@ fn main() {
             let mut losses = Vec::with_capacity(501);
             for _ in 0..500 {
                 let loss = network.resolve(loss_symbol);
-                let evaluation = network.forward();
-                losses.push(*evaluation.of(loss));
-                let gradients = evaluation.backward(loss);
+                let run = network.forward();
+                losses.push(*run.of(loss));
+                let gradients = run.backward(loss);
                 network = network.update(&gradients, |parameter, gradient| {
                     parameter - learning_rate * gradient
                 });
             }
             let loss = network.resolve(loss_symbol);
-            let evaluation = network.forward();
-            losses.push(*evaluation.of(loss));
+            let run = network.forward();
+            losses.push(*run.of(loss));
             let w = network.resolve(w_symbol);
             let b = network.resolve(b_symbol);
             let w = w.payload().expect("parameters carry payloads");

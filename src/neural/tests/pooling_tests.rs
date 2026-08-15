@@ -13,8 +13,8 @@ fn max_pool_takes_window_maxima() {
     let pooled = max_pool(input, 2, 2);
     assert_eq!(pooled.shape(), Shape::new([1, 1, 2, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(pooled).to_vec(), &[6.0, 8.0, 14.0, 16.0]);
+    let run = network.forward();
+    assert_eq!(run.of(pooled).to_vec(), &[6.0, 8.0, 14.0, 16.0]);
 }
 
 #[test]
@@ -28,8 +28,8 @@ fn max_pool_routes_the_gradient_to_the_maximum() {
     let pooled = max_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     let mut expected = vec![0.0; 16];
     for position in [5, 7, 13, 15] {
         expected[position] = 1.0;
@@ -45,12 +45,12 @@ fn max_pool_ties_route_to_the_earliest_lane() {
     let pooled = max_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(pooled).to_vec(), &[5.0]);
+    let run = network.forward();
+    assert_eq!(run.of(pooled).to_vec(), &[5.0]);
 
     // All four window elements tie; the left-biased `maximum` fold
     // hands the whole gradient to the first lane in window order.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(input).to_vec(), &[1.0, 0.0, 0.0, 0.0]);
 }
 
@@ -65,11 +65,11 @@ fn average_pool_takes_window_means() {
     let pooled = average_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(pooled).to_vec(), &[3.5, 5.5, 11.5, 13.5]);
+    let run = network.forward();
+    assert_eq!(run.of(pooled).to_vec(), &[3.5, 5.5, 11.5, 13.5]);
 
     // Every window element contributes `1 / (size * size)`.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(input).to_vec(), &[0.25; 16]);
 }
 

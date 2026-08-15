@@ -30,8 +30,8 @@
 //! for step in 0..100 {
 //!     let (sample_x, sample_y) = samples[step % samples.len()];
 //!     let loss = network.resolve(loss_symbol);
-//!     let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
-//!     let gradients = evaluation.backward(loss);
+//!     let run = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
+//!     let gradients = run.backward(loss);
 //!     network = network.update(&gradients, |w, g| w - 0.02 * g);
 //! }
 //!
@@ -63,7 +63,7 @@ mod payload;
 pub use backend::{Backend, BackendUnavailable};
 pub use emission::{EmitError, Emittable};
 pub use engine::{
-    Evaluation, Field, Gradients, Network, Plan, Retention, Symbol, Value, ValueRef, concat, stack,
+    Field, Gradients, Network, Plan, Retention, Run, Symbol, Value, ValueRef, concat, stack,
 };
 pub use neural::{
     Activation, Adam, AdamW, AveragePool, BatchNorm, BatchNormInference, Conv2d, Flatten,

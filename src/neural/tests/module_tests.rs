@@ -52,6 +52,6 @@ fn sequential_expresses_through_dyn_stages() {
     let output = model.express(&network, input);
     // Zero weights and biases: tanh(0) = 0, and the residual passes
     // the zero through, so the output is exactly zero.
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), vec![0.0; 8]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), vec![0.0; 8]);
 }

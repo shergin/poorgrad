@@ -181,8 +181,8 @@ impl<Data: Tensorial> BatchNorm<Data> {
 /// A recorded batch-normalization expression: the output together with
 /// the batch statistics it normalized by.
 ///
-/// The statistics are ordinary computed values: read them from an
-/// [`Evaluation`](crate::Evaluation) after a run to maintain the running
+/// The statistics are ordinary computed values: read them from each
+/// [`Run`](crate::Run) to maintain the running
 /// estimates that [`BatchNorm::express_with`] consumes at inference.
 #[derive(Debug)]
 pub struct Normalization<'network, Data> {

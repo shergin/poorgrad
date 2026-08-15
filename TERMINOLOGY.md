@@ -20,7 +20,7 @@ derivative of *one* output with respect to *all* inputs in a single backward
 sweep costing about one forward evaluation. Its mirror image, forward mode,
 computes one input against all outputs. Reverse mode wins for machine
 learning (one loss, many parameters). In poorgrad:
-[`Evaluation::backward`](src/engine/evaluation.rs). The sweep executes derivative
+[`Run::backward`](src/engine/run.rs). The sweep executes derivative
 rules only for the target's ancestors; every other value's gradient is
 exactly zero, so expressions the target does not depend on — including
 singular ones — cannot disturb the result.
@@ -34,21 +34,21 @@ in [`Operation::backward`](src/engine/function/operation.rs).
 *target*) with respect to every other value. A gradient is always "of a
 target"; there is no target-free gradient of a network. In poorgrad:
 [`Gradients`](src/engine/field.rs), produced by one backward sweep and tied to
-one evaluation and one target; it is a named role of `Field`, not a separate
+one run and one target; it is a named role of `Field`, not a separate
 type.
 
 **Gradient accumulation.** When a value feeds several consumers, its
 gradient is the *sum* of the contributions along every path (the
 multivariate chain rule). In poorgrad the rule is stated once, in the
 engine: `Operation::backward` returns one cotangent per operand, and
-[`Evaluation::backward`](src/engine/evaluation.rs) adds each into the
+[`Run::backward`](src/engine/run.rs) adds each into the
 gradient buffer — no operation can assign where it should accumulate,
 because no operation ever touches the buffer.
 
 **Seed (cotangent).** The gradient planted at the target before the backward
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
 weights computes a vector-Jacobian product, the general form of reverse
-mode. In poorgrad [`Evaluation::backward`](src/engine/evaluation.rs) seeds
+mode. In poorgrad [`Run::backward`](src/engine/run.rs) seeds
 `one_like` at the target, which must be rank 0: a non-scalar value is
 reduced explicitly with `sum` before differentiation, never summed
 implicitly.
@@ -202,7 +202,7 @@ payload traits, so interpretation and transformation are two
 payloads of one rule — derivative knowledge cannot fork). The
 recorded scan mirrors the engine's seed, ancestor masking, and
 accumulation order, so a compiled plan over `[loss, gradients...]`
-reproduces `Evaluation::backward` bitwise; per-variant closure tests
+reproduces `Run::backward` bitwise; per-variant closure tests
 hold that contract. In poorgrad: `Network::differentiate`, the
 `Trace` payload, and the closure suite in
 `engine/tests/differentiate_tests.rs`.
@@ -226,7 +226,7 @@ lineage, branch, and allocation checks `resolve` performs — a
 reference never weakens a check, it only chooses which proof to
 present. The trait is sealed (the two forms are the closed set) and
 dispatch is a monomorphized match, never a trait object. Reads
-(`Evaluation::of`, `Evaluation::backward`, `Field::of`), plan targets
+(`Run::of`, `Run::backward`, `Field::of`), plan targets
 (`compile`, `compile_training*`, `forward_for`), and `differentiate`
 accept it; feed pairs and `keep` lists stay `Symbol`-typed so empty
 list literals keep inferring. In poorgrad:
@@ -247,14 +247,15 @@ rebuilds payloads in O(parameters) and reclaims the previous store), and
 the input table holds defaults (runs may overlay feeds without touching
 the graph). Forks share both stores in O(1).
 
-**Run.** One forward or backward execution over a network. Runs never
-mutate the network, so any number can execute concurrently; their results
-are per-run buffers read back with the same proxies that built the graph:
-[`Evaluation`](src/engine/evaluation.rs) (a payload per node, owning the
-structure freeze and a witness so `backward` needs no network borrow) and
+**Run.** One forward or backward execution over a network, and the type
+that reifies the forward one: [`Run`](src/engine/run.rs) is a payload
+per node, owning the structure freeze and a witness so `backward` needs
+no network borrow. Runs never mutate the network, so any number can
+execute concurrently; a backward sweep reads a `Run` and returns
 [`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
-a `Field`, so it combines and carries optimizer state directly). Every
-position-indexed buffer — evaluations, gradients, fields — answers the same
+a `Field`, so it combines and carries optimizer state directly). Both
+are read back with the same proxies that built the graph: every
+position-indexed buffer — runs, gradients, fields — answers the same
 read-back accessor, `of(value)`.
 
 **Target-sliced run.** A forward run restricted to the ancestor
@@ -264,8 +265,8 @@ over the operand links in one descending sweep and skips every node
 outside the closure, leaving an O(1), shape-correct zero placeholder
 (`counted(shape, 0)`) in each skipped slot. The placeholders keep
 `update` sound — a parameter outside the closure receives its true
-gradient, exactly zero — while reads stay loud: `Evaluation::of` and
-`Evaluation::backward` panic on a skipped value rather than answer
+gradient, exactly zero — while reads stay loud: `Run::of` and
+`Run::backward` panic on a skipped value rather than answer
 with a placeholder. Observability is declared, never inferred — the
 same contract the plan-lowering path generalizes into the keep-set.
 With several expressions recorded on one tape (the training and
@@ -292,7 +293,7 @@ oracle every plan is differentially tested against.
 
 **Keep-set.** The declared observable values of a plan: its targets
 plus explicitly kept interiors. Only the keep-set answers
-`Evaluation::of` on a plan run — an interior value stays unreadable
+`Run::of` on a plan run — an interior value stays unreadable
 even when liveness happens to retain it, so the read contract never
 depends on the optimizer's choices. Observability is declared, never
 inferred; the target-sliced run's evaluated set is this idea's
@@ -358,8 +359,8 @@ agreeing branch chains) checked on every combination; `Network::update`
 takes any field as its update direction. In physics terms, a `Gradients` is
 a discrete gradient field over the graph, which is why `Gradients` is an
 alias for `Field` rather than a wrapper around it: the buffer's invariant is
-alignment to a graph, not differentiation, and Adam's second moment or an
-evaluation's forward payloads are fields that are not gradients at all. In
+alignment to a graph, not differentiation, and Adam's second moment or a
+run's forward payloads are fields that are not gradients at all. In
 poorgrad: [`Field`](src/engine/field.rs).
 
 **Origin.** The family of networks descending from a common construction
@@ -761,7 +762,7 @@ stacks. In poorgrad: [`RmsNorm`](src/neural/rms_norm.rs).
 **Running statistics.** The exponential moving averages of the batch
 means and variances that batch normalization accumulates during training
 and normalizes by at inference. Deliberately not engine state: the
-training loop reads each batch's statistics from an `Evaluation`,
+training loop reads each batch's statistics from a `Run`,
 averages them as plain payloads, and feeds the estimates to the
 inference expression per run — the same division of labor as minibatch
 assembly.

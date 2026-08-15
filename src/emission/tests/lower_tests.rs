@@ -30,13 +30,13 @@ fn small_case() -> Case {
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
     let plan = network.compile([loss], []);
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     Case {
         name: "small",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![weights, x],
-        expected: vec![evaluation.of(loss).to_vec()],
+        expected: vec![run.of(loss).to_vec()],
     }
 }
 
@@ -67,7 +67,7 @@ fn attention_case() -> Case {
         .collect();
     let output = concat(&heads, 1);
     let plan = network.compile([output], []);
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_tokens = Tensor::new(Shape::new([2, 3]), tokens.to_vec());
     Case {
@@ -75,7 +75,7 @@ fn attention_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![table, dense_tokens],
-        expected: vec![evaluation.of(output).to_vec()],
+        expected: vec![run.of(output).to_vec()],
     }
 }
 
@@ -95,7 +95,7 @@ fn cross_entropy_case() -> Case {
     let targets_value = network.input(targets.clone());
     let loss = cross_entropy(logits_value, targets_value);
     let plan = network.compile([loss], []);
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
     Case {
@@ -103,7 +103,7 @@ fn cross_entropy_case() -> Case {
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![logits, dense_targets],
-        expected: vec![evaluation.of(loss).to_vec()],
+        expected: vec![run.of(loss).to_vec()],
     }
 }
 
@@ -143,7 +143,7 @@ fn gradient_case() -> Case {
         .collect();
     readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
     let plan = network.compile(readable.clone(), []);
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     let dense_tokens = Tensor::new(Shape::new([3, 3]), tokens.to_vec());
     Case {
         name: "gradient",
@@ -152,7 +152,7 @@ fn gradient_case() -> Case {
         arguments: vec![signal, mix, table, dense_tokens],
         expected: readable
             .iter()
-            .map(|&symbol| evaluation.of(symbol).to_vec())
+            .map(|&symbol| run.of(symbol).to_vec())
             .collect(),
     }
 }
@@ -175,13 +175,13 @@ fn unfold_case() -> Case {
     let x_value = network.parameter(x.clone());
     let windows = x_value.unfold(0, 3, 2, 1);
     let plan = network.compile([windows], []);
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     Case {
         name: "unfold",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![x],
-        expected: vec![evaluation.of(windows).to_vec()],
+        expected: vec![run.of(windows).to_vec()],
     }
 }
 
@@ -260,13 +260,13 @@ fn convolution_case() -> Case {
     let convolved = conv2d(image_value, weights_value, bias_value, 2, 1);
     let plan = network.compile([convolved], []);
     assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     Case {
         name: "convolution",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias],
-        expected: vec![evaluation.of(convolved).to_vec()],
+        expected: vec![run.of(convolved).to_vec()],
     }
 }
 
@@ -306,13 +306,13 @@ fn probe_case() -> Case {
     let scores = pooled.reshape([1, 27]).matmul(dense_value).log_softmax(1);
     let plan = network.compile([scores], []);
     assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
-    let evaluation = plan.forward(&network, []);
+    let run = plan.forward(&network, []);
     Case {
         name: "probe",
         tolerance: 1e-4,
         module: plan.emit_stablehlo().expect("the plan emits"),
         arguments: vec![image, weights, bias, dense],
-        expected: vec![evaluation.of(scores).to_vec()],
+        expected: vec![run.of(scores).to_vec()],
     }
 }
 
@@ -390,8 +390,8 @@ fn bf16_case() -> Case {
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
     let plan = network.compile([loss], []);
-    let evaluation = plan.forward(&network, []);
-    let expected: Vec<f32> = evaluation.of(loss).iter().map(Bf16::to_f32).collect();
+    let run = plan.forward(&network, []);
+    let expected: Vec<f32> = run.of(loss).iter().map(Bf16::to_f32).collect();
     Case {
         name: "bf16-small",
         // The envelope scales to the element: bf16's epsilon is 2^-8,

@@ -46,7 +46,7 @@ impl ValueId {
 ///
 /// [`Value::shape`] returns the shape inferred when the node was recorded.
 /// [`Value::payload`] clones the stored payload of a leaf, parameter, or input;
-/// computed values are read from an [`Evaluation`](super::Evaluation).
+/// computed values are read from a [`Run`](super::Run).
 pub struct Value<'network, Data> {
     tape: &'network Tape<Data>,
     id: ValueId,
@@ -111,7 +111,7 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     ///
     /// Leaves return their recorded payload, parameters return the current
     /// generation's payload, and inputs return their recorded default rather
-    /// than a run-local feed. Use [`Evaluation::of`](super::Evaluation::of) to
+    /// than a run-local feed. Use [`Run::of`](super::Run::of) to
     /// read the result of a particular forward run.
     pub fn payload(&self) -> Option<Data> {
         self.tape.payload_of(self.id)

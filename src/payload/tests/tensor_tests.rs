@@ -187,8 +187,8 @@ fn tensor_payloads_flow_through_the_graph() {
     let x = network.leaf(Tensor::new([2], [0.0_f64, 1.0]));
     let y = x.tanh();
 
-    let evaluation = network.forward();
-    let result = evaluation.of(y);
+    let run = network.forward();
+    let result = run.of(y);
     assert!((result.to_vec()[0]).abs() < 1e-12);
     assert!((result.to_vec()[1] - 1.0_f64.tanh()).abs() < 1e-12);
 }
@@ -216,8 +216,8 @@ fn engine_trains_tensor_payloads_unchanged() {
     let mut network = network;
     for _ in 0..200 {
         let loss = network.resolve(loss_symbol);
-        let evaluation = network.forward();
-        let gradients = evaluation.backward(loss);
+        let run = network.forward();
+        let gradients = run.backward(loss);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.clone()
         });
@@ -273,12 +273,12 @@ fn matmul_routes_gradients_through_transposed_operands() {
 
     let loss = a.matmul(b).sum();
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(loss), Tensor::new([], [56.0]));
+    let run = network.forward();
+    assert_eq!(*run.of(loss), Tensor::new([], [56.0]));
 
     // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
     // `dB = A^T . 1` column-summed.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(a).to_vec(), &[5.0, 6.0, 5.0, 6.0]);
     assert_eq!(gradients.of(b).to_vec(), &[4.0, 6.0]);
 }
@@ -291,12 +291,12 @@ fn broadcast_and_sum_are_adjoint() {
 
     let loss = scalar.broadcast_like(reference).sum();
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(loss), Tensor::new([], [6.0]));
+    let run = network.forward();
+    assert_eq!(*run.of(loss), Tensor::new([], [6.0]));
 
     // The broadcast spreads to three positions, so the scalar's gradient
     // is the sum of three ones; the shape reference receives none.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(scalar).to_vec(), &[3.0]);
     assert_eq!(gradients.of(reference).to_vec(), &[0.0, 0.0, 0.0]);
 }
@@ -392,12 +392,12 @@ fn axis_sum_and_broadcast_are_adjoint() {
 
     let loss = bias.broadcast_along(0, reference).sum();
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(loss), Tensor::new([], [12.0]));
+    let run = network.forward();
+    assert_eq!(*run.of(loss), Tensor::new([], [12.0]));
 
     // Each bias element is repeated across the two rows, so its
     // gradient is the sum of two ones; the shape reference gets none.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(bias).to_vec(), &[2.0, 2.0, 2.0]);
     assert_eq!(gradients.of(reference).to_vec(), &[0.0; 6]);
 }
@@ -434,8 +434,8 @@ fn backward_rejects_non_scalar_targets() {
     let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
     let doubled = x + x;
 
-    let evaluation = network.forward();
-    evaluation.backward(doubled);
+    let run = network.forward();
+    run.backward(doubled);
 }
 
 #[test]
@@ -446,8 +446,8 @@ fn broadcast_restores_singleton_shapes_in_backward() {
 
     let loss = source.broadcast_like(reference).sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     assert_eq!(*gradients.of(source), Tensor::new([1], [3.0]));
 }
 
@@ -458,8 +458,8 @@ fn update_rejects_shape_changing_rules() {
     let w = network.parameter(Tensor::new([1], [1.0_f64]));
     let loss = w.sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     network.update(&gradients, |_parameter, _gradient| {
         Tensor::new([2], [7.0, 8.0])
     });
@@ -485,8 +485,8 @@ fn linear_regression_trains_in_matrix_form() {
     let mut network = network;
     for _ in 0..300 {
         let loss = network.resolve(loss_symbol);
-        let evaluation = network.forward();
-        let gradients = evaluation.backward(loss);
+        let run = network.forward();
+        let gradients = run.backward(loss);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
@@ -504,8 +504,8 @@ fn tensor_literals_mix_into_expressions() {
 
     let y = Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0);
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(y).to_vec(), &[11.0, 21.0]);
+    let run = network.forward();
+    assert_eq!(run.of(y).to_vec(), &[11.0, 21.0]);
 }
 
 #[test]
@@ -743,9 +743,9 @@ fn squeeze_and_unsqueeze_adjust_extent_one_axes() {
     assert_eq!(unsqueezed.shape(), Shape::new([1, 3]));
     assert_eq!(squeezed.shape(), Shape::new([3]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(unsqueezed).to_vec(), vec![1.0, 2.0, 3.0]);
-    assert_eq!(evaluation.of(squeezed).to_vec(), vec![1.0, 2.0, 3.0]);
+    let run = network.forward();
+    assert_eq!(run.of(unsqueezed).to_vec(), vec![1.0, 2.0, 3.0]);
+    assert_eq!(run.of(squeezed).to_vec(), vec![1.0, 2.0, 3.0]);
 }
 
 #[test]
@@ -855,18 +855,18 @@ fn embedding_lookup_is_a_one_hot_matmul() {
 
     // Feed the tokens [0, 2, 0] as one-hot rows over a vocabulary of three.
     let tokens = Tensor::new([3, 3], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
-    let evaluation = network.forward_with([(onehot_symbol, tokens)]);
+    let run = network.forward_with([(onehot_symbol, tokens)]);
 
     // The result rows are the looked-up table rows, in token order.
     assert_eq!(
-        evaluation.of(embedded).to_vec(),
+        run.of(embedded).to_vec(),
         vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]
     );
 
     // Token 0 is selected twice, so its row accumulates two ones; token 1 is
     // never selected, so its row's gradient is zero. That accumulation is the
     // scatter-add a dedicated gather would have to implement by hand.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(
         gradients.of(table).to_vec(),
         vec![2.0, 2.0, 0.0, 0.0, 1.0, 1.0]
@@ -964,18 +964,18 @@ fn gather_op_routes_gradients_by_scatter_add() {
     let embedded = table.gather(selection);
     let loss = embedded.sum();
 
-    let evaluation = network.forward_with([(
+    let run = network.forward_with([(
         selection_symbol,
         Tensor::selection(vec![0usize, 2, 0], 3, 1.0),
     )]);
     assert_eq!(
-        evaluation.of(embedded).to_vec(),
+        run.of(embedded).to_vec(),
         vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]
     );
 
     // The dedicated op's backward is the scatter-add, with no term for the
     // selection at all: the indices are data.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(table).shape(), Shape::new([3, 2]));
     assert_eq!(
         gradients.of(table).to_vec(),
@@ -1011,8 +1011,8 @@ fn log_softmax_normalizes_along_the_named_axis() {
     let log_probabilities = logits.log_softmax(1);
     assert_eq!(log_probabilities.shape(), Shape::new([2, 2]));
 
-    let evaluation = network.forward();
-    let probabilities = evaluation.of(log_probabilities).exp();
+    let run = network.forward();
+    let probabilities = run.of(log_probabilities).exp();
     for total in probabilities.sum_along(1).to_vec() {
         assert!((total - 1.0).abs() < 1e-12);
     }
@@ -1027,8 +1027,8 @@ fn log_softmax_routes_gradients_through_the_probabilities() {
     // the cotangent is `1 - classes * softmax`: `[1 - 2 * 0.25, 1 - 2 * 0.75]`.
     let loss = logits.log_softmax(1).sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     let expected = [0.5, -0.5];
     for (computed, expected) in gradients.of(logits).to_vec().into_iter().zip(expected) {
         assert!((computed - expected).abs() < 1e-12);
@@ -1050,12 +1050,12 @@ fn relu_masks_gradients_by_sign() {
     let activated = x.relu();
     let loss = activated.sum();
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(activated).to_vec(), &[0.0, 0.0, 0.0, 3.0]);
+    let run = network.forward();
+    assert_eq!(run.of(activated).to_vec(), &[0.0, 0.0, 0.0, 3.0]);
 
     // The gradient passes only where the operand reached zero; the
     // subgradient at zero itself is one.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     assert_eq!(gradients.of(x).to_vec(), &[0.0, 0.0, 1.0, 1.0]);
 }
 
@@ -1066,11 +1066,11 @@ fn roots_and_powers_route_gradients() {
     let exponent = network.leaf(Tensor::filled([2], 2.0));
     let loss = (x.sqrt() + x.powf(exponent)).sum();
 
-    let evaluation = network.forward();
-    assert_eq!(*evaluation.of(loss), Tensor::new([], [102.0]));
+    let run = network.forward();
+    assert_eq!(*run.of(loss), Tensor::new([], [102.0]));
 
     // Per element: `1 / (2 sqrt(x)) + 2 x`, so `[0.25 + 8, 1/6 + 18]`.
-    let gradients = evaluation.backward(loss);
+    let gradients = run.backward(loss);
     let expected = [8.25, 18.0 + 1.0 / 6.0];
     for (computed, expected) in gradients.of(x).to_vec().into_iter().zip(expected) {
         assert!((computed - expected).abs() < 1e-12);

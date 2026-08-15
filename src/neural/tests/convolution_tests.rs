@@ -16,8 +16,8 @@ fn conv2d_matches_the_hand_computed_fixture() {
     let output = conv2d(input, weights, bias, 1, 0);
     assert_eq!(output.shape(), Shape::new([1, 1, 2, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[16.0, 18.0, 22.0, 24.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[16.0, 18.0, 22.0, 24.0]);
 }
 
 #[test]
@@ -35,9 +35,9 @@ fn conv2d_mixes_channels_into_filters() {
     let output = conv2d(input, weights, bias, 1, 0);
     assert_eq!(output.shape(), Shape::new([1, 2, 2, 2]));
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(output).to_vec(),
+        run.of(output).to_vec(),
         &[11.0, 22.0, 33.0, 44.0, 32.0, 64.0, 96.0, 128.0]
     );
 }
@@ -52,8 +52,8 @@ fn conv2d_strides_the_windows() {
     let output = conv2d(input, weights, bias, 2, 0);
     assert_eq!(output.shape(), Shape::new([1, 1, 1, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[3.0, 7.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[3.0, 7.0]);
 }
 
 #[test]
@@ -68,8 +68,8 @@ fn padding_surrounds_the_input_with_zeros() {
     let output = conv2d(input, weights, bias, 1, 1);
     assert_eq!(output.shape(), Shape::new([1, 1, 2, 2]));
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), &[10.0; 4]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), &[10.0; 4]);
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn conv2d_gradients_flow_to_every_operand() {
     let output = conv2d(input, weights, bias, 1, 0);
     let loss = output.sum();
 
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(loss);
+    let run = network.forward();
+    let gradients = run.backward(loss);
     // Each input position is graded by how many windows cover it.
     assert_eq!(
         gradients.of(input).to_vec(),

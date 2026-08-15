@@ -62,13 +62,13 @@ fn main() {
     let training = Instant::now();
     for step in 0..STEP_COUNT {
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward();
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let run = network.forward();
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step % (STEP_COUNT / 5) == 0 {
             println!("step {step:4}: loss = {batch_loss:.4}");
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
@@ -95,9 +95,8 @@ fn main() {
     let grid: Vec<f32> = (0..SAMPLE_LEN)
         .map(|index| (((index as f64 / (SAMPLE_LEN - 1) as f64) * 2.0 - 1.0) * DOMAIN) as f32)
         .collect();
-    let evaluation =
-        network.forward_with([(input_symbol, Tensor::new([SAMPLE_LEN, 1], grid.clone()))]);
-    let fit = evaluation.of(network.resolve(predicted_symbol)).to_vec();
+    let run = network.forward_with([(input_symbol, Tensor::new([SAMPLE_LEN, 1], grid.clone()))]);
+    let fit = run.of(network.resolve(predicted_symbol)).to_vec();
 
     println!(
         "{}",

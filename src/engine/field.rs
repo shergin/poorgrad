@@ -14,7 +14,7 @@ assert_impl_all!(Field<f64>: Send, Sync);
 ///
 /// The [`Gradients`] of a backward run are one kind of field. Other fields can
 /// hold optimizer state such as momentum or moments, or combine gradients from
-/// several runs; an [`Evaluation`](super::Evaluation) holds its forward payloads
+/// several runs; a [`Run`](super::Run) holds its forward payloads
 /// in one too. Fields carry graph lineage and branch information rather than
 /// borrowing one network generation, allowing a compatible field to be reused
 /// across parameter updates.
@@ -37,7 +37,7 @@ pub struct Field<Data> {
 /// them unchanged. Read a single gradient with [`Field::of`], and combine runs
 /// or carry optimizer state with the rest of the field algebra. The alias names
 /// the role at the API boundary, most visibly on
-/// [`Evaluation::backward`](super::Evaluation::backward), while the type keeps
+/// [`Run::backward`](super::Run::backward), while the type keeps
 /// the one invariant it actually enforces: alignment to a graph, not
 /// differentiation.
 pub type Gradients<Data> = Field<Data>;

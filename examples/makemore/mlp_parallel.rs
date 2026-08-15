@@ -146,7 +146,7 @@ fn main() {
                 let loss_value = network.resolve(loss_symbol);
                 // Slice the run to the loss: the sampling twin on the
                 // same tape is skipped during training.
-                let evaluation = network.forward_for(
+                let run = network.forward_for(
                     [loss_symbol],
                     [
                         (
@@ -159,8 +159,8 @@ fn main() {
                         ),
                     ],
                 );
-                let shard_loss = evaluation.of(loss_value).to_vec()[0];
-                (shard_loss, evaluation.backward(loss_value))
+                let shard_loss = run.of(loss_value).to_vec()[0];
+                (shard_loss, run.backward(loss_value))
             })
             .collect();
 
@@ -207,14 +207,14 @@ fn main() {
         let mut window = [0usize; CONTEXT_LEN];
         let mut name = String::new();
         loop {
-            let evaluation = network.forward_for(
+            let run = network.forward_for(
                 [sample_probabilities_symbol],
                 [(
                     sample_context_symbol,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = evaluation
+            let row = run
                 .of(network.resolve(sample_probabilities_symbol))
                 .to_vec();
             let token = draw(&row, &mut state);

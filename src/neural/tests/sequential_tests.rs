@@ -23,8 +23,8 @@ fn stages_chain_in_order() {
     let input = network.leaf(Tensor::new([2, 2], [-1.0_f64, 2.0, -3.0, 4.0]));
     let output = chain.express(&network, input);
 
-    let evaluation = network.forward();
-    assert_eq!(evaluation.of(output).to_vec(), vec![0.0, 2.0, 0.0, 4.0]);
+    let run = network.forward();
+    assert_eq!(run.of(output).to_vec(), vec![0.0, 2.0, 0.0, 4.0]);
 }
 
 #[test]
@@ -45,9 +45,9 @@ fn pooling_modules_match_their_free_functions() {
     let through_module = MaxPool::new(2, 2).express(&network, input);
     let through_function = max_pool(input, 2, 2);
 
-    let evaluation = network.forward();
+    let run = network.forward();
     assert_eq!(
-        evaluation.of(through_module).to_vec(),
-        evaluation.of(through_function).to_vec()
+        run.of(through_module).to_vec(),
+        run.of(through_function).to_vec()
     );
 }

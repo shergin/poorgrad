@@ -182,7 +182,7 @@ fn main() {
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = training_plan.forward(
+        let run = training_plan.forward(
             &network,
             [
                 (
@@ -195,7 +195,7 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -215,12 +215,12 @@ fn main() {
 
         // The running estimates fold in this batch's statistics, read
         // through the keep-set: payload arithmetic in loop land.
-        let batch_mean = evaluation.of(network.resolve(mean_symbol)).clone();
-        let batch_variance = evaluation.of(network.resolve(variance_symbol)).clone();
+        let batch_mean = run.of(network.resolve(mean_symbol)).clone();
+        let batch_variance = run.of(network.resolve(variance_symbol)).clone();
         mean_estimate = mean_estimate * keep.clone() + batch_mean * take.clone();
         variance_estimate = variance_estimate * keep.clone() + batch_variance * take.clone();
 
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         let learning_rate = if step < 4000 { &fast } else { &slow };
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
@@ -243,7 +243,7 @@ fn main() {
         let mut window = [0usize; CONTEXT_LEN];
         let mut name = String::new();
         loop {
-            let evaluation = sampling_plan.forward(
+            let run = sampling_plan.forward(
                 &network,
                 [
                     (
@@ -254,7 +254,7 @@ fn main() {
                     (running_variance_symbol, variance_estimate.clone()),
                 ],
             );
-            let row = evaluation
+            let row = run
                 .of(network.resolve(sample_probabilities_symbol))
                 .to_vec();
             let token = draw(&row, &mut state);

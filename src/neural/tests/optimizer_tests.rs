@@ -16,8 +16,8 @@ fn model(network: &Network<Tensor<f64>>) -> (crate::Symbol, crate::Symbol, crate
 fn sgd_matches_the_hand_written_rule_bitwise() {
     let by_hand = Network::new();
     let (loss, weights, _) = model(&by_hand);
-    let evaluation = by_hand.forward();
-    let gradients = evaluation.backward(by_hand.resolve(loss));
+    let run = by_hand.forward();
+    let gradients = run.backward(by_hand.resolve(loss));
     let rate = Tensor::new([], [0.05_f64]);
     let by_hand_next = by_hand.update(&gradients, |parameter, gradient| {
         parameter.clone() - gradient.clone() * Tensor::filled(gradient.shape(), 0.05)
@@ -25,8 +25,8 @@ fn sgd_matches_the_hand_written_rule_bitwise() {
 
     let by_trait = Network::new();
     let (trait_loss, trait_weights, _) = model(&by_trait);
-    let evaluation = by_trait.forward();
-    let gradients = evaluation.backward(by_trait.resolve(trait_loss));
+    let run = by_trait.forward();
+    let gradients = run.backward(by_trait.resolve(trait_loss));
     let by_trait_next = Sgd.step(&by_trait, &gradients, &rate);
 
     let by_hand_payload = by_hand_next.resolve(weights).payload().unwrap();
@@ -62,14 +62,14 @@ fn a_comparison_loop_runs_over_dynamic_optimizers() {
         let mut network = network;
         let mut first = None;
         for _ in 0..25 {
-            let evaluation = network.forward();
-            let value = evaluation.of(network.resolve(loss)).to_vec()[0];
+            let run = network.forward();
+            let value = run.of(network.resolve(loss)).to_vec()[0];
             first.get_or_insert(value);
-            let gradients = evaluation.backward(network.resolve(loss));
+            let gradients = run.backward(network.resolve(loss));
             network = strategy.step(&network, &gradients, &rate);
         }
-        let evaluation = network.forward();
-        let last = evaluation.of(network.resolve(loss)).to_vec()[0];
+        let run = network.forward();
+        let last = run.of(network.resolve(loss)).to_vec()[0];
         let first = first.expect("the loop ran");
         assert!(
             last.is_finite() && last < first,
@@ -82,8 +82,8 @@ fn a_comparison_loop_runs_over_dynamic_optimizers() {
 fn update_each_sees_every_parameter_with_its_identity() {
     let network = Network::new();
     let (loss, weights, bias) = model(&network);
-    let evaluation = network.forward();
-    let gradients = evaluation.backward(network.resolve(loss));
+    let run = network.forward();
+    let gradients = run.backward(network.resolve(loss));
 
     let mut seen = Vec::new();
     let next = network.update_each(&gradients, |parameter, current, _| {

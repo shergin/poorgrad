@@ -46,7 +46,7 @@ choice:
 
 - **Record once, run anywhere.** Expressions record a static tape;
   `forward` replays an O(1) snapshot of it, and `backward` replays the
-  evaluation's own copy, so runs never lock the graph and never disturb
+  run's own copy, so runs never lock the graph and never disturb
   each other. Declared inputs take per-run payloads through
   `forward_with` — feeds are run state, not graph state — so one shared
   network serves any number of threads, each feeding its own data and
@@ -218,8 +218,8 @@ let mut network = network;
 for step in 0..100 {
     let (sample_x, sample_y) = samples[step % samples.len()];
     let loss = network.resolve(loss_symbol);
-    let evaluation = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
-    let gradients = evaluation.backward(loss);
+    let run = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
+    let gradients = run.backward(loss);
     network = network.update(&gradients, |w, g| w - 0.02 * g);
 }
 
@@ -266,7 +266,7 @@ crate root keeps the public API flat. From tape to training:
   `Network::resolve` turns it into a proxy in a compatible generation, while
   rejecting unrelated or divergent networks. Training loops keep symbols of
   the loss and parameters across `update` steps.
-- [`Evaluation`](src/engine/evaluation.rs) and
+- [`Run`](src/engine/run.rs) and
   [`Gradients`](src/engine/field.rs) — the per-run results of `forward`
   and `backward`, read back with the same `Value` proxies that built the
   graph. Runs never mutate the network, so any number of them can execute

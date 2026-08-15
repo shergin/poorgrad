@@ -139,8 +139,8 @@ fn probe_correct(
     let (images, _) = batch_payloads(test, &indices);
     // The forward-only plan skips the training twin and frees every
     // probe intermediate right after its last consumer.
-    let evaluation = probe_plan.forward(network, [(images_symbol, images)]);
-    let logits = evaluation.of(network.resolve(logits_symbol)).to_vec();
+    let run = probe_plan.forward(network, [(images_symbol, images)]);
+    let logits = run.of(network.resolve(logits_symbol)).to_vec();
     let mut correct = 0;
     for (row, &index) in logits.chunks(CLASSES).zip(&indices) {
         let predicted = row
@@ -226,21 +226,21 @@ fn main() {
         let loss_value = network.resolve(loss_symbol);
         // The training plan skips the probe expression and survives
         // every generation: compiled once, run per step.
-        let evaluation = training_plan.forward(
+        let run = training_plan.forward(
             &network,
             [
                 (images_symbol, batch_images),
                 (targets_symbol, batch_targets),
             ],
         );
-        let batch_loss = evaluation.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_value).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
                 "step 0: minibatch loss = {batch_loss:.4} (a uniform model costs ln 10 ~ 2.30)"
             );
         }
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         let learning_rate = if step < STEPS * 3 / 4 { &fast } else { &slow };
         network = network.update(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)

@@ -281,10 +281,10 @@ fn training_runs_through_the_backend_end_to_end() {
     let mut last_loss = f64::INFINITY;
     for _ in 0..30 {
         let loss_value = network.resolve(loss_symbol);
-        let evaluation = network.forward();
-        last_loss = evaluation.of(loss_value).to_vec()[0];
+        let run = network.forward();
+        last_loss = run.of(loss_value).to_vec()[0];
         first_loss.get_or_insert(last_loss);
-        let gradients = evaluation.backward(loss_value);
+        let gradients = run.backward(loss_value);
         network = network.update(&gradients, |weight, gradient| {
             weight.clone() - Tensor::filled(gradient.shape(), 0.0002) * gradient.clone()
         });

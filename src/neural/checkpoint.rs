@@ -144,9 +144,9 @@ fn next_generation<Data: Tensorial>(
     mut replacements: HashMap<Symbol, Data>,
 ) -> Network<Data> {
     let targets: Vec<Symbol> = replacements.keys().copied().collect();
-    let evaluation = network.forward_for(targets, []);
+    let run = network.forward_for(targets, []);
     let none: [(Value<'_, Data>, Value<'_, Data>); 0] = [];
-    let zeros = evaluation.recorded_gradients(none);
+    let zeros = run.recorded_gradients(none);
     network.update_each(&zeros, |value, current, _direction| {
         replacements
             .remove(&value.symbol())

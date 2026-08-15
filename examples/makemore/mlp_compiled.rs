@@ -167,7 +167,7 @@ fn main() {
             .collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let evaluation = plan.forward(
+        let run = plan.forward(
             &network,
             [
                 (
@@ -180,7 +180,7 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = evaluation.of(network.resolve(loss_symbol)).to_vec()[0];
+        let batch_loss = run.of(network.resolve(loss_symbol)).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -201,7 +201,7 @@ fn main() {
         // computed the loss; assembling the update direction is a
         // read, not a backward pass.
         let gradients =
-            evaluation.recorded_gradients(parameter_symbols.iter().zip(&gradient_symbols).map(
+            run.recorded_gradients(parameter_symbols.iter().zip(&gradient_symbols).map(
                 |(&parameter, &gradient)| (network.resolve(parameter), network.resolve(gradient)),
             ));
         let learning_rate = if step < 4000 { &fast } else { &slow };
@@ -223,14 +223,14 @@ fn main() {
         let mut window = [0usize; CONTEXT_LEN];
         let mut name = String::new();
         loop {
-            let evaluation = network.forward_for(
+            let run = network.forward_for(
                 [sample_probabilities_symbol],
                 [(
                     sample_context_symbol,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = evaluation
+            let row = run
                 .of(network.resolve(sample_probabilities_symbol))
                 .to_vec();
             let token = draw(&row, &mut state);

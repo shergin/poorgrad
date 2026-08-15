@@ -7,7 +7,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Evaluation, Function, Network, Operands, Structure, Symbol, ValueRef, Witness};
+use super::{Function, Network, Operands, Run, Structure, Symbol, ValueRef, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -73,7 +73,7 @@ pub struct Plan<Data> {
     /// evaluate.
     wanted: Vec<bool>,
     /// The declared observable set: targets plus keeps. Only these
-    /// answer [`Evaluation::of`]; an interior value stays unreadable
+    /// answer [`Run::of`]; an interior value stays unreadable
     /// even when liveness happens to retain it, so the contract does
     /// not depend on the optimizer's choices.
     readable: Vec<bool>,
@@ -102,7 +102,7 @@ pub struct Plan<Data> {
     /// the backward rematerializer can rebuild a chain's patches with
     /// one fast fill instead of the general element walk.
     fused_patches: Arc<HashMap<usize, WindowProduct>>,
-    /// Whether evaluations of this plan may differentiate: training
+    /// Whether runs of this plan may differentiate: training
     /// plans keep everything `backward` reads (the retention
     /// contract), forward-only plans free those buffers too.
     training: bool,
@@ -691,12 +691,12 @@ impl<Data: Differentiable> Plan<Data> {
 
 impl<Data: Tensorial> Plan<Data> {
     /// Runs the plan over `network`'s current generation with `feeds`
-    /// bound to declared inputs for this run only, returning the
-    /// evaluation of the readable values.
+    /// bound to declared inputs for this run only, returning a
+    /// run carrying the readable values.
     ///
     /// Skipped and freed slots hold O(1) zero placeholders;
-    /// [`Evaluation::of`] answers only the plan's targets and keeps,
-    /// and [`Evaluation::backward`] only runs on training plans. The
+    /// [`Run::of`] answers only the plan's targets and keeps,
+    /// and [`Run::backward`] only runs on training plans. The
     /// results of a plan run are bit-identical to the interpreter's:
     /// the plan changes what is stored, never what is computed.
     ///
@@ -708,7 +708,7 @@ impl<Data: Tensorial> Plan<Data> {
         &self,
         network: &Network<Data>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<Data> {
+    ) -> Run<Data> {
         let tape = network.tape();
         assert!(
             tape.same_origin(&self.witness),
@@ -799,7 +799,7 @@ impl<Data: Tensorial> Plan<Data> {
             }
         }
 
-        Evaluation::new(
+        Run::new(
             self.structure.clone(),
             self.witness.clone(),
             values,
@@ -816,7 +816,7 @@ impl<Data: Differentiable> Network<Data> {
     /// naming interior values the caller also wants readable.
     ///
     /// Forward-only plans free every non-readable buffer after its
-    /// last consumer, so their evaluations refuse `backward`; compile
+    /// last consumer, so their runs refuse `backward`; compile
     /// with [`Network::compile_training`] to differentiate.
     ///
     /// # Panics
@@ -834,7 +834,7 @@ impl<Data: Differentiable> Network<Data> {
         Plan::new(self, &targets, &keep, false, REMAT_THRESHOLD)
     }
 
-    /// Compiles a training [`Plan`] whose evaluations differentiate
+    /// Compiles a training [`Plan`] whose runs differentiate
     /// `loss` exactly, holding forward values per `retention`. `loss`
     /// joins the readable set alongside `keep`.
     ///

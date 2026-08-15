@@ -6,7 +6,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::super::{Evaluation, Field, Function, Trace};
+use super::super::{Field, Function, Run, Trace};
 use super::{Designation, Symbol, Tape, Value, ValueId, ValueRef};
 
 // Compile-time thread-safety contract. `Differentiable` already requires
@@ -22,7 +22,7 @@ assert_impl_all!(Network<f64>: Send, Sync);
 /// shared interior synchronization. The returned values are `Copy` handles
 /// that borrow the network and therefore cannot outlive it.
 ///
-/// A network can be shared for concurrent recording and evaluation. Cloning
+/// A network can be shared for concurrent recording and runs. Cloning
 /// creates an O(1) fork, while [`Network::update`] creates a new generation
 /// with a freshly computed parameter store. Both operations share the
 /// existing graph storage; subsequent recordings on separate networks remain
@@ -242,12 +242,12 @@ impl<Data: Differentiable> Network<Data> {
 impl<Data: Tensorial> Network<Data> {
     /// Evaluates every node in allocation order with every input at its
     /// default payload; see `forward_with`.
-    pub fn forward(&self) -> Evaluation<Data> {
+    pub fn forward(&self) -> Run<Data> {
         self.forward_with(std::iter::empty())
     }
 
     /// Evaluates every node in allocation order, materializing the payload
-    /// of each value into a fresh `Evaluation`, with `feeds` bound to
+    /// of each value into a fresh `Run`, with `feeds` bound to
     /// declared inputs for this run only.
     ///
     /// Feeds are run-local state: they overlay the input defaults
@@ -258,7 +258,7 @@ impl<Data: Tensorial> Network<Data> {
     /// atomically, so the network is never locked during the run and
     /// concurrent recordings and updates do not disturb it. Allocation
     /// order is dependency order by construction, which is what makes
-    /// the single forward scan sufficient. The returned evaluation owns
+    /// the single forward scan sufficient. The returned run owns
     /// the structure freeze and a witness, so `backward` needs no
     /// network borrow.
     ///
@@ -266,10 +266,7 @@ impl<Data: Tensorial> Network<Data> {
     /// Panics if a fed symbol does not resolve in this generation, names
     /// a node that is not an input, or carries a payload whose shape
     /// differs from the input's recorded shape.
-    pub fn forward_with(
-        &self,
-        feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<Data> {
+    pub fn forward_with(&self, feeds: impl IntoIterator<Item = (Symbol, Data)>) -> Run<Data> {
         self.run(None, feeds)
     }
 
@@ -282,7 +279,7 @@ impl<Data: Tensorial> Network<Data> {
     /// holding an O(1) zero placeholder of the recorded shape. The
     /// placeholders keep [`Network::update`] sound — a parameter
     /// outside the closure receives its true gradient, zero — while
-    /// reads stay loud: [`Evaluation::of`] and [`Evaluation::backward`]
+    /// reads stay loud: [`Run::of`] and [`Run::backward`]
     /// panic on a skipped value instead of answering with a
     /// placeholder.
     ///
@@ -298,7 +295,7 @@ impl<Data: Tensorial> Network<Data> {
         &self,
         targets: impl IntoIterator<Item = impl ValueRef<Data>>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<Data> {
+    ) -> Run<Data> {
         let targets: Vec<ValueId> = targets
             .into_iter()
             .map(|target| self.locate(target))
@@ -313,7 +310,7 @@ impl<Data: Tensorial> Network<Data> {
         &self,
         targets: Option<Vec<ValueId>>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
-    ) -> Evaluation<Data> {
+    ) -> Run<Data> {
         let mut bindings = Vec::new();
         for (symbol, payload) in feeds {
             let value = self.resolve(symbol);
@@ -403,7 +400,7 @@ impl<Data: Tensorial> Network<Data> {
             };
             values.push(value);
         }
-        Evaluation::new(
+        Run::new(
             structure,
             snapshot.witness,
             values,
@@ -425,7 +422,7 @@ impl<Data: Tensorial> Network<Data> {
     /// recording [`Trace`] handles, applying the very same derivative
     /// rules — so the recorded gradient and the engine's are one body
     /// of knowledge, and a compiled plan over `[loss, gradients...]`
-    /// reproduces [`Evaluation::backward`] bitwise (same seed, same
+    /// reproduces [`Run::backward`] bitwise (same seed, same
     /// accumulation order). Gradients become first-class values:
     /// compilable, emittable, readable, and differentiable again for
     /// higher-order derivatives.
@@ -456,7 +453,7 @@ impl<Data: Tensorial> Network<Data> {
         let snapshot = self.tape.snapshot();
         let trace = |index: usize| Trace::of(Value::bind(&self.tape, ValueId(index)));
 
-        // The scan mirrors `Evaluation::backward` deliberately and
+        // The scan mirrors `Run::backward` deliberately and
         // exactly — the ones seed, the ancestor marking through `Some`
         // cotangents, the zero-seeded accumulation in reverse scan
         // order — because the bitwise parity contract welds the two:
