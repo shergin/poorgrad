@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, Retention, unary};
+use super::{Cotangents, Operation, Reads, unary};
 
 /// The `(count, size)` window pair at `axis`, `axis + 1` folded back
 /// onto an axis of `extent`: [`Unfold`](super::Unfold)'s adjoint,
@@ -30,10 +30,10 @@ impl Fold {
         1
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads no payloads: the cotangent unfolds by the parameters.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention::NOTHING
+    pub(crate) fn reads(&self) -> Reads {
+        Reads::NOTHING
     }
 
     /// Infers the result shape: the `(count, size)` pair at `axis`

@@ -272,10 +272,14 @@ crate root keeps the public API flat. From tape to training:
   graph. Runs never mutate the network, so any number of them can execute
   concurrently.
 - [`Plan`](src/engine/plan.rs) — a compiled execution schedule derived
-  from the tape by `Network::compile` (forward-only: aggressive buffer
-  liveness, refuses `backward`), `compile_training` (retain-all, exact
-  gradients), or `compile_training_compact` (drops large intermediates
-  and rematerializes them during `backward`, bit-exactly). Plans fuse
+  from the tape by `Network::compile`, from one explicit `Compile`
+  request: `roots` (what a run computes — a loss, a logits head,
+  recorded gradient symbols; no root is special), `observe` (extra
+  readable interiors), and an optional `engine_backward(Memory)`
+  posture (`Retain` holds what `backward` reads; `Remat` drops large
+  intermediates and rematerializes them during `backward`,
+  bit-exactly). A request without `engine_backward` compiles
+  aggressive forward liveness, whose runs refuse `backward`. Plans fuse
   recognized patterns — matching is structural, so hand-written
   compositions fuse identically to facade-recorded ones, and keep-set
   values are fusion barriers — and `describe()` renders the whole

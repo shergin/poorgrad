@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, Retention, unary};
+use super::{Cotangents, Operation, Reads, unary};
 
 /// The log-softmax of a payload along one named axis:
 /// `x - ln(sum(exp(x)))`, the logarithm of the softmax probabilities.
@@ -25,10 +25,10 @@ impl LogSoftmax {
         1
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads its own output to recover the probabilities.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [false, false],
             output: true,
         }

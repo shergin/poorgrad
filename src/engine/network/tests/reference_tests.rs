@@ -1,4 +1,4 @@
-use crate::{Network, Tensor};
+use crate::{Compile, Network, Tensor};
 
 #[test]
 fn reads_answer_symbols_and_values_alike() {
@@ -41,10 +41,9 @@ fn plans_and_derivatives_accept_bound_values() {
     let gradient_symbols = network.differentiate(loss, [x]);
     // `From<Value> for Symbol` serves the one position `ValueRef`
     // cannot: a list that must be homogeneous in `Symbol`.
-    let plan = network.compile(
+    let plan = network.compile(Compile::roots(
         std::iter::once(loss.into()).chain(gradient_symbols.iter().copied()),
-        [],
-    );
+    ));
     let run = plan.forward(&network, []);
     assert_eq!(run.of(loss).to_vec(), vec![5.0]);
     assert_eq!(run.of(gradient_symbols[0]).to_vec(), vec![2.0, 4.0]);

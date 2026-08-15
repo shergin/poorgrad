@@ -7,9 +7,9 @@
 //! so all three routes train bit-identically; what changes is where
 //! the gradients come from and what the plan retains:
 //!
-//! - `engine`: `compile_training(.., Retention::All)` + `backward`.
-//! - `compact`: `compile_training(.., Retention::Compact)` +
-//!   `backward`, rematerializing the dropped intermediates.
+//! - `engine`: `engine_backward(Memory::Retain)` + `backward`.
+//! - `compact`: `engine_backward(Memory::Remat)` + `backward`,
+//!   rematerializing the dropped intermediates.
 //! - `recorded`: `differentiate` + one forward-only plan over
 //!   `[loss, gradients...]` + `recorded_gradients` — no backward
 //!   pass executes at all.
@@ -28,7 +28,7 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Conv2d, Linear, Module, Network, Retention, Shape, Symbol, Tensor, Tensorial, Value,
+    Compile, Conv2d, Linear, Memory, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -176,11 +176,11 @@ fn main() {
     // the gradients come from.
     let (plan, gradient_symbols) = match route.as_str() {
         "engine" => (
-            network.compile_training(loss_symbol, [], Retention::All),
+            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain)),
             Vec::new(),
         ),
         "compact" => (
-            network.compile_training(loss_symbol, [], Retention::Compact),
+            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Remat)),
             Vec::new(),
         ),
         "recorded" => {
@@ -190,10 +190,9 @@ fn main() {
                 network.len() - forward_nodes
             );
             (
-                network.compile(
+                network.compile(Compile::roots(
                     std::iter::once(loss_symbol).chain(gradient_symbols.iter().copied()),
-                    [],
-                ),
+                )),
                 gradient_symbols,
             )
         }

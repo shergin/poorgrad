@@ -1,5 +1,5 @@
 use super::*;
-use crate::Network;
+use crate::{Compile, Network};
 
 /// A network whose plan has enough scheduled nodes to draw a curve.
 fn chain() -> (Network<f64>, crate::Symbol) {
@@ -16,7 +16,7 @@ fn chain() -> (Network<f64>, crate::Symbol) {
 #[test]
 fn a_plan_card_carries_the_whole_schedule() {
     let (network, target) = chain();
-    let plan = network.compile([target], []);
+    let plan = network.compile(Compile::roots([target]));
     let html = plan.to_html(Theme::DARK);
     // `describe` is the schedule, escaped into a `pre` block verbatim.
     for line in plan.describe().lines().take(3) {
@@ -32,7 +32,7 @@ fn a_plan_card_carries_the_whole_schedule() {
 #[test]
 fn a_plan_card_draws_the_live_volume_curve() {
     let (network, target) = chain();
-    let plan = network.compile([target], []);
+    let plan = network.compile(Compile::roots([target]));
     let html = plan.to_html(Theme::DARK);
     assert!(html.contains("live volume (elements)"));
     assert!(html.contains("scheduled node"));
@@ -41,7 +41,7 @@ fn a_plan_card_draws_the_live_volume_curve() {
 #[test]
 fn the_live_series_follows_the_schedule_it_describes() {
     let (network, target) = chain();
-    let plan = network.compile([target], []);
+    let plan = network.compile(Compile::roots([target]));
     let series = plan.live_series();
     assert!(!series.is_empty());
     // Live volume only ever grows by the node just evaluated, so the
@@ -54,7 +54,7 @@ fn the_live_series_follows_the_schedule_it_describes() {
 #[test]
 fn markup_in_a_schedule_cannot_escape_into_the_card() {
     let (network, target) = chain();
-    let plan = network.compile([target], []);
+    let plan = network.compile(Compile::roots([target]));
     let html = plan.to_html(Theme::DARK);
     let schedule = html
         .split("<pre style=\"margin:0;white-space:pre;overflow-x:auto\">")
@@ -68,7 +68,7 @@ fn markup_in_a_schedule_cannot_escape_into_the_card() {
 #[test]
 fn plan_rendering_is_deterministic_and_theme_aware() {
     let (network, target) = chain();
-    let plan = network.compile([target], []);
+    let plan = network.compile(Compile::roots([target]));
     assert_eq!(plan.to_html(Theme::DARK), plan.to_html(Theme::DARK));
     assert!(plan.to_html(Theme::DARK).contains("#0d1117"));
     assert!(plan.to_html(Theme::LIGHT).contains("#ffffff"));

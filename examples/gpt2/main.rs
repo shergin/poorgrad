@@ -49,7 +49,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use poorgrad::{
-    Bf16, Differentiable, Elementary, Emittable, Module, Network, Plan, Symbol, Tensor, checkpoint,
+    Bf16, Compile, Differentiable, Elementary, Emittable, Module, Network, Plan, Symbol, Tensor,
+    checkpoint,
 };
 
 use model::{CONTEXT_LEN, EMBED_DIM, Gpt2, VOCABULARY_LEN, load};
@@ -87,7 +88,7 @@ fn record<E: Elementary + From<f32> + 'static>(
     let last = model.express(network, embedded).gather(extraction);
     let logits = last.matmul(network.resolve(model.embeddings()).transpose());
     Compiled {
-        plan: network.compile([logits], []),
+        plan: network.compile(Compile::roots([logits])),
         stream: embedded.symbol(),
         extraction: extraction.symbol(),
         logits: logits.symbol(),

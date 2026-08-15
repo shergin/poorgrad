@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// A value raised to the power of another, elementwise, with operands
 /// `[base, exponent]`.
@@ -22,10 +22,10 @@ impl Powf {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads both operands and its own output.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [true, true],
             output: true,
         }

@@ -1,4 +1,4 @@
-use crate::{Network, Retention, Symbol, Tensor};
+use crate::{Compile, Memory, Network, Symbol, Tensor};
 
 use super::Plan;
 
@@ -14,7 +14,7 @@ fn plan_forward_matches_the_interpreter_bitwise() {
     let y = network.leaf(Tensor::new([2, 2], [0.5, -0.5, 1.5, -1.5]));
     let target = ((x.matmul(y) + x).tanh() * y).sum();
 
-    let plan = network.compile([target.symbol()], []);
+    let plan = network.compile(Compile::roots([target.symbol()]));
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -28,7 +28,7 @@ fn plan_skips_what_the_targets_cannot_observe() {
     let wanted = x * x;
     let unwanted = x + x;
 
-    let plan = network.compile([wanted.symbol()], []);
+    let plan = network.compile(Compile::roots([wanted.symbol()]));
     let run = plan.forward(&network, no_feeds());
     assert_eq!(*run.of(wanted), 4.0);
     let _ = unwanted;
@@ -44,7 +44,7 @@ fn plan_reads_outside_the_readable_set_are_rejected() {
     let interior = x * x * x;
     let target = interior + wanted;
 
-    let plan = network.compile([target.symbol()], []);
+    let plan = network.compile(Compile::roots([target.symbol()]));
     let run = plan.forward(&network, no_feeds());
     run.of(interior);
 }
@@ -56,7 +56,7 @@ fn keep_makes_an_interior_value_readable() {
     let interior = x * x;
     let target = interior + x;
 
-    let plan = network.compile([target.symbol()], [interior.symbol()]);
+    let plan = network.compile(Compile::roots([target.symbol()]).observe([interior.symbol()]));
     let run = plan.forward(&network, no_feeds());
     assert_eq!(*run.of(target), 6.0);
     assert_eq!(*run.of(interior), 4.0);
@@ -69,7 +69,7 @@ fn forward_only_plans_refuse_backward() {
     let x = network.leaf(2.0_f64);
     let target = x * x;
 
-    let plan = network.compile([target.symbol()], []);
+    let plan = network.compile(Compile::roots([target.symbol()]));
     let run = plan.forward(&network, no_feeds());
     run.backward(target);
 }
@@ -81,7 +81,7 @@ fn training_plans_differentiate_like_the_interpreter() {
     let x = network.leaf(Tensor::new([2], [3.0, 4.0]));
     let loss = ((w * x).tanh() * x).sum();
 
-    let plan = network.compile_training(loss.symbol(), [], Retention::All);
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -105,7 +105,7 @@ fn one_plan_serves_every_generation() {
     let loss_symbol = loss.symbol();
     let w_symbol = w.symbol();
 
-    let plan = network.compile_training(loss_symbol, [], Retention::All);
+    let plan = network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain));
     let mut network = network;
     for _ in 0..5 {
         let loss_value = network.resolve(loss_symbol);
@@ -135,7 +135,7 @@ fn liveness_frees_only_after_the_last_consumer() {
     let early = shared * x;
     let late = (shared + early).sum();
 
-    let plan = network.compile([late.symbol()], []);
+    let plan = network.compile(Compile::roots([late.symbol()]));
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
     assert_eq!(planned.of(late).to_vec(), interpreted.of(late).to_vec());
@@ -147,7 +147,7 @@ fn plan_forward_binds_feeds() {
     let x = network.input(Tensor::new([2], [0.0_f64, 0.0]));
     let doubled = x * Tensor::new([2], [2.0, 2.0]);
 
-    let plan = network.compile([doubled.symbol()], []);
+    let plan = network.compile(Compile::roots([doubled.symbol()]));
     let run = plan.forward(&network, [(x.symbol(), Tensor::new([2], [4.0, 5.0]))]);
     assert_eq!(run.of(doubled).to_vec(), &[8.0, 10.0]);
 }
@@ -161,7 +161,7 @@ fn plans_reject_foreign_networks() {
     let target = x * x;
     let _ = second.leaf(1.0_f64);
 
-    let plan = first.compile([target.symbol()], []);
+    let plan = first.compile(Compile::roots([target.symbol()]));
     plan.forward(&second, no_feeds());
 }
 
@@ -171,7 +171,7 @@ fn plans_keep_serving_their_prefix_after_recording() {
     let x = network.leaf(2.0_f64);
     let target = x * x;
 
-    let plan = network.compile([target.symbol()], []);
+    let plan = network.compile(Compile::roots([target.symbol()]));
     // Later recordings grow the tape past the plan's prefix.
     let _later = x + x;
     let run = plan.forward(&network, no_feeds());
@@ -184,9 +184,9 @@ fn describe_reports_the_liveness_story() {
     let x = network.leaf(Tensor::new([4], [1.0_f64, 2.0, 3.0, 4.0]));
     let target = (x.tanh() * x).sum();
 
-    let plan = network.compile([target.symbol()], []);
+    let plan = network.compile(Compile::roots([target.symbol()]));
     let description = plan.describe();
-    assert!(description.contains("forward-only"));
+    assert!(description.contains("plan: forward;"));
     assert!(description.contains("Tanh"));
     assert!(description.contains("kept"));
     assert!(description.contains("peak"));
@@ -195,7 +195,7 @@ fn describe_reports_the_liveness_story() {
 #[test]
 fn training_liveness_matches_the_interpreter_on_a_convnet() {
     // The real consumer motif: conv, relu, pool, flatten, dense,
-    // cross-entropy. Retention keeps what the derivative rules read
+    // cross-entropy. The read contract keeps what the derivative rules read
     // and frees the view chains and padded copies; the proof is
     // bitwise agreement of loss and every parameter gradient.
     use crate::{conv2d, cross_entropy, max_pool};
@@ -224,11 +224,11 @@ fn training_liveness_matches_the_interpreter_on_a_convnet() {
     let logits = pooled.reshape([2, 8]).matmul(head);
     let loss = cross_entropy(logits, targets);
 
-    let mut plan = network.compile_training(loss.symbol(), [], Retention::All);
-    // The retention analysis must license releases here: the conv view
+    let mut plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    // The release analysis must license releases here: the conv view
     // chains and output permutes are all shape-only.
     assert!(plan.describe().contains("releasable after"));
-    assert!(plan.describe().contains("retention floor"));
+    assert!(plan.describe().contains("release floor"));
     // Force the analysis to execute (training runs hold everything by
     // default after the allocator measurements): gradients must stay
     // bit-identical even with every licensed release performed — the
@@ -270,7 +270,7 @@ fn training_liveness_matches_the_interpreter_on_every_value_reader() {
     let loss =
         (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
 
-    let plan = network.compile_training(loss.symbol(), [], Retention::All);
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
     let planned = plan.forward(&network, no_feeds());
     let interpreted = network.forward();
 
@@ -294,7 +294,7 @@ fn training_liveness_retains_the_gather_selection() {
     let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
     let loss = table.gather(selection).sum();
 
-    let plan = network.compile_training(loss.symbol(), [], Retention::All);
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -336,7 +336,7 @@ fn remat_matches_the_interpreter_on_a_convnet() {
     let logits = pooled.reshape([2, 8]).matmul(head);
     let loss = cross_entropy(logits, targets);
 
-    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 4);
+    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 4);
     let description = plan.describe();
     assert!(description.contains("(remat)"));
     assert!(description.contains("remat drops"));
@@ -376,7 +376,7 @@ fn full_remat_matches_the_interpreter_on_every_value_reader() {
     let loss =
         (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
 
-    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 1);
+    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 1);
     let planned = plan.forward(&network, no_feeds());
     let interpreted = network.forward();
 
@@ -399,7 +399,7 @@ fn remat_never_drops_the_gather_selection() {
     let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
     let loss = table.gather(selection).sum();
 
-    let plan = Plan::new(&network, &[loss.symbol()], &[], true, 1);
+    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 1);
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -420,8 +420,8 @@ fn compact_training_drops_where_the_default_retains() {
     let big = w * x;
     let loss = (big * big).sum();
 
-    let default = network.compile_training(loss.symbol(), [], Retention::All);
-    let compact = network.compile_training(loss.symbol(), [], Retention::Compact);
+    let default = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    let compact = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
     assert!(default.describe().contains("remat drops 0 slots"));
     assert!(!compact.describe().contains("remat drops 0 slots"));
     assert!(compact.describe().contains("(remat)"));
@@ -463,7 +463,7 @@ fn window_gemm_fusion_matches_the_interpreter() {
     let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
     let loss = cross_entropy(pooled.reshape([2, 8]).matmul(head), targets);
 
-    let plan = network.compile_training(loss.symbol(), [], Retention::Compact);
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
     let description = plan.describe();
     assert!(description.contains("fused 1 window-gemm"));
     assert!(description.contains("fused (window-gemm)"));
@@ -499,7 +499,7 @@ fn forward_only_plans_fuse_and_agree() {
     let bias = network.leaf(Tensor::new([2], [0.05, -0.05]));
     let output = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
 
-    let plan = network.compile([output.symbol()], []);
+    let plan = network.compile(Compile::roots([output.symbol()]));
     assert!(plan.describe().contains("fused 1 window-gemm"));
 
     let planned = plan.forward(&network, std::iter::empty());
@@ -527,14 +527,18 @@ fn kept_interiors_bar_fusion() {
         .reshape([9, 4]);
     let loss = patches.matmul(kernel).sum();
 
-    let fused = network.compile_training(loss.symbol(), [], Retention::Compact);
+    let fused = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
     assert!(fused.describe().contains("window-gemm"));
     // The default retain-all training plan does not fuse at all: its
     // memory contract stays exact.
-    let default = network.compile_training(loss.symbol(), [], Retention::All);
+    let default = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
     assert!(!default.describe().contains("window-gemm"));
 
-    let barred = network.compile_training(loss.symbol(), [patches.symbol()], Retention::Compact);
+    let barred = network.compile(
+        Compile::roots([loss.symbol()])
+            .observe([patches.symbol()])
+            .engine_backward(Memory::Remat),
+    );
     assert!(!barred.describe().contains("window-gemm"));
     let run = barred.forward(&network, std::iter::empty());
     assert_eq!(
@@ -561,7 +565,7 @@ fn shared_windows_bar_fusion() {
     let patches = windows.permute([0, 2, 4, 1, 3, 5]).reshape([9, 4]);
     let loss = patches.matmul(kernel).sum() + windows.sum();
 
-    let plan = network.compile_training(loss.symbol(), [], Retention::Compact);
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
     assert!(!plan.describe().contains("window-gemm"));
 
     let planned = plan.forward(&network, std::iter::empty());
@@ -581,7 +585,7 @@ fn shorter_sibling_is_rejected(extend: impl FnOnce(&Network<f64>) -> Symbol) {
     let late = extend(&network);
     let _ = shared;
 
-    let plan = network.compile([late], []);
+    let plan = network.compile(Compile::roots([late]));
     plan.forward(&sibling, no_feeds());
 }
 

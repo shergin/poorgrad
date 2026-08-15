@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// The elementwise 0/1 indicator of `operand >= threshold`: the
 /// Heaviside step, with operands `[operand, threshold]` and ties
@@ -24,10 +24,10 @@ impl Step {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads nothing: both cotangents are structural `None`s.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention::NOTHING
+    pub(crate) fn reads(&self) -> Reads {
+        Reads::NOTHING
     }
 
     /// Infers the shape of the result, which both operands must share.

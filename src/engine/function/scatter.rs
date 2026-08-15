@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// The rows of a gradient scatter-added into `rows` rows by a one-hot
 /// selection, with operands `[gradient, selection]`:
@@ -28,11 +28,11 @@ impl Scatter {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads the selection payload (the gather needs its indices);
     /// the gradient contributes nothing.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [false, true],
             output: false,
         }

@@ -6,8 +6,7 @@ use static_assertions::assert_impl_all;
 use super::{
     Add, Broadcast, BroadcastAlong, Cotangents, Div, Exp, Fold, Gather, Input, Leaf, Ln,
     LogSoftmax, LogSumExp, MatMul, Maximum, Mul, Narrow, Neg, Operation, Pad, Parameter, Permute,
-    Powf, Relu, Reshape, Retention, Scatter, Sqrt, Step, Sub, Sum, SumAlong, Tanh, Transpose,
-    Unfold,
+    Powf, Reads, Relu, Reshape, Scatter, Sqrt, Step, Sub, Sum, SumAlong, Tanh, Transpose, Unfold,
 };
 
 // Compile-time thread-safety contract; the anchor rationale is documented
@@ -302,40 +301,40 @@ impl<Data> Function<Data> {
     }
 
     /// Returns which payload values this function's derivative rule
-    /// reads: the retention contract behind training-plan liveness.
+    /// reads: the read contract behind training-plan liveness.
     /// Sources have no rule and retain nothing.
-    pub(crate) fn retains(&self) -> Retention {
+    pub(crate) fn reads(&self) -> Reads {
         match self {
-            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => Retention::NOTHING,
-            Function::Add(add) => add.retains(),
-            Function::Sub(sub) => sub.retains(),
-            Function::Mul(mul) => mul.retains(),
-            Function::Div(div) => div.retains(),
-            Function::Neg(neg) => neg.retains(),
-            Function::Tanh(tanh) => tanh.retains(),
-            Function::Exp(exp) => exp.retains(),
-            Function::Ln(ln) => ln.retains(),
-            Function::MatMul(matmul) => matmul.retains(),
-            Function::Transpose(transpose) => transpose.retains(),
-            Function::Sum(sum) => sum.retains(),
-            Function::SumAlong(sum_along) => sum_along.retains(),
-            Function::Broadcast(broadcast) => broadcast.retains(),
-            Function::BroadcastAlong(broadcast_along) => broadcast_along.retains(),
-            Function::Reshape(reshape) => reshape.retains(),
-            Function::Permute(permute) => permute.retains(),
-            Function::Narrow(narrow) => narrow.retains(),
-            Function::Pad(pad) => pad.retains(),
-            Function::Unfold(unfold) => unfold.retains(),
-            Function::Gather(gather) => gather.retains(),
-            Function::LogSoftmax(log_softmax) => log_softmax.retains(),
-            Function::LogSumExp(log_sum_exp) => log_sum_exp.retains(),
-            Function::Step(step) => step.retains(),
-            Function::Fold(fold) => fold.retains(),
-            Function::Scatter(scatter) => scatter.retains(),
-            Function::Sqrt(sqrt) => sqrt.retains(),
-            Function::Powf(powf) => powf.retains(),
-            Function::Maximum(maximum) => maximum.retains(),
-            Function::Relu(relu) => relu.retains(),
+            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_) => Reads::NOTHING,
+            Function::Add(add) => add.reads(),
+            Function::Sub(sub) => sub.reads(),
+            Function::Mul(mul) => mul.reads(),
+            Function::Div(div) => div.reads(),
+            Function::Neg(neg) => neg.reads(),
+            Function::Tanh(tanh) => tanh.reads(),
+            Function::Exp(exp) => exp.reads(),
+            Function::Ln(ln) => ln.reads(),
+            Function::MatMul(matmul) => matmul.reads(),
+            Function::Transpose(transpose) => transpose.reads(),
+            Function::Sum(sum) => sum.reads(),
+            Function::SumAlong(sum_along) => sum_along.reads(),
+            Function::Broadcast(broadcast) => broadcast.reads(),
+            Function::BroadcastAlong(broadcast_along) => broadcast_along.reads(),
+            Function::Reshape(reshape) => reshape.reads(),
+            Function::Permute(permute) => permute.reads(),
+            Function::Narrow(narrow) => narrow.reads(),
+            Function::Pad(pad) => pad.reads(),
+            Function::Unfold(unfold) => unfold.reads(),
+            Function::Gather(gather) => gather.reads(),
+            Function::LogSoftmax(log_softmax) => log_softmax.reads(),
+            Function::LogSumExp(log_sum_exp) => log_sum_exp.reads(),
+            Function::Step(step) => step.reads(),
+            Function::Fold(fold) => fold.reads(),
+            Function::Scatter(scatter) => scatter.reads(),
+            Function::Sqrt(sqrt) => sqrt.reads(),
+            Function::Powf(powf) => powf.reads(),
+            Function::Maximum(maximum) => maximum.reads(),
+            Function::Relu(relu) => relu.reads(),
         }
     }
 

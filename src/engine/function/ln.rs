@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, Retention, unary};
+use super::{Cotangents, Operation, Reads, unary};
 
 /// The natural logarithm of a value.
 ///
@@ -19,10 +19,10 @@ impl Ln {
         1
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads its operand: the derivative divides by it.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [true, false],
             output: false,
         }

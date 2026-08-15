@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Differentiable, Shape};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// The product of two values, with operands `[left, right]`.
 ///
@@ -17,10 +17,10 @@ impl Mul {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads both operand payloads: each side's cotangent scales by the other.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [true, true],
             output: false,
         }

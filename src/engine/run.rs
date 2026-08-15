@@ -15,16 +15,6 @@ use super::{
 // in `network.rs`.
 assert_impl_all!(Run<f64>: Send, Sync);
 
-/// The materialized payloads of one forward run over a `Network`.
-///
-/// A run is immutable, per-run state: the graph structure frozen
-/// at the start of the run and the payloads that run produced. It carries
-/// no borrow of the network — kinship is checked through the same
-/// [`Witness`] a [`Field`] uses — so runs outlive the generation
-/// that produced them and can be stashed, moved, or differentiated
-/// concurrently without pinning a `Network`. Later recordings and
-/// parameter updates do not change its values or the operations
-/// differentiated by [`Run::backward`].
 /// The producer-specific shape of one run: which slots answer reads,
 /// and whether `backward` may differentiate it.
 ///
@@ -75,6 +65,16 @@ impl Posture {
     }
 }
 
+/// The materialized payloads of one forward run over a `Network`.
+///
+/// A run is immutable, per-run state: the graph structure frozen
+/// at the start of the run and the payloads that run produced. It carries
+/// no borrow of the network — kinship is checked through the same
+/// [`Witness`] a [`Field`] uses — so runs outlive the generation
+/// that produced them and can be stashed, moved, or differentiated
+/// concurrently without pinning a `Network`. Later recordings and
+/// parameter updates do not change its values or the operations
+/// differentiated by [`Run::backward`].
 #[derive(Debug)]
 pub struct Run<Data> {
     /// Frozen node columns for this run: functions, operands, and the
@@ -249,7 +249,7 @@ impl<Data: Tensorial> Run<Data> {
         assert!(
             self.posture.differentiable(),
             "this run came from a forward-only plan, whose liveness pass freed \
-             the buffers backward reads; compile with `compile_training` to differentiate"
+             the buffers backward reads; compile with `engine_backward` to differentiate"
         );
         assert_eq!(
             values[output_index].shape().rank(),
@@ -301,12 +301,12 @@ impl<Data: Tensorial> Run<Data> {
                 .get(index)
                 .expect("snapshot cannot shrink")
                 .as_slice();
-            // Resolution is retention-guided: full values only where
+            // Resolution is read-guided: full values only where
             // the rule reads them, shape-correct placeholders pass
             // straight through everywhere else — so shape-only rules
             // never trigger a recompute.
-            let retention = function.retains();
-            let output_value = if retention.output {
+            let reads = function.reads();
+            let output_value = if reads.output {
                 self.resolved(index, &mut recomputed)
             } else {
                 values[index].clone()
@@ -315,7 +315,7 @@ impl<Data: Tensorial> Run<Data> {
                 .iter()
                 .enumerate()
                 .map(|(position, link)| {
-                    if retention.operands.get(position).copied().unwrap_or(true) {
+                    if reads.operands.get(position).copied().unwrap_or(true) {
                         self.resolved(link.index(), &mut recomputed)
                     } else {
                         values[link.index()].clone()

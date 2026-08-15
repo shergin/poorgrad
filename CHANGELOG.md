@@ -9,6 +9,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- One compile verb: `Network::compile` takes an explicit `Compile`
+  request — `roots` (no root is special; recorded gradient symbols
+  compile as ordinary roots), `observe` (extra readable interiors),
+  and an optional `engine_backward(Memory)` posture — replacing
+  `compile(targets, keep)` and `compile_training(loss, keep,
+  Retention)`. Public `Retention` is now `Memory`
+  (`Retain`/`Remat`, its measured variant docs moved verbatim), the
+  internal per-op contract is `Reads` (ending the name collision the
+  two spellings shared), `Plan::can_backward` is the only posture a
+  plan exposes, and `describe` prints the posture as
+  `forward`/`retain`/`remat`. Every in-repo consumer migrated in the
+  same change and trains bit-identically — the cifar10 grading's
+  loss bit patterns are unchanged on all three routes.
+
 - `Evaluation` is now `Run`, and it no longer borrows the network: a
   run owns its frozen structure columns and an identity witness, so it
   can be stashed, moved across threads, and differentiated after the
@@ -20,8 +34,8 @@ The format is based on [Keep a Changelog], and this project adheres to
 ### Added
 
 - The `cifar10_grading` example: the same convnet trained through
-  all three gradient routes — engine backward over `Retention::All`
-  and `Retention::Compact` training plans, and recorded gradients
+  all three gradient routes — engine backward over retain-all
+  and remat training plans, and recorded gradients
   (`differentiate` plus one forward-only plan over
   `[loss, gradients...]`) — bit-identically under matched seeds, one
   route per process so an external monitor attributes peak RSS

@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Elementary, Shape};
 
-use super::{Cotangents, Operation, Retention, unary};
+use super::{Cotangents, Operation, Reads, unary};
 
 /// The exponential of a value.
 ///
@@ -17,10 +17,10 @@ impl Exp {
         1
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads its own output, which is its derivative.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [false, false],
             output: true,
         }

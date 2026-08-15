@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::{Bf16, Differentiable, Network, Shape, Tensor, concat, cross_entropy};
+use crate::{Bf16, Compile, Differentiable, Network, Shape, Tensor, concat, cross_entropy};
 
 /// One emitted module with the payloads and oracle results the
 /// conformance tests replay: the arguments in the module's own order
@@ -29,7 +29,7 @@ fn small_case() -> Case {
     let x = Tensor::new([2, 2], [0.5_f32, -1.0, 2.0, 3.0]);
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
-    let plan = network.compile([loss], []);
+    let plan = network.compile(Compile::roots([loss]));
     let run = plan.forward(&network, []);
     Case {
         name: "small",
@@ -66,7 +66,7 @@ fn attention_case() -> Case {
         })
         .collect();
     let output = concat(&heads, 1);
-    let plan = network.compile([output], []);
+    let plan = network.compile(Compile::roots([output]));
     let run = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_tokens = Tensor::new(Shape::new([2, 3]), tokens.to_vec());
@@ -94,7 +94,7 @@ fn cross_entropy_case() -> Case {
     let targets = Tensor::selection(vec![0, 2], 3, 1.0_f32);
     let targets_value = network.input(targets.clone());
     let loss = cross_entropy(logits_value, targets_value);
-    let plan = network.compile([loss], []);
+    let plan = network.compile(Compile::roots([loss]));
     let run = plan.forward(&network, []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
@@ -142,7 +142,7 @@ fn gradient_case() -> Case {
         .chain(gradients.iter().copied())
         .collect();
     readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
-    let plan = network.compile(readable.clone(), []);
+    let plan = network.compile(Compile::roots(readable.clone()));
     let run = plan.forward(&network, []);
     let dense_tokens = Tensor::new(Shape::new([3, 3]), tokens.to_vec());
     Case {
@@ -174,7 +174,7 @@ fn unfold_case() -> Case {
     let x = Tensor::new([8], (1..=8).map(|value| value as f32).collect::<Vec<_>>());
     let x_value = network.parameter(x.clone());
     let windows = x_value.unfold(0, 3, 2, 1);
-    let plan = network.compile([windows], []);
+    let plan = network.compile(Compile::roots([windows]));
     let run = plan.forward(&network, []);
     Case {
         name: "unfold",
@@ -258,7 +258,7 @@ fn convolution_case() -> Case {
     let bias = Tensor::new([2], [0.25_f32, -0.5]);
     let bias_value = network.parameter(bias.clone());
     let convolved = conv2d(image_value, weights_value, bias_value, 2, 1);
-    let plan = network.compile([convolved], []);
+    let plan = network.compile(Compile::roots([convolved]));
     assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
     let run = plan.forward(&network, []);
     Case {
@@ -304,7 +304,7 @@ fn probe_case() -> Case {
     let features = conv2d(image_value, weights_value, bias_value, 1, 1).relu();
     let pooled = max_pool(features, 2, 2);
     let scores = pooled.reshape([1, 27]).matmul(dense_value).log_softmax(1);
-    let plan = network.compile([scores], []);
+    let plan = network.compile(Compile::roots([scores]));
     assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
     let run = plan.forward(&network, []);
     Case {
@@ -389,7 +389,7 @@ fn bf16_case() -> Case {
     let x = Tensor::new([2, 2], x_elements);
     let x_value = network.input(x.clone());
     let loss = x_value.matmul(weights_value).relu().sum();
-    let plan = network.compile([loss], []);
+    let plan = network.compile(Compile::roots([loss]));
     let run = plan.forward(&network, []);
     let expected: Vec<f32> = run.of(loss).iter().map(Bf16::to_f32).collect();
     Case {

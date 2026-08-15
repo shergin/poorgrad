@@ -109,22 +109,6 @@ impl<Data: Differentiable> Network<Data> {
         }
     }
 
-    /// Returns the detached name of `reference`: a symbol passes
-    /// through and is validated where it is used, a bound value must
-    /// belong to this network.
-    pub(crate) fn named(&self, reference: impl ValueRef<Data>) -> Symbol {
-        match reference.designation() {
-            Designation::Bound { tape, id } => {
-                assert!(
-                    ptr::eq(&self.tape, tape),
-                    "value belongs to a different network"
-                );
-                Value::bind(&self.tape, id).symbol()
-            }
-            Designation::Named(symbol) => symbol,
-        }
-    }
-
     /// Resolves `symbol` in this generation, or returns `None` if the
     /// symbol belongs to a different lineage or a divergent fork, or no
     /// value with that name is allocated here: the probing form of

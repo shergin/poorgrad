@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// The explicit broadcast of a single-value payload across another
 /// value's shape, with operands `[operand, like]`.
@@ -23,10 +23,10 @@ impl Broadcast {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads its operand for shape only, which a placeholder answers.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention::NOTHING
+    pub(crate) fn reads(&self) -> Reads {
+        Reads::NOTHING
     }
 
     /// Infers the shape of the result: the reference's shape, reachable

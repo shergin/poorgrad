@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Differentiable, Shape};
 
-use super::{Cotangents, Operation, Retention, binary};
+use super::{Cotangents, Operation, Reads, binary};
 
 /// The quotient of two values, with operands `[left, right]`.
 ///
@@ -20,10 +20,10 @@ impl Div {
         2
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads the divisor and its own output.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention {
+    pub(crate) fn reads(&self) -> Reads {
+        Reads {
             operands: [false, true],
             output: true,
         }

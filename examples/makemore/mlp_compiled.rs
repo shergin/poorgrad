@@ -20,7 +20,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
+use poorgrad::{Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -144,10 +144,9 @@ fn main() {
         forward_nodes,
         network.len() - forward_nodes
     );
-    let plan = network.compile(
+    let plan = network.compile(Compile::roots(
         std::iter::once(loss_symbol).chain(gradient_symbols.iter().copied()),
-        [],
-    );
+    ));
 
     // A fresh model is roughly uniform over the vocabulary, so the
     // first printed loss should sit near `ln(27) ~ 3.30`; matched

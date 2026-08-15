@@ -7,7 +7,9 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Function, Network, Operands, Posture, Run, Structure, Symbol, ValueRef, Witness};
+use super::{
+    Compile, Function, Memory, Network, Operands, Posture, Run, Structure, Symbol, Witness,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -79,7 +81,7 @@ pub struct Plan<Data> {
     readable: Arc<Vec<bool>>,
     /// Per node, the slots whose last forward reader this node is and
     /// which the analysis licenses for release: everything outside the
-    /// keep-set and retention contract, plus the dropped
+    /// keep-set and read contract, plus the dropped
     /// (rematerialized) slots. This is the plan's memory floor.
     releases: Vec<SmallVec<[usize; 2]>>,
     /// Per node, the releases a run actually executes. Forward-only
@@ -102,10 +104,10 @@ pub struct Plan<Data> {
     /// the backward rematerializer can rebuild a chain's patches with
     /// one fast fill instead of the general element walk.
     fused_patches: Arc<HashMap<usize, WindowProduct>>,
-    /// Whether runs of this plan may differentiate: training
-    /// plans keep everything `backward` reads (the retention
-    /// contract), forward-only plans free those buffers too.
-    training: bool,
+    /// The engine-backward posture: `None` compiles forward liveness
+    /// (runs refuse `backward`), `Some` keeps or rematerializes what
+    /// the engine reverse scan reads, per its [`Memory`] policy.
+    engine_backward: Option<Memory>,
 }
 
 /// Scans for the canonical im2col chain feeding each `matmul` —
@@ -255,11 +257,12 @@ impl<Data: Differentiable> Plan<Data> {
     /// `remat_threshold` elements).
     fn new(
         network: &Network<Data>,
-        targets: &[Symbol],
-        keep: &[Symbol],
-        training: bool,
+        roots: &[Symbol],
+        observe: &[Symbol],
+        engine_backward: Option<Memory>,
         remat_threshold: usize,
     ) -> Self {
+        let training = engine_backward.is_some();
         let tape = network.tape();
         let snapshot = tape.snapshot();
         let structure = snapshot.structure;
@@ -267,7 +270,7 @@ impl<Data: Differentiable> Plan<Data> {
 
         let mut wanted = vec![false; length];
         let mut readable = vec![false; length];
-        for symbol in targets.iter().chain(keep) {
+        for symbol in roots.iter().chain(observe) {
             let index = network.resolve(*symbol).id().index();
             wanted[index] = true;
             readable[index] = true;
@@ -323,7 +326,7 @@ impl<Data: Differentiable> Plan<Data> {
         // Liveness: a slot may be freed by its highest consumer inside
         // the closure once nothing later can read its value — neither
         // the caller (the readable set) nor, in a training plan, any
-        // derivative rule. Retention names exactly the payloads whose
+        // derivative rule. Reads names exactly the payloads whose
         // values `backward` reads; shape-only readers are safe because
         // freed slots keep shape-correct placeholders.
         let mut required = readable.clone();
@@ -336,8 +339,8 @@ impl<Data: Differentiable> Plan<Data> {
                     .functions
                     .get(index)
                     .expect("snapshot cannot shrink");
-                let retention = function.retains();
-                if retention.output {
+                let reads = function.reads();
+                if reads.output {
                     required[index] = true;
                 }
                 let links = structure
@@ -345,7 +348,7 @@ impl<Data: Differentiable> Plan<Data> {
                     .get(index)
                     .expect("snapshot cannot shrink");
                 for (position, link) in links.as_slice().iter().enumerate() {
-                    if retention.operands[position] {
+                    if reads.operands[position] {
                         required[link.index()] = true;
                     }
                 }
@@ -463,7 +466,7 @@ impl<Data: Differentiable> Plan<Data> {
             fused_patches: Arc::new(fused_patches),
             fused,
             fused_interior,
-            training,
+            engine_backward,
         }
     }
 
@@ -475,6 +478,14 @@ impl<Data: Differentiable> Plan<Data> {
     /// Returns `true` if the plan covers no nodes.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Returns whether run buffers support
+    /// [`Run::backward`](crate::Run::backward): true exactly when the
+    /// request asked for engine reverse mode. The full [`Memory`]
+    /// posture stays private; `describe` prints it.
+    pub fn can_backward(&self) -> bool {
+        self.engine_backward.is_some()
     }
 
     /// Returns the plan's function column, for plan consumers such as
@@ -580,7 +591,7 @@ impl<Data: Differentiable> Plan<Data> {
     /// readable counts, and the static live-volume story (in elements;
     /// constants and placeholders count as zero, so the figures are the
     /// plan's own accounting, not allocator truth). Training plans
-    /// report their retention *floor* — what the analysis could
+    /// report their release *floor* — what the analysis could
     /// release — alongside what a run actually holds.
     pub fn describe(&self) -> String {
         use std::fmt::Write;
@@ -595,7 +606,7 @@ impl<Data: Differentiable> Plan<Data> {
         // Executed frees match the analysis for forward-only plans;
         // training plans hold everything, so the wording distinguishes
         // what happens from what the analysis licenses.
-        let release_word = if self.training {
+        let release_word = if self.engine_backward.is_some() {
             "releasable after"
         } else {
             "freed after"
@@ -635,10 +646,10 @@ impl<Data: Differentiable> Plan<Data> {
             )
             .expect("writing to a string cannot fail");
         }
-        let mode = if self.training {
-            "training (retention analysis)"
-        } else {
-            "forward-only"
+        let mode = match self.engine_backward {
+            None => "forward",
+            Some(Memory::Retain) => "retain",
+            Some(Memory::Remat) => "remat",
         };
         writeln!(
             lines,
@@ -660,7 +671,7 @@ impl<Data: Differentiable> Plan<Data> {
             .expect("writing to a string cannot fail");
         }
         let (floor, floor_at, total) = self.live_story(&self.releases);
-        if self.training {
+        if self.engine_backward.is_some() {
             let (executed, executed_at, _) = self.live_story(&self.frees);
             let drops = self.dropped.iter().filter(|&&dropped| dropped).count();
             let dropped_volume: usize = (0..self.len())
@@ -670,7 +681,7 @@ impl<Data: Differentiable> Plan<Data> {
             writeln!(
                 lines,
                 "live volume: retain-all {total}, remat peak {executed} elements at node \
-                 {executed_at}, retention floor {floor} at node {floor_at}",
+                 {executed_at}, release floor {floor} at node {floor_at}",
             )
             .expect("writing to a string cannot fail");
             writeln!(
@@ -799,7 +810,7 @@ impl<Data: Tensorial> Plan<Data> {
             }
         }
 
-        let posture = if self.training {
+        let posture = if self.engine_backward.is_some() {
             Posture::Training {
                 readable: Arc::clone(&self.readable),
                 dropped: Arc::clone(&self.dropped),
@@ -820,74 +831,31 @@ impl<Data: Tensorial> Plan<Data> {
 }
 
 impl<Data: Differentiable> Network<Data> {
-    /// Compiles a forward-only [`Plan`] for `targets`, with `keep`
-    /// naming interior values the caller also wants readable.
+    /// Compiles `request` into a [`Plan`]: the single lowering entry
+    /// point, over the request's roots, observes, and engine-backward
+    /// memory posture.
     ///
-    /// Forward-only plans free every non-readable buffer after its
-    /// last consumer, so their runs refuse `backward`; compile
-    /// with [`Network::compile_training`] to differentiate.
-    ///
-    /// # Panics
-    /// Panics if a target or keep does not resolve in this generation.
-    pub fn compile(
-        &self,
-        targets: impl IntoIterator<Item = impl ValueRef<Data>>,
-        keep: impl IntoIterator<Item = Symbol>,
-    ) -> Plan<Data> {
-        let targets: Vec<Symbol> = targets
-            .into_iter()
-            .map(|target| self.named(target))
-            .collect();
-        let keep: Vec<Symbol> = keep.into_iter().collect();
-        Plan::new(self, &targets, &keep, false, REMAT_THRESHOLD)
-    }
-
-    /// Compiles a training [`Plan`] whose runs differentiate
-    /// `loss` exactly, holding forward values per `retention`. `loss`
-    /// joins the readable set alongside `keep`.
+    /// Forward-only requests (never calling
+    /// [`Compile::engine_backward`]) free every non-readable buffer
+    /// after its last consumer, so their runs refuse `backward`;
+    /// recorded gradient symbols compile as ordinary roots.
     ///
     /// # Panics
-    /// Panics if `loss` or a keep does not resolve in this generation.
-    pub fn compile_training(
-        &self,
-        loss: impl ValueRef<Data>,
-        keep: impl IntoIterator<Item = Symbol>,
-        retention: Retention,
-    ) -> Plan<Data> {
-        let keep: Vec<Symbol> = keep.into_iter().collect();
-        let threshold = match retention {
-            Retention::All => usize::MAX,
-            Retention::Compact => REMAT_THRESHOLD,
+    /// Panics if a root or observe does not resolve in this
+    /// generation.
+    pub fn compile(&self, request: Compile<Data>) -> Plan<Data> {
+        let threshold = match request.engine_backward {
+            Some(Memory::Remat) => REMAT_THRESHOLD,
+            _ => usize::MAX,
         };
-        Plan::new(self, &[self.named(loss)], &keep, true, threshold)
+        Plan::new(
+            self,
+            &request.roots,
+            &request.observe,
+            request.engine_backward,
+            threshold,
+        )
     }
-}
-
-/// The forward-value retention policy of a training plan: what a run
-/// holds for `backward`, chosen explicitly at the compile call site.
-///
-/// It replaces a fork of the compile facade — the policy is a closed
-/// set of alternatives, so it is a plain `Copy` enum parameter, with
-/// each variant's measured trade documented where it is chosen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Retention {
-    /// Hold every closure value: the fastest and, on the measured
-    /// consumers, usually the smallest-RSS choice, since the
-    /// allocator recycles the uniform per-step cycle perfectly;
-    /// `describe` reports the retention floor the analysis licenses.
-    All,
-    /// Trade backward time for memory: large intermediates (the
-    /// im2col patches, padded copies, and pooling lanes at or above
-    /// the allocator's page-returning size class) are dropped right
-    /// after their last forward consumer and rematerialized on demand
-    /// during `backward`, bit-exactly. The trade does not always win:
-    /// on the MNIST example it cut peak RSS 9% below retain-all for
-    /// 22% more step time, while on the deeper CIFAR-10 example it
-    /// cost time *and* memory (gradient cotangent buffers, not
-    /// forward values, dominate there — their eviction is future work
-    /// that may flip the default). Reach for it when activations, not
-    /// gradients, are what does not fit.
-    Compact,
 }
 
 #[cfg(test)]

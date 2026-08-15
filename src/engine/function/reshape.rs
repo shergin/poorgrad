@@ -2,7 +2,7 @@ use smallvec::smallvec;
 
 use crate::{Shape, Tensorial};
 
-use super::{Cotangents, Operation, Retention, unary};
+use super::{Cotangents, Operation, Reads, unary};
 
 /// A reshape of a value to a new shape of the same volume.
 ///
@@ -20,10 +20,10 @@ impl Reshape {
         1
     }
 
-    /// Returns the retention of the derivative rule below.
+    /// Returns the read set of the derivative rule below.
     /// It reads its operand for shape only, which a placeholder answers.
-    pub(crate) fn retains(&self) -> Retention {
-        Retention::NOTHING
+    pub(crate) fn reads(&self) -> Reads {
+        Reads::NOTHING
     }
 
     /// Infers the result shape: the requested shape, which must match the

@@ -226,10 +226,10 @@ lineage, branch, and allocation checks `resolve` performs — a
 reference never weakens a check, it only chooses which proof to
 present. The trait is sealed (the two forms are the closed set) and
 dispatch is a monomorphized match, never a trait object. Reads
-(`Run::of`, `Run::backward`, `Field::of`), plan targets
-(`compile`, `compile_training*`, `forward_for`), and `differentiate`
-accept it; feed pairs and `keep` lists stay `Symbol`-typed so empty
-list literals keep inferring. In poorgrad:
+(`Run::of`, `Run::backward`, `Field::of`), compile requests
+(`Compile::roots` and `Compile::observe`), `forward_for` targets,
+and `differentiate` accept it; feed pairs stay `Symbol`-typed so
+empty list literals keep inferring. In poorgrad:
 [`ValueRef`](src/engine/reference.rs).
 
 **Generation.** A network state produced by a state transition: a fork
@@ -280,14 +280,17 @@ evaluation twins of the examples), slicing to one expression's
 targets skips the other entirely.
 
 **Plan (lowering).** A compiled execution schedule derived from the
-tape: the ancestor closure of declared targets (dead-node
-elimination), the readable set (targets plus keeps), per-node free
+tape: the ancestor closure of declared roots (dead-node
+elimination), the readable set (roots plus observes), per-node free
 lists (buffer liveness), and captured shapes. Produced by
-[`Network::compile`](src/engine/plan.rs) (forward-only: aggressive
-liveness, refuses `backward`) or `Network::compile_training` (retains
-what `backward` reads, per its explicit `Retention` policy — `All`
-holds every closure value, `Compact` drops and rematerializes the
-large ones); run by `Plan::forward`, whose results
+[`Network::compile`](src/engine/plan.rs) from one explicit
+[`Compile`](src/engine/compile.rs) request: roots (what a run must
+compute; recorded gradient symbols enter as ordinary roots),
+observes (extra readable interiors), and an optional engine-backward
+`Memory` posture — `Retain` holds every closure value `backward`
+reads, `Remat` drops and rematerializes the large ones, and a
+request without it compiles forward liveness, whose runs refuse
+`backward`; run by `Plan::forward`, whose results
 are bit-identical to the interpreter's — a plan changes what is
 *stored*, never what is *computed*. Plans are graph-structural, so
 one plan survives every `update` generation and compile-once
@@ -297,8 +300,8 @@ per-node liveness spans and the static live-volume story. The tape
 remains the specification and the plain interpreter the executable
 oracle every plan is differentially tested against.
 
-**Keep-set.** The declared observable values of a plan: its targets
-plus explicitly kept interiors. Only the keep-set answers
+**Keep-set.** The declared observable values of a plan: its roots
+plus explicitly observed interiors. Only the keep-set answers
 `Run::of` on a plan run — an interior value stays unreadable
 even when liveness happens to retain it, so the read contract never
 depends on the optimizer's choices. Observability is declared, never
@@ -310,14 +313,14 @@ step: a slot whose last consumer has run, and which nothing later
 can read, is released immediately behind a non-allocating
 placeholder, so a run's peak memory follows the widest genuine
 dependency window instead of the whole tape. Forward-only plans keep
-only the keep-set; training plans additionally keep what the
-retention contract names.
+only the keep-set; engine-backward plans additionally keep what the
+read contract names.
 
-**Retention (contract).** Which payload *values* each operation's
+**Reads (contract).** Which payload *values* each operation's
 derivative rule reads when it runs: per-operand flags and an output
 flag, declared beside every `backward` (`Mul` reads both operands,
 `Tanh` its own output, `Gather` its selection's indices, the view
-family nothing at all — shape-only reads need no retention, because
+family nothing at all — shape-only reads need no entry, because
 freed slots hold shape-correct placeholders). It gives a training
 plan its memory *floor*: the view chains, padded copies, and
 pure-arithmetic intermediates are releasable with gradients still
@@ -326,7 +329,7 @@ Training runs report the floor rather than executing it — per-step
 mid-run freeing measured as a peak-RSS regression under the system
 allocator, so cashing the floor in is rematerialization's job —
 while forward-only plans execute their releases, where the win is
-measured. Keeping a rule and its retention in step is part of
+measured. Keeping a rule and its read set in step is part of
 changing either.
 
 **Fusion (window-GEMM).** The plan tier's first pattern: the
@@ -344,14 +347,14 @@ exact. `describe` prints the groups; recognition proposes, payloads
 and backends dispose — neither ever sees graph structure.
 
 **Rematerialization.** Trading compute for memory, opt-in through
-`Retention::Compact` on `compile_training`: the plan *drops* its large
+`Memory::Remat` on the compile request: the plan *drops* its large
 intermediates — freed right after their last forward consumer — and
 `backward` recomputes them on demand from retained neighbors,
 memoized and evicted the moment their own node has been processed. The drop set is size-thresholded to the
 allocator's page-returning class (the measured lesson: many small
 mid-run frees fragment, few large ones return), sources are never
 dropped so recompute always bottoms out, and resolution is
-retention-guided so shape-only rules never trigger a recompute.
+read-guided so shape-only rules never trigger a recompute.
 Recompute re-runs the same pure rules on the same payloads, so plan
 gradients stay bit-identical to the interpreter's — asserted by
 forced full-remat differential tests.

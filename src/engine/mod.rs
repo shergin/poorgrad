@@ -1,3 +1,4 @@
+mod compile;
 mod composite;
 mod field;
 mod function;
@@ -7,11 +8,12 @@ mod plan;
 mod run;
 mod trace;
 
+pub use compile::{Compile, Memory};
 pub use composite::{concat, stack};
 pub use field::{Field, Gradients};
 pub use network::{Network, Symbol, Value, ValueRef};
+pub use plan::Plan;
 pub(crate) use plan::WindowProduct;
-pub use plan::{Plan, Retention};
 pub use run::Run;
 
 pub(crate) use function::Function;

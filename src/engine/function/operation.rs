@@ -14,23 +14,23 @@ pub(crate) type Cotangents<Data> = SmallVec<[Option<Data>; 2]>;
 /// payloads and the node's own output.
 ///
 /// Shape-only reads (a `reshape` backward reading its operand's shape,
-/// a reduction broadcasting over a reference) need no retention,
-/// because a freed slot holds a shape-correct placeholder. Retention
+/// a reduction broadcasting over a reference) need no read set,
+/// because a freed slot holds a shape-correct placeholder. Reads
 /// therefore names exactly the payloads whose *values* a rule reads,
 /// and a training plan may free everything else once its forward
-/// consumers finish. Each `retains` sits beside the `backward` it
+/// consumers finish. Each `reads` sits beside the `backward` it
 /// describes; keeping the two in step is part of changing a rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Retention {
+pub(crate) struct Reads {
     /// Whether the rule reads the operand payload at each position.
     pub(crate) operands: [bool; 2],
     /// Whether the rule reads the node's own output payload.
     pub(crate) output: bool,
 }
 
-impl Retention {
+impl Reads {
     /// A rule that reads no payload values at all, or shapes only.
-    pub(crate) const NOTHING: Retention = Retention {
+    pub(crate) const NOTHING: Reads = Reads {
         operands: [false, false],
         output: false,
     };
