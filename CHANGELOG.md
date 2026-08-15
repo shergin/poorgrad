@@ -19,6 +19,16 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `cifar10_grading` example: the same convnet trained through
+  all three gradient routes — engine backward over `Retention::All`
+  and `Retention::Compact` training plans, and recorded gradients
+  (`differentiate` plus one forward-only plan over
+  `[loss, gradients...]`) — bit-identically under matched seeds, one
+  route per process so an external monitor attributes peak RSS
+  cleanly. On the measured 300-step runs the recorded route wins
+  both axes: ~337 ms/step and ~1.05 GiB peak RSS against ~379/1.35
+  for retain-all and ~414/1.31 for compact remat.
+
 - `Network::compacted`: rebuilds the structure columns into private
   arenas that hold only this network's live nodes. A plain `clone` is
   still O(1) and shares the append-only arena — right for train-only

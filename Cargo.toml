@@ -143,6 +143,10 @@ name = "cifar10"
 path = "examples/cifar10/main.rs"
 
 [[example]]
+name = "cifar10_grading"
+path = "examples/cifar10/grading.rs"
+
+[[example]]
 name = "gpt2"
 path = "examples/gpt2/main.rs"
 
