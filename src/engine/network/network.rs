@@ -195,13 +195,13 @@ impl<Data: Differentiable> Network<Data> {
         );
         assert!(
             self.tape
-                .agrees_with(direction.witness(), direction.as_slice().len()),
+                .agrees_with(direction.witness(), direction.payloads().len()),
             "field belongs to a divergent fork of this network"
         );
         Self {
             tape: self
                 .tape
-                .update(direction.as_slice(), |node, current, direction| {
+                .update(direction.payloads(), |node, current, direction| {
                     rule(Value::bind(&self.tape, node), current, direction)
                 }),
         }
@@ -341,7 +341,7 @@ impl<Data: Tensorial> Network<Data> {
         // Reachability doubles the backward scan's trick in reverse:
         // operands live below their consumers, so one descending sweep
         // marks the whole ancestor closure.
-        let evaluated = targets.map(|targets| {
+        let computed = targets.map(|targets| {
             let mut wanted = vec![false; structure.len()];
             for target in targets {
                 wanted[target.index()] = true;
@@ -367,10 +367,10 @@ impl<Data: Tensorial> Network<Data> {
             .zip(structure.operands.iter())
             .enumerate()
         {
-            let skipped = matches!(&evaluated, Some(wanted) if !wanted[index]);
+            let skipped = matches!(&computed, Some(wanted) if !wanted[index]);
             let value = if skipped {
                 // A shape-correct, non-allocating zero: never read back
-                // (`of` checks the evaluated set), but shaped so that
+                // (`of` checks the computed set), but shaped so that
                 // gradient buffers and `update` stay coherent.
                 let shape = structure
                     .shapes
@@ -404,7 +404,7 @@ impl<Data: Tensorial> Network<Data> {
             structure,
             snapshot.witness,
             values,
-            evaluated,
+            computed,
             true,
             None,
             None,

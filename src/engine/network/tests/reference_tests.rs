@@ -76,7 +76,7 @@ fn foreign_symbols_are_rejected_by_run_reads() {
 }
 
 #[test]
-#[should_panic(expected = "was not evaluated by this target-sliced run")]
+#[should_panic(expected = "was not computed by this target-sliced run")]
 fn sliced_runs_stay_loud_for_skipped_symbols() {
     let network = Network::new();
     let a = network.parameter(2.0_f64);

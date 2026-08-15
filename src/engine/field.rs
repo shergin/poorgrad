@@ -26,7 +26,7 @@ assert_impl_all!(Field<f64>: Send, Sync);
 #[derive(Debug, Clone)]
 pub struct Field<Data> {
     witness: Witness,
-    values: Vec<Data>,
+    payloads: Vec<Data>,
 }
 
 /// The gradients of one backward run: the derivative of the run's target with
@@ -43,8 +43,8 @@ pub struct Field<Data> {
 pub type Gradients<Data> = Field<Data>;
 
 impl<Data: Differentiable> Field<Data> {
-    pub(crate) fn new(witness: Witness, values: Vec<Data>) -> Self {
-        Self { witness, values }
+    pub(crate) fn new(witness: Witness, payloads: Vec<Data>) -> Self {
+        Self { witness, payloads }
     }
 
     /// Returns the value assigned to the node named by `value` — a
@@ -60,13 +60,6 @@ impl<Data: Differentiable> Field<Data> {
     /// # Panics
     /// Panics if `value` belongs to a different lineage or a divergent
     /// fork, or was allocated after this field was produced.
-    /// Returns every node's payload in tape order, for the displays
-    /// that plot a whole field rather than read one value out of it.
-    #[cfg(feature = "evcxr")]
-    pub(crate) fn payloads(&self) -> &[Data] {
-        &self.values
-    }
-
     pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
         let index = match value.designation() {
             Designation::Bound { tape, id } => {
@@ -75,12 +68,12 @@ impl<Data: Differentiable> Field<Data> {
                     "value belongs to a different network lineage"
                 );
                 assert!(
-                    tape.agrees_with(&self.witness, self.values.len()),
+                    tape.agrees_with(&self.witness, self.payloads.len()),
                     "value belongs to a divergent fork of the network"
                 );
                 id.index()
             }
-            Designation::Named(symbol) => match self.witness.probe(symbol, self.values.len()) {
+            Designation::Named(symbol) => match self.witness.probe(symbol, self.payloads.len()) {
                 Ok(id) => id.index(),
                 Err(Misbinding::ForeignOrigin) => {
                     panic!("symbol belongs to a different network lineage")
@@ -93,7 +86,7 @@ impl<Data: Differentiable> Field<Data> {
                 }
             },
         };
-        self.values
+        self.payloads
             .get(index)
             .expect("value was allocated after this field was produced")
     }
@@ -102,7 +95,7 @@ impl<Data: Differentiable> Field<Data> {
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
             witness: self.witness.clone(),
-            values: self.values.iter().map(transform).collect(),
+            payloads: self.payloads.iter().map(transform).collect(),
         }
     }
 
@@ -115,17 +108,20 @@ impl<Data: Differentiable> Field<Data> {
         self.assert_compatible_witness(other);
         Self {
             witness: self.witness.clone(),
-            values: self
-                .values
+            payloads: self
+                .payloads
                 .iter()
-                .zip(&other.values)
+                .zip(&other.payloads)
                 .map(|(left, right)| combine(left, right))
                 .collect(),
         }
     }
 
-    pub(crate) fn as_slice(&self) -> &[Data] {
-        &self.values
+    /// Returns every node's payload in tape order, for engine scans
+    /// and the displays that plot a whole field rather than read one
+    /// value out of it.
+    pub(crate) fn payloads(&self) -> &[Data] {
+        &self.payloads
     }
 
     pub(crate) fn witness(&self) -> &Witness {
@@ -139,12 +135,13 @@ impl<Data: Differentiable> Field<Data> {
             "fields belong to different network lineages"
         );
         assert_eq!(
-            self.values.len(),
-            other.values.len(),
+            self.payloads.len(),
+            other.payloads.len(),
             "fields cover different generations of the network"
         );
         assert!(
-            self.witness.agrees_with(&other.witness, self.values.len()),
+            self.witness
+                .agrees_with(&other.witness, self.payloads.len()),
             "fields belong to divergent forks of the network"
         );
     }

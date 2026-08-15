@@ -296,7 +296,7 @@ plus explicitly kept interiors. Only the keep-set answers
 `Run::of` on a plan run — an interior value stays unreadable
 even when liveness happens to retain it, so the read contract never
 depends on the optimizer's choices. Observability is declared, never
-inferred; the target-sliced run's evaluated set is this idea's
+inferred; the target-sliced run's computed set is this idea's
 first, implicit form.
 
 **Liveness (buffer).** Which run buffers a plan still needs at each

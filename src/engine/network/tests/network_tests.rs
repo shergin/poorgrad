@@ -316,7 +316,7 @@ fn forward_for_evaluates_only_the_ancestor_closure() {
 }
 
 #[test]
-#[should_panic(expected = "not evaluated by this target-sliced run")]
+#[should_panic(expected = "not computed by this target-sliced run")]
 fn sliced_reads_outside_the_closure_are_rejected() {
     let network = Network::new();
     let x = network.leaf(2.0_f64);
@@ -328,7 +328,7 @@ fn sliced_reads_outside_the_closure_are_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "not evaluated by this target-sliced run")]
+#[should_panic(expected = "not computed by this target-sliced run")]
 fn sliced_backward_outside_the_closure_is_rejected() {
     let network = Network::new();
     let x = network.leaf(2.0_f64);

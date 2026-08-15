@@ -35,7 +35,7 @@ fn plan_skips_what_the_targets_cannot_observe() {
 }
 
 #[test]
-#[should_panic(expected = "not evaluated by this target-sliced run")]
+#[should_panic(expected = "not computed by this target-sliced run")]
 fn plan_reads_outside_the_readable_set_are_rejected() {
     let network = Network::new();
     let x = network.leaf(2.0_f64);

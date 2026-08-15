@@ -35,12 +35,12 @@ pub struct Run<Data> {
     /// full run, where every slot is genuine. Skipped slots hold
     /// shape-correct zero placeholders that reads must never answer
     /// with, so `of` and `backward` check this set first.
-    evaluated: Option<Vec<bool>>,
-    /// Whether the forward values `backward` reads are all present or
-    /// rematerializable: true for interpreter runs and training plans,
-    /// false for forward-only plan runs, whose liveness pass freed
-    /// buffers the derivative rules would need.
-    gradients_retained: bool,
+    computed: Option<Vec<bool>>,
+    /// Whether this run may differentiate: true for interpreter runs
+    /// and training plans, whose forward values are all present or
+    /// rematerializable, false for forward-only plan runs, whose
+    /// liveness pass freed buffers the derivative rules would need.
+    differentiable: bool,
     /// Which slots a training plan dropped for rematerialization:
     /// their placeholders must never feed a derivative rule, so
     /// `backward` recomputes their values on demand.
@@ -57,20 +57,20 @@ impl<Data: Differentiable> Run<Data> {
         structure: Structure<Data>,
         witness: Witness,
         values: Vec<Data>,
-        evaluated: Option<Vec<bool>>,
-        gradients_retained: bool,
+        computed: Option<Vec<bool>>,
+        differentiable: bool,
         dropped: Option<Arc<Vec<bool>>>,
         fused_patches: Option<Arc<HashMap<usize, WindowProduct>>>,
     ) -> Self {
         debug_assert_eq!(structure.len(), values.len());
-        if let Some(evaluated) = &evaluated {
-            debug_assert_eq!(structure.len(), evaluated.len());
+        if let Some(computed) = &computed {
+            debug_assert_eq!(structure.len(), computed.len());
         }
         Self {
             structure,
             field: Field::new(witness, values),
-            evaluated,
-            gradients_retained,
+            computed,
+            differentiable,
             dropped,
             fused_patches,
         }
@@ -79,8 +79,8 @@ impl<Data: Differentiable> Run<Data> {
     /// Returns whether this run computed the slot at `index`, as
     /// opposed to skipping it in a target-sliced run.
     fn computed(&self, index: usize) -> bool {
-        match &self.evaluated {
-            Some(evaluated) => evaluated[index],
+        match &self.computed {
+            Some(computed) => computed[index],
             None => true,
         }
     }
@@ -90,7 +90,7 @@ impl<Data: Differentiable> Run<Data> {
     /// with the run's witness over this coverage, while a symbol is
     /// probed against the witness directly.
     fn locate(&self, value: impl ValueRef<Data>) -> usize {
-        let coverage = self.field.as_slice().len();
+        let coverage = self.field.payloads().len();
         match value.designation() {
             Designation::Bound { tape, id } => {
                 assert!(
@@ -130,25 +130,25 @@ impl<Data: Differentiable> Run<Data> {
     /// a target-sliced run (see
     /// [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
+    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
+        let index = self.locate(value);
+        let payload = self
+            .field
+            .payloads()
+            .get(index)
+            .expect("value was allocated after this run");
+        assert!(
+            self.computed(index),
+            "value was not computed by this target-sliced run; add it to the targets"
+        );
+        payload
+    }
+
     /// Returns the run's computed values as a field, for the displays
     /// that plot a whole pass rather than read one value out of it.
     #[cfg(feature = "evcxr")]
     pub(crate) fn field(&self) -> &Field<Data> {
         &self.field
-    }
-
-    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
-        let index = self.locate(value);
-        let payload = self
-            .field
-            .as_slice()
-            .get(index)
-            .expect("value was allocated after this run");
-        assert!(
-            self.computed(index),
-            "value was not evaluated by this target-sliced run; add it to the targets"
-        );
-        payload
     }
 
     /// Assembles a [`Gradients`] field from recorded gradient values:
@@ -176,7 +176,7 @@ impl<Data: Differentiable> Run<Data> {
     where
         Data: 'value,
     {
-        let values = self.field.as_slice();
+        let values = self.field.payloads();
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         for (parameter, gradient) in pairs {
             let index = self.locate(parameter);
@@ -227,20 +227,20 @@ impl<Data: Tensorial> Run<Data> {
     /// ran, or was skipped by a target-sliced run.
     pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
         let output_index = self.locate(output);
-        let values = self.field.as_slice();
+        let values = self.field.payloads();
         assert!(
             output_index < values.len(),
             "value was allocated after this run"
         );
         // A sliced run evaluates the whole ancestor closure of its
-        // targets, so any evaluated output has every operand its
+        // targets, so any computed output has every operand its
         // backward needs.
         assert!(
             self.computed(output_index),
-            "value was not evaluated by this target-sliced run; add it to the targets"
+            "value was not computed by this target-sliced run; add it to the targets"
         );
         assert!(
-            self.gradients_retained,
+            self.differentiable,
             "this run came from a forward-only plan, whose liveness pass freed \
              the buffers backward reads; compile with `compile_training` to differentiate"
         );
@@ -349,7 +349,7 @@ impl<Data: Tensorial> Run<Data> {
     fn resolved(&self, index: usize, recomputed: &mut HashMap<usize, Data>) -> Data {
         let is_dropped = self.dropped.as_ref().is_some_and(|dropped| dropped[index]);
         if !is_dropped {
-            return self.field.as_slice()[index].clone();
+            return self.field.payloads()[index].clone();
         }
         if let Some(hit) = recomputed.get(&index) {
             return hit.clone();
