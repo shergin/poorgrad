@@ -21,8 +21,8 @@ mod dataset;
 use std::time::Instant;
 
 use poorgrad::{
-    Compile, Conv2d, Linear, Memory, Module, Network, Plan, Shape, Symbol, Tensor, Tensorial,
-    Value, cross_entropy, init, max_pool,
+    Compile, Conv2d, Linear, Module, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
+    cross_entropy, init, max_pool,
 };
 
 use chart::loss_chart;
@@ -192,12 +192,11 @@ fn main() {
     let recorded_nodes = network.len();
     println!("recorded {recorded_nodes} nodes for both expressions");
 
-    // Compile once, run every generation. The compact training plan
-    // drops its large intermediates and rematerializes them during
-    // backward: measured here at 9% less peak RSS for 22% more step
-    // time. The probe plan frees as it goes.
-    let training_plan =
-        network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Remat));
+    // Compile once, run every generation. The engine plan retains
+    // what `backward` reads; the probe plan frees as it goes. The
+    // `mnist_grading` example measures this route against recorded
+    // gradients.
+    let training_plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
     let probe_plan = network.compile(Compile::roots([probe_logits_symbol]));
     for line in training_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")

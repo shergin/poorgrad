@@ -22,9 +22,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{
-    BatchNorm, Compile, Memory, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init,
-};
+use poorgrad::{BatchNorm, Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -159,7 +157,7 @@ fn main() {
     let training_plan = network.compile(
         Compile::roots([loss_symbol])
             .observe([mean_symbol, variance_symbol])
-            .engine_backward(Memory::Retain),
+            .engine_backward(),
     );
     let sampling_plan = network.compile(Compile::roots([sample_probabilities_symbol]));
 

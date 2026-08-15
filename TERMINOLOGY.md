@@ -253,10 +253,9 @@ per node, owning the structure freeze and a witness so `backward` needs
 no network borrow. Each run carries its *posture*, the
 producer-specific state as one explicit sum: complete or target-sliced
 from the interpreter, observed from a forward-only plan (only the
-keep-set answers reads, `backward` refused), training from a training
-plan (dropped slots rematerialized on demand) — so an impossible
-combination, such as remat recipes on a run that refuses `backward`,
-cannot be represented. Runs never mutate the network, so any number can
+keep-set answers reads, `backward` refused), training from an
+engine-backward plan (everything `backward` reads retained) — so an
+impossible combination cannot be represented. Runs never mutate the network, so any number can
 execute concurrently; a backward sweep reads a `Run` and returns
 [`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
 a `Field`, so it combines and carries optimizer state directly). Both
@@ -287,10 +286,10 @@ lists (buffer liveness), and captured shapes. Produced by
 [`Compile`](src/engine/compile.rs) request: roots (what a run must
 compute; recorded gradient symbols enter as ordinary roots),
 observes (extra readable interiors), and an optional engine-backward
-`Memory` posture — `Retain` holds every closure value `backward`
-reads, `Remat` drops and rematerializes the large ones, and a
+posture, which holds every closure value `backward` reads — a
 request without it compiles forward liveness, whose runs refuse
-`backward`; run by `Plan::forward`, whose results
+`backward`, and recorded gradient symbols enter as ordinary roots;
+run by `Plan::forward`, whose results
 are bit-identical to the interpreter's — a plan changes what is
 *stored*, never what is *computed*. Plans are graph-structural, so
 one plan survives every `update` generation and compile-once
@@ -321,13 +320,13 @@ derivative rule reads when it runs: per-operand flags and an output
 flag, declared beside every `backward` (`Mul` reads both operands,
 `Tanh` its own output, `Gather` its selection's indices, the view
 family nothing at all — shape-only reads need no entry, because
-freed slots hold shape-correct placeholders). It gives a training
-plan its memory *floor*: the view chains, padded copies, and
-pure-arithmetic intermediates are releasable with gradients still
-exact to the bit, which the tests prove by forcing the releases.
-Training runs report the floor rather than executing it — per-step
-mid-run freeing measured as a peak-RSS regression under the system
-allocator, so cashing the floor in is rematerialization's job —
+freed slots hold shape-correct placeholders). It gives an
+engine-backward plan its memory *floor*: the view chains, padded
+copies, and pure-arithmetic intermediates are releasable with
+gradients still exact to the bit. Engine runs report the floor
+rather than executing it — per-step mid-run freeing measured as a
+peak-RSS regression under the system allocator, and the graded route
+for training memory is recorded gradients under forward liveness —
 while forward-only plans execute their releases, where the win is
 measured. Keeping a rule and its read set in step is part of
 changing either.
@@ -340,24 +339,12 @@ materialized. Matching is structural and provenance-blind (a
 hand-written chain identical to `conv2d`'s fuses identically), a
 keep-set node inside the chain is a fusion barrier, and fusion
 follows the plan's memory posture: forward-only plans always fuse (a
-pure win), compact training plans fuse (backward rebuilds the
-patches with one fast fill, bit-identically), and the default
-retain-all training plan stays unfused so its memory contract stays
-exact. `describe` prints the groups; recognition proposes, payloads
-and backends dispose — neither ever sees graph structure.
-
-**Rematerialization.** Trading compute for memory, opt-in through
-`Memory::Remat` on the compile request: the plan *drops* its large
-intermediates — freed right after their last forward consumer — and
-`backward` recomputes them on demand from retained neighbors,
-memoized and evicted the moment their own node has been processed. The drop set is size-thresholded to the
-allocator's page-returning class (the measured lesson: many small
-mid-run frees fragment, few large ones return), sources are never
-dropped so recompute always bottoms out, and resolution is
-read-guided so shape-only rules never trigger a recompute.
-Recompute re-runs the same pure rules on the same payloads, so plan
-gradients stay bit-identical to the interpreter's — asserted by
-forced full-remat differential tests.
+pure win — the chain simply never exists, and recorded-gradient
+training plans are forward-only, so they fuse too), while
+engine-backward plans stay unfused so their memory contract stays
+exact for the reverse scan. `describe` prints the groups;
+recognition proposes, payloads and backends dispose — neither ever
+sees graph structure.
 
 **Field.** A value-aligned buffer: one payload per node, tied to a network
 *lineage* rather than to a single generation, so it can be combined across

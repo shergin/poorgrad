@@ -17,7 +17,7 @@ use super::{Designation, Symbol, Value, ValueRef};
 ///
 /// # Examples
 /// ```
-/// # use poorgrad::{Compile, Memory, Network};
+/// # use poorgrad::{Compile, Network};
 /// # let network = Network::new();
 /// # let weight = network.parameter(1.0_f64);
 /// # let loss = (weight * weight).sum();
@@ -25,9 +25,7 @@ use super::{Designation, Symbol, Value, ValueRef};
 /// let inference = network.compile(Compile::roots([loss]));
 ///
 /// // Engine training: run buffers retain what `backward` reads.
-/// let training = network.compile(
-///     Compile::roots([loss]).engine_backward(Memory::Retain),
-/// );
+/// let training = network.compile(Compile::roots([loss]).engine_backward());
 /// assert!(!inference.can_backward());
 /// assert!(training.can_backward());
 /// ```
@@ -35,7 +33,7 @@ use super::{Designation, Symbol, Value, ValueRef};
 pub struct Compile<Data> {
     pub(crate) roots: Vec<Symbol>,
     pub(crate) observe: Vec<Symbol>,
-    pub(crate) engine_backward: Option<Memory>,
+    pub(crate) engine_backward: bool,
     /// The payload type the request compiles for: roots are detached
     /// `Symbol`s, so nothing else pins `Data` until the network does.
     payload: PhantomData<fn() -> Data>,
@@ -51,7 +49,7 @@ impl<Data: Differentiable> Compile<Data> {
         Self {
             roots: roots.into_iter().map(detach).collect(),
             observe: Vec::new(),
-            engine_backward: None,
+            engine_backward: false,
             payload: PhantomData,
         }
     }
@@ -64,43 +62,16 @@ impl<Data: Differentiable> Compile<Data> {
         self
     }
 
-    /// Requests engine reverse mode: run buffers retain or
-    /// rematerialize what [`Run::backward`](crate::Run::backward)
-    /// reads, per `memory`. A request that never calls this compiles
-    /// a forward-only plan, whose runs refuse `backward`.
-    pub fn engine_backward(mut self, memory: Memory) -> Self {
-        self.engine_backward = Some(memory);
+    /// Requests engine reverse mode: run buffers retain what
+    /// [`Run::backward`](crate::Run::backward) reads — the retain-all
+    /// posture, which the graded consumers preferred on both axes
+    /// over freeing or rematerializing mid-run. A request that never
+    /// calls this compiles a forward-only plan, whose runs refuse
+    /// `backward`.
+    pub fn engine_backward(mut self) -> Self {
+        self.engine_backward = true;
         self
     }
-}
-
-/// The forward-value memory policy of an engine-backward plan: what a
-/// run holds for `backward`, chosen explicitly at the compile call
-/// site.
-///
-/// The policy is a closed set of alternatives, so it is a plain
-/// `Copy` enum parameter, with each variant's measured trade
-/// documented where it is chosen. It changes what a run *stores*,
-/// never what it computes: every posture is bit-exact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Memory {
-    /// Hold every closure value: the fastest and, on the measured
-    /// consumers, usually the smallest-RSS choice, since the
-    /// allocator recycles the uniform per-step cycle perfectly;
-    /// `describe` reports the release floor the analysis licenses.
-    Retain,
-    /// Trade backward time for memory: large intermediates (the
-    /// im2col patches, padded copies, and pooling lanes at or above
-    /// the allocator's page-returning size class) are dropped right
-    /// after their last forward consumer and rematerialized on demand
-    /// during `backward`, bit-exactly. The trade does not always win:
-    /// on the MNIST example it cut peak RSS 9% below retain-all for
-    /// 22% more step time, while on the deeper CIFAR-10 example it
-    /// cost time *and* memory (gradient cotangent buffers, not
-    /// forward values, dominate there — their eviction is future work
-    /// that may flip the default). Reach for it when activations, not
-    /// gradients, are what does not fit.
-    Remat,
 }
 
 /// Returns the detached name of `reference`: a symbol passes through,

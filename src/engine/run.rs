@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use smallvec::SmallVec;
@@ -6,7 +5,6 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::plan::WindowProduct;
 use super::{
     Designation, Field, Function, Gradients, Misbinding, Structure, Value, ValueRef, Witness,
 };
@@ -37,13 +35,9 @@ pub(crate) enum Posture {
     /// `backward` is refused — the liveness pass freed the buffers
     /// it would need.
     Observed { readable: Arc<Vec<bool>> },
-    /// Training plan run: the keep-set answers reads, and `backward`
-    /// rematerializes the dropped slots through the fused recipes.
-    Training {
-        readable: Arc<Vec<bool>>,
-        dropped: Arc<Vec<bool>>,
-        fused_patches: Arc<HashMap<usize, WindowProduct>>,
-    },
+    /// Engine-backward plan run: only the keep-set answers reads,
+    /// and the run retains every forward value `backward` reads.
+    Training { readable: Arc<Vec<bool>> },
 }
 
 impl Posture {
@@ -281,11 +275,6 @@ impl<Data: Tensorial> Run<Data> {
         // zero cotangent.
         let mut ancestors = vec![false; output_index + 1];
         ancestors[output_index] = true;
-        // The rematerialization memo: dropped values recomputed on
-        // demand live here from their first (highest-indexed) reader
-        // until their own node is processed, then evict — nothing at a
-        // lower index can read them again.
-        let mut recomputed: HashMap<usize, Data> = HashMap::new();
         for index in (0..=output_index).rev() {
             if !ancestors[index] {
                 continue;
@@ -301,30 +290,13 @@ impl<Data: Tensorial> Run<Data> {
                 .get(index)
                 .expect("snapshot cannot shrink")
                 .as_slice();
-            // Resolution is read-guided: full values only where
-            // the rule reads them, shape-correct placeholders pass
-            // straight through everywhere else — so shape-only rules
-            // never trigger a recompute.
-            let reads = function.reads();
-            let output_value = if reads.output {
-                self.resolved(index, &mut recomputed)
-            } else {
-                values[index].clone()
-            };
-            let operand_values: SmallVec<[Data; 2]> = links
-                .iter()
-                .enumerate()
-                .map(|(position, link)| {
-                    if reads.operands.get(position).copied().unwrap_or(true) {
-                        self.resolved(link.index(), &mut recomputed)
-                    } else {
-                        values[link.index()].clone()
-                    }
-                })
-                .collect();
-            let operands: SmallVec<[&Data; 2]> = operand_values.iter().collect();
+            // Every payload a derivative rule reads is present:
+            // interpreter runs hold everything, and engine-backward
+            // plan runs retain what the read contract names.
+            let operands: SmallVec<[&Data; 2]> =
+                links.iter().map(|link| &values[link.index()]).collect();
             let gradient = gradients[index].clone();
-            let cotangents = function.backward(&operands, &output_value, &gradient);
+            let cotangents = function.backward(&operands, &values[index], &gradient);
             debug_assert_eq!(cotangents.len(), links.len());
             // Accumulation is the multivariate chain rule: when a value
             // feeds several consumers, its gradient is the sum of the
@@ -342,67 +314,8 @@ impl<Data: Tensorial> Run<Data> {
                     gradients[slot] = gradients[slot].clone() + contribution;
                 }
             }
-            // This node's own backward was the last possible reader of
-            // its rematerialized value.
-            recomputed.remove(&index);
         }
         Field::new(self.field.witness().clone(), gradients)
-    }
-
-    /// Returns the genuine value at `index`, rematerializing a dropped
-    /// slot by recursively re-running its rule over resolved operands —
-    /// bit-identical to the forward, since the rules are pure and
-    /// sources are never dropped.
-    fn resolved(&self, index: usize, recomputed: &mut HashMap<usize, Data>) -> Data {
-        let Posture::Training {
-            dropped,
-            fused_patches,
-            ..
-        } = &self.posture
-        else {
-            return self.field.payloads()[index].clone();
-        };
-        if !dropped[index] {
-            return self.field.payloads()[index].clone();
-        }
-        if let Some(hit) = recomputed.get(&index) {
-            return hit.clone();
-        }
-        // A fused chain's patches rebuild with one fast fill from the
-        // source; the interior views beneath never resolve at all.
-        if let Some(recipe) = fused_patches.get(&index) {
-            let recipe = recipe.clone();
-            let source = self.resolved(recipe.source, recomputed);
-            let value = source.windowed_patches(
-                recipe.kernel_height,
-                recipe.kernel_width,
-                recipe.stride,
-                recipe.padding,
-            );
-            recomputed.insert(index, value.clone());
-            return value;
-        }
-        let links = self
-            .structure
-            .operands
-            .get(index)
-            .expect("snapshot cannot shrink")
-            .as_slice();
-        let operand_values: SmallVec<[Data; 2]> = links
-            .iter()
-            .map(|link| self.resolved(link.index(), recomputed))
-            .collect();
-        let operands: SmallVec<[&Data; 2]> = operand_values.iter().collect();
-        let function = self
-            .structure
-            .functions
-            .get(index)
-            .expect("snapshot cannot shrink");
-        // Sources are never dropped, so the parameter and input arms
-        // are unreachable here and their slots can stay empty.
-        let value = function.forward(&operands, &[], &[]);
-        recomputed.insert(index, value.clone());
-        value
     }
 }
 

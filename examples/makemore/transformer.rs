@@ -23,7 +23,7 @@ mod corpus;
 use std::time::Instant;
 
 use poorgrad::{
-    Compile, Memory, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy, init,
+    Compile, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy, init,
 };
 
 use chart::loss_chart;
@@ -242,8 +242,7 @@ fn main() {
 
     // Compile once: training keeps only the loss, sampling is
     // forward-only.
-    let training_plan =
-        network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain));
+    let training_plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
     let sampling_plan = network.compile(Compile::roots([sample_probabilities_symbol]));
 
     let fast = Tensor::new([], [0.1]);

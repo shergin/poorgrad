@@ -63,7 +63,7 @@ mod payload;
 pub use backend::{Backend, BackendUnavailable};
 pub use emission::{EmitError, Emittable};
 pub use engine::{
-    Compile, Field, Gradients, Memory, Network, Plan, Run, Symbol, Value, ValueRef, concat, stack,
+    Compile, Field, Gradients, Network, Plan, Run, Symbol, Value, ValueRef, concat, stack,
 };
 pub use neural::{
     Activation, Adam, AdamW, AveragePool, BatchNorm, BatchNormInference, Conv2d, Flatten,

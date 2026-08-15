@@ -8,7 +8,7 @@ mod plan;
 mod run;
 mod trace;
 
-pub use compile::{Compile, Memory};
+pub use compile::Compile;
 pub use composite::{concat, stack};
 pub use field::{Field, Gradients};
 pub use network::{Network, Symbol, Value, ValueRef};

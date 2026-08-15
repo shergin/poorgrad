@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use cow_vec::CowVec;
@@ -7,9 +6,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{
-    Compile, Function, Memory, Network, Operands, Posture, Run, Structure, Symbol, Witness,
-};
+use super::{Compile, Function, Network, Operands, Posture, Run, Structure, Symbol, Witness};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -35,18 +32,6 @@ pub(crate) struct WindowProduct {
     pub(crate) stride: usize,
     pub(crate) padding: usize,
 }
-
-/// The element-count threshold above which a training plan drops a
-/// value for rematerialization.
-///
-/// It is sized to the system allocator's large-allocation class: the
-/// 2026-08-03 measurements showed many small mid-run frees fragment
-/// the heap and regress peak RSS, while few large frees return their
-/// pages. The threshold therefore selects only the big materialized
-/// copies — im2col patches, padded inputs, pooling lanes — for
-/// dropping and backward-time recompute, and leaves every small value
-/// in place.
-const REMAT_THRESHOLD: usize = 1 << 16;
 
 /// A compiled lowering of a recorded graph prefix: which nodes a run
 /// must evaluate, which values the caller may read, and which buffers
@@ -81,33 +66,21 @@ pub struct Plan<Data> {
     readable: Arc<Vec<bool>>,
     /// Per node, the slots whose last forward reader this node is and
     /// which the analysis licenses for release: everything outside the
-    /// keep-set and read contract, plus the dropped
-    /// (rematerialized) slots. This is the plan's memory floor.
+    /// keep-set and read contract. Forward-only runs execute every
+    /// licensed release; engine-backward runs execute none (many
+    /// small mid-run frees measured as an RSS regression — allocator
+    /// fragmentation) and report this set as their release floor.
     releases: Vec<SmallVec<[usize; 2]>>,
-    /// Per node, the releases a run actually executes. Forward-only
-    /// plans execute every licensed release (the measured win);
-    /// training plans execute only the size-thresholded drops, whose
-    /// values `backward` rematerializes on demand — many small
-    /// mid-run frees measured as an RSS regression (allocator
-    /// fragmentation), so small values stay put.
-    frees: Vec<SmallVec<[usize; 2]>>,
-    /// Which slots a training run drops for rematerialization:
-    /// backward recomputes them from retained neighbors, bit-exactly.
-    dropped: Arc<Vec<bool>>,
     /// The window-GEMM fusion group rooted at each `matmul` node, if
     /// its im2col chain matched.
     fused: Vec<Option<WindowProduct>>,
     /// The interior nodes of fusion groups: skipped by runs (their
     /// slots hold placeholders) and rematerialized by backward.
     fused_interior: Vec<bool>,
-    /// The fused patch recipes keyed by their im2col reshape slot, so
-    /// the backward rematerializer can rebuild a chain's patches with
-    /// one fast fill instead of the general element walk.
-    fused_patches: Arc<HashMap<usize, WindowProduct>>,
-    /// The engine-backward posture: `None` compiles forward liveness
-    /// (runs refuse `backward`), `Some` keeps or rematerializes what
-    /// the engine reverse scan reads, per its [`Memory`] policy.
-    engine_backward: Option<Memory>,
+    /// The engine-backward posture: `false` compiles forward liveness
+    /// (runs refuse `backward`), `true` retains what the engine
+    /// reverse scan reads.
+    engine_backward: bool,
 }
 
 /// Scans for the canonical im2col chain feeding each `matmul` —
@@ -252,17 +225,14 @@ fn match_window_products<Data: Differentiable>(
 
 impl<Data: Differentiable> Plan<Data> {
     /// Compiles the plan for `network`: reachability from the roots,
-    /// the readable set, the release analysis, and the drop set for
-    /// rematerialization (training plans, values of at least
-    /// `remat_threshold` elements).
+    /// the readable set, and the release analysis.
     fn new(
         network: &Network<Data>,
         roots: &[Symbol],
         observe: &[Symbol],
-        engine_backward: Option<Memory>,
-        remat_threshold: usize,
+        engine_backward: bool,
     ) -> Self {
-        let training = engine_backward.is_some();
+        let training = engine_backward;
         let tape = network.tape();
         let snapshot = tape.snapshot();
         let structure = snapshot.structure;
@@ -288,16 +258,14 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
 
-        // Fusion: match the canonical im2col chains. Fusing a training
-        // plan requires rematerializing the patches during backward, so
-        // fusion follows the plan's memory posture: forward-only plans
-        // always fuse (a pure win — the chain simply never exists), and
-        // compact training plans fuse (measured strictly better), while
-        // the default retain-all training plan keeps its exact contract
-        // unfused — per-step patch re-allocation in backward measured
-        // as a peak-RSS regression on the deeper consumer.
-        let compact = remat_threshold != usize::MAX;
-        let (fused, fused_interior) = if !training || compact {
+        // Fusion: match the canonical im2col chains. Fusing requires
+        // the chain to never materialize, so it is a forward-only
+        // move: engine-backward plans keep their exact contract
+        // unfused — the reverse scan reads what the recording named,
+        // and per-step patch re-allocation in backward measured as a
+        // peak-RSS regression on the deeper consumer back when remat
+        // existed.
+        let (fused, fused_interior) = if !training {
             match_window_products(
                 &structure.functions,
                 &structure.operands,
@@ -308,20 +276,6 @@ impl<Data: Differentiable> Plan<Data> {
         } else {
             (vec![None; length], vec![false; length])
         };
-
-        // The backward rematerializer rebuilds a fused chain's patches
-        // with one fast fill; key the recipes by the reshape slot the
-        // matmul's operand link names.
-        let mut fused_patches: HashMap<usize, WindowProduct> = HashMap::new();
-        for (index, group) in fused.iter().enumerate() {
-            if let Some(group) = group {
-                let links = structure
-                    .operands
-                    .get(index)
-                    .expect("snapshot cannot shrink");
-                fused_patches.insert(links.as_slice()[0].index(), group.clone());
-            }
-        }
 
         // Liveness: a slot may be freed by its highest consumer inside
         // the closure once nothing later can read its value — neither
@@ -354,59 +308,7 @@ impl<Data: Differentiable> Plan<Data> {
                 }
             }
         }
-        // The drop set: large values a training run rematerializes.
-        // Sources are never dropped (recompute recursion bottoms out on
-        // them), readables answer the caller, and small values stay put
-        // — the fragmentation lesson.
-        let mut dropped = vec![false; length];
-        if training {
-            for index in 0..length {
-                if !wanted[index] || readable[index] {
-                    continue;
-                }
-                let function = structure
-                    .functions
-                    .get(index)
-                    .expect("snapshot cannot shrink");
-                if function.is_source() {
-                    continue;
-                }
-                if structure.shapes[index].volume() >= remat_threshold {
-                    dropped[index] = true;
-                }
-            }
-            // Fusion interiors are never materialized, so backward must
-            // always be able to rematerialize them, whatever their size.
-            for index in 0..length {
-                if fused_interior[index] {
-                    dropped[index] = true;
-                }
-            }
-            // Rematerialization inputs: recompute of a dropped chain
-            // bottoms out at its first non-dropped ancestors, whose
-            // values backward will read — the release analysis must
-            // keep them, or a forced release would rebuild the chain
-            // from placeholders. (Executed training frees only ever
-            // release dropped slots, but the licensed set and the
-            // reported floor must be honest too.)
-            for index in 0..length {
-                if !dropped[index] {
-                    continue;
-                }
-                let links = structure
-                    .operands
-                    .get(index)
-                    .expect("snapshot cannot shrink");
-                for link in links.as_slice() {
-                    if !dropped[link.index()] {
-                        required[link.index()] = true;
-                    }
-                }
-            }
-        }
-
         let mut releases: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
-        let mut frees: Vec<SmallVec<[usize; 2]>> = vec![SmallVec::new(); length];
         let mut last_consumer: Vec<Option<usize>> = vec![None; length];
         for (index, &wanted_node) in wanted.iter().enumerate() {
             if !wanted_node {
@@ -432,27 +334,20 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
         for slot in 0..length {
-            if !wanted[slot] || readable[slot] {
-                continue;
-            }
-            let releasable = !required[slot] || dropped[slot];
-            if !releasable {
+            if !wanted[slot] || readable[slot] || required[slot] {
                 continue;
             }
             let Some(consumer) = last_consumer[slot] else {
                 continue;
             };
+            // Forward-only runs execute these releases (bulk,
+            // occasional runs measured a clear RSS win); engine
+            // runs hold everything — per-step small frees measured
+            // an RSS regression (macOS, 2026-08-03: MNIST 743 MiB
+            // retain-all vs 1.16-1.23 GiB freeing), and both graded
+            // consumers preferred retain over remat once the
+            // recorded route existed.
             releases[consumer].push(slot);
-            // Forward-only plans execute every licensed release (bulk,
-            // occasional runs measured a clear RSS win). Training plans
-            // execute only the size-thresholded drops: per-step small
-            // frees measured an RSS regression (macOS, 2026-08-03:
-            // MNIST 743 MiB retain-all vs 1.16-1.23 GiB freeing), while
-            // dropped large buffers land in the allocator's
-            // page-returning class and are rematerialized by backward.
-            if !training || dropped[slot] {
-                frees[consumer].push(slot);
-            }
         }
 
         Self {
@@ -461,9 +356,6 @@ impl<Data: Differentiable> Plan<Data> {
             wanted,
             readable: Arc::new(readable),
             releases,
-            frees,
-            dropped: Arc::new(dropped),
-            fused_patches: Arc::new(fused_patches),
             fused,
             fused_interior,
             engine_backward,
@@ -482,10 +374,10 @@ impl<Data: Differentiable> Plan<Data> {
 
     /// Returns whether run buffers support
     /// [`Run::backward`](crate::Run::backward): true exactly when the
-    /// request asked for engine reverse mode. The full [`Memory`]
-    /// posture stays private; `describe` prints it.
+    /// request asked for engine reverse mode; `describe` prints the
+    /// posture.
     pub fn can_backward(&self) -> bool {
-        self.engine_backward.is_some()
+        self.engine_backward
     }
 
     /// Returns the plan's function column, for plan consumers such as
@@ -590,9 +482,9 @@ impl<Data: Differentiable> Plan<Data> {
     /// its operation, shape, and liveness, then the summary — node and
     /// readable counts, and the static live-volume story (in elements;
     /// constants and placeholders count as zero, so the figures are the
-    /// plan's own accounting, not allocator truth). Training plans
-    /// report their release *floor* — what the analysis could
-    /// release — alongside what a run actually holds.
+    /// plan's own accounting, not allocator truth). Engine-backward
+    /// plans report their release *floor* — what the analysis could
+    /// release — alongside the retain-all total a run actually holds.
     pub fn describe(&self) -> String {
         use std::fmt::Write;
 
@@ -603,10 +495,10 @@ impl<Data: Differentiable> Plan<Data> {
                 released_after[slot] = Some(index);
             }
         }
-        // Executed frees match the analysis for forward-only plans;
-        // training plans hold everything, so the wording distinguishes
-        // what happens from what the analysis licenses.
-        let release_word = if self.engine_backward.is_some() {
+        // Forward-only runs execute the analysis; engine-backward
+        // runs hold everything, so the wording distinguishes what
+        // happens from what the analysis licenses.
+        let release_word = if self.engine_backward {
             "releasable after"
         } else {
             "freed after"
@@ -627,11 +519,6 @@ impl<Data: Differentiable> Plan<Data> {
                 "fused (window-gemm)".to_string()
             } else if self.readable[index] {
                 "kept".to_string()
-            } else if self.dropped[index] {
-                match released {
-                    Some(consumer) => format!("dropped after {consumer} (remat)"),
-                    None => "retained".to_string(),
-                }
             } else {
                 match released {
                     Some(consumer) => format!("{release_word} {consumer}"),
@@ -646,10 +533,10 @@ impl<Data: Differentiable> Plan<Data> {
             )
             .expect("writing to a string cannot fail");
         }
-        let mode = match self.engine_backward {
-            None => "forward",
-            Some(Memory::Retain) => "retain",
-            Some(Memory::Remat) => "remat",
+        let mode = if self.engine_backward {
+            "retain"
+        } else {
+            "forward"
         };
         writeln!(
             lines,
@@ -671,22 +558,10 @@ impl<Data: Differentiable> Plan<Data> {
             .expect("writing to a string cannot fail");
         }
         let (floor, floor_at, total) = self.live_story(&self.releases);
-        if self.engine_backward.is_some() {
-            let (executed, executed_at, _) = self.live_story(&self.frees);
-            let drops = self.dropped.iter().filter(|&&dropped| dropped).count();
-            let dropped_volume: usize = (0..self.len())
-                .filter(|&index| self.dropped[index])
-                .map(|index| self.structure.shapes[index].volume())
-                .sum();
+        if self.engine_backward {
             writeln!(
                 lines,
-                "live volume: retain-all {total}, remat peak {executed} elements at node \
-                 {executed_at}, release floor {floor} at node {floor_at}",
-            )
-            .expect("writing to a string cannot fail");
-            writeln!(
-                lines,
-                "remat drops {drops} slots, {dropped_volume} elements, recomputed by backward",
+                "live volume: retain-all {total}, release floor {floor} at node {floor_at}",
             )
             .expect("writing to a string cannot fail");
         } else {
@@ -804,17 +679,19 @@ impl<Data: Tensorial> Plan<Data> {
             };
             values.push(value);
             // Liveness: this node was the last consumer of these
-            // slots, and the caller may not read them — release now.
-            for &slot in &self.frees[index] {
-                values[slot] = Data::counted(self.structure.shapes[slot].clone(), 0);
+            // slots, and the caller may not read them — a forward-only
+            // run releases now; an engine run holds everything its
+            // backward reads.
+            if !self.engine_backward {
+                for &slot in &self.releases[index] {
+                    values[slot] = Data::counted(self.structure.shapes[slot].clone(), 0);
+                }
             }
         }
 
-        let posture = if self.engine_backward.is_some() {
+        let posture = if self.engine_backward {
             Posture::Training {
                 readable: Arc::clone(&self.readable),
-                dropped: Arc::clone(&self.dropped),
-                fused_patches: Arc::clone(&self.fused_patches),
             }
         } else {
             Posture::Observed {
@@ -844,16 +721,11 @@ impl<Data: Differentiable> Network<Data> {
     /// Panics if a root or observe does not resolve in this
     /// generation.
     pub fn compile(&self, request: Compile<Data>) -> Plan<Data> {
-        let threshold = match request.engine_backward {
-            Some(Memory::Remat) => REMAT_THRESHOLD,
-            _ => usize::MAX,
-        };
         Plan::new(
             self,
             &request.roots,
             &request.observe,
             request.engine_backward,
-            threshold,
         )
     }
 }

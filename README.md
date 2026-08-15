@@ -24,7 +24,7 @@ the schedule is the program; lazy frameworks hide the schedule — the
 graph is whatever the scheduler did. `poorgrad` shows both and lets
 you diff them: the tape is the specification, a compiled `Plan` is
 the schedule, `Plan::describe()` prints every decision — dead-node
-elimination, buffer liveness, fusion, rematerialization — and one
+elimination, buffer liveness, fusion — and one
 assert checks any of them against the interpreter, bit for bit.
 
 The discipline is the product: no dependency doing poorgrad's own
@@ -53,10 +53,9 @@ choice:
   differentiating its own target.
 - **The tape is the spec; a `Plan` is the schedule.** `compile` lowers
   the recorded graph into an execution plan — dead-node elimination
-  against declared targets, buffer liveness, pattern fusion (the
+  against declared targets, buffer liveness, and pattern fusion (the
   canonical im2col chain of a convolution executes as one window-GEMM
-  call, never materialized), and opt-in rematerialization that trades
-  backward time for memory — whose runs are bit-identical to the
+  call, never materialized) — whose runs are bit-identical to the
   interpreter's and survive every generation of a training run. Every
   optimization's default was set by measurement, and where a trade
   did not always win it is a labeled option, never silent behavior.
@@ -161,8 +160,8 @@ The idiom, what leaking costs, and the rough edges:
   curriculum: chained scalar expressions, the makemore acts, LeNet
   on MNIST, a VGG-style convnet on CIFAR-10, a one-block
   transformer, and GPT-2 with the released weights — every stage of
-  the stack (recording, differentiation, plans, fusion,
-  rematerialization, emission) landed with a consumer that uses it
+  the stack (recording, differentiation, plans, fusion, emission)
+  landed with a consumer that uses it
   and a measured number that grades it.
   [TERMINOLOGY.md](TERMINOLOGY.md) keeps the vocabulary honest, and
   `Plan::describe()` makes optimization something you read, not
@@ -275,11 +274,11 @@ crate root keeps the public API flat. From tape to training:
   from the tape by `Network::compile`, from one explicit `Compile`
   request: `roots` (what a run computes — a loss, a logits head,
   recorded gradient symbols; no root is special), `observe` (extra
-  readable interiors), and an optional `engine_backward(Memory)`
-  posture (`Retain` holds what `backward` reads; `Remat` drops large
-  intermediates and rematerializes them during `backward`,
-  bit-exactly). A request without `engine_backward` compiles
-  aggressive forward liveness, whose runs refuse `backward`. Plans fuse
+  readable interiors), and an optional `engine_backward()` posture
+  that retains what `backward` reads. A request without it compiles
+  aggressive forward liveness, whose runs refuse `backward`; recorded
+  gradient symbols compile as ordinary roots, which both graded
+  consumers measured as the fastest and smallest route. Plans fuse
   recognized patterns — matching is structural, so hand-written
   compositions fuse identically to facade-recorded ones, and keep-set
   values are fusion barriers — and `describe()` renders the whole

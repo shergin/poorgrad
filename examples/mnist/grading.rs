@@ -1,15 +1,15 @@
-//! Grades the three training routes of the `mnist` convnet against
-//! each other — the companion measurement to `cifar10_grading`, on
-//! the one consumer where remat ever won (9% less peak RSS for 22%
-//! more step time than retain-all, measured 2026-08-03).
+//! Grades the training routes of the `mnist` convnet against each
+//! other — the companion measurement to `cifar10_grading`, run on
+//! the one consumer where rematerialization ever won. Its 2026-08-14
+//! verdict retired remat: the recorded route beat retain-all (~78 vs
+//! ~89 ms/step, ~270 vs ~365 MiB peak RSS) and beat remat's own
+//! numbers (~98 ms/step, ~330 MiB) on both axes at once.
 //!
 //! The model, seeds, and batch schedule are identical to `mnist`, so
-//! all three routes train bit-identically; what changes is where the
+//! the routes train bit-identically; what changes is where the
 //! gradients come from and what the plan retains:
 //!
-//! - `engine`: `engine_backward(Memory::Retain)` + `backward`.
-//! - `compact`: `engine_backward(Memory::Remat)` + `backward`,
-//!   rematerializing the dropped intermediates.
+//! - `engine`: `engine_backward()` + `backward` (retain-all).
 //! - `recorded`: `differentiate` + one forward-only plan over
 //!   `[loss, gradients...]` + `recorded_gradients` — no backward
 //!   pass executes at all.
@@ -21,14 +21,14 @@
 //! diffing two lines.
 //!
 //! Run with: `/usr/bin/time -l cargo run --release --example
-//! mnist_grading` (set `POORGRAD_ROUTE=engine|compact|recorded`).
+//! mnist_grading` (set `POORGRAD_ROUTE=engine|recorded`).
 
 mod dataset;
 
 use std::time::Instant;
 
 use poorgrad::{
-    Compile, Conv2d, Linear, Memory, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
+    Compile, Conv2d, Linear, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -166,11 +166,7 @@ fn main() {
     // the gradients come from.
     let (plan, gradient_symbols) = match route.as_str() {
         "engine" => (
-            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain)),
-            Vec::new(),
-        ),
-        "compact" => (
-            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Remat)),
+            network.compile(Compile::roots([loss_symbol]).engine_backward()),
             Vec::new(),
         ),
         "recorded" => {
@@ -186,7 +182,7 @@ fn main() {
                 gradient_symbols,
             )
         }
-        other => panic!("unknown POORGRAD_ROUTE {other:?}; use engine, compact, or recorded"),
+        other => panic!("unknown POORGRAD_ROUTE {other:?}; use engine or recorded"),
     };
     for line in plan
         .describe()

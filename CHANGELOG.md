@@ -12,16 +12,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 - One compile verb: `Network::compile` takes an explicit `Compile`
   request — `roots` (no root is special; recorded gradient symbols
   compile as ordinary roots), `observe` (extra readable interiors),
-  and an optional `engine_backward(Memory)` posture — replacing
-  `compile(targets, keep)` and `compile_training(loss, keep,
-  Retention)`. Public `Retention` is now `Memory`
-  (`Retain`/`Remat`, its measured variant docs moved verbatim), the
-  internal per-op contract is `Reads` (ending the name collision the
-  two spellings shared), `Plan::can_backward` is the only posture a
-  plan exposes, and `describe` prints the posture as
-  `forward`/`retain`/`remat`. Every in-repo consumer migrated in the
-  same change and trains bit-identically — the cifar10 grading's
-  loss bit patterns are unchanged on all three routes.
+  and an optional `engine_backward()` posture that retains what
+  `backward` reads — replacing `compile(targets, keep)` and
+  `compile_training(loss, keep, Retention)`. The internal per-op
+  contract is `Reads` (ending the name collision it shared with the
+  public policy), `Plan::can_backward` is the only posture a plan
+  exposes, and `describe` prints the posture as `forward`/`retain`.
+  Every in-repo consumer migrated in the same change and trains
+  bit-identically — the gradings' loss bit patterns are unchanged
+  across the break.
 
 - `Evaluation` is now `Run`, and it no longer borrows the network: a
   run owns its frozen structure columns and an identity witness, so it
@@ -30,6 +29,20 @@ The format is based on [Keep a Changelog], and this project adheres to
   `Plan::forward` return `Run<Data>` (no lifetime parameter); `of`,
   `backward`, and `recorded_gradients` are unchanged. Documented under
   Run in `TERMINOLOGY.md`.
+
+### Removed
+
+- Rematerialization. The remat posture traded backward time for
+  memory and once won on MNIST (9% less peak RSS than retain-all for
+  22% more step time); with recorded gradients landed, the gradings
+  measured the recorded route smaller *and* faster than both engine
+  postures on both consumers — CIFAR ~337 ms/step and ~1.05 GiB
+  against remat's ~414/1.31, MNIST ~78 and ~270 MiB against remat's
+  ~98/~330 — so the machinery retired: the drop set, the backward
+  rematerializer and its memo, the fused-patch rebuild, and the size
+  threshold. Engine-backward plans now always retain what `backward`
+  reads; the recorded route is the measured choice when training
+  memory matters. Every posture remains bit-exact.
 
 ### Added
 

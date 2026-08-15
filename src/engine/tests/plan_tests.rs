@@ -1,6 +1,4 @@
-use crate::{Compile, Memory, Network, Symbol, Tensor};
-
-use super::Plan;
+use crate::{Compile, Network, Symbol, Tensor};
 
 /// The empty feed set, typed for the scalar tests.
 fn no_feeds() -> std::iter::Empty<(Symbol, f64)> {
@@ -81,7 +79,7 @@ fn training_plans_differentiate_like_the_interpreter() {
     let x = network.leaf(Tensor::new([2], [3.0, 4.0]));
     let loss = ((w * x).tanh() * x).sum();
 
-    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward());
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -105,7 +103,7 @@ fn one_plan_serves_every_generation() {
     let loss_symbol = loss.symbol();
     let w_symbol = w.symbol();
 
-    let plan = network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain));
+    let plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
     let mut network = network;
     for _ in 0..5 {
         let loss_value = network.resolve(loss_symbol);
@@ -224,16 +222,13 @@ fn training_liveness_matches_the_interpreter_on_a_convnet() {
     let logits = pooled.reshape([2, 8]).matmul(head);
     let loss = cross_entropy(logits, targets);
 
-    let mut plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward());
     // The release analysis must license releases here: the conv view
-    // chains and output permutes are all shape-only.
+    // chains and output permutes are all shape-only. Engine runs hold
+    // everything (the graded posture), so the licensed set is the
+    // reported floor, never executed.
     assert!(plan.describe().contains("releasable after"));
     assert!(plan.describe().contains("release floor"));
-    // Force the analysis to execute (training runs hold everything by
-    // default after the allocator measurements): gradients must stay
-    // bit-identical even with every licensed release performed — the
-    // guarantee rematerialization will later build on.
-    plan.frees = plan.releases.clone();
 
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
@@ -270,7 +265,7 @@ fn training_liveness_matches_the_interpreter_on_every_value_reader() {
     let loss =
         (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
 
-    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward());
     let planned = plan.forward(&network, no_feeds());
     let interpreted = network.forward();
 
@@ -294,7 +289,7 @@ fn training_liveness_retains_the_gather_selection() {
     let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
     let loss = table.gather(selection).sum();
 
-    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
+    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward());
     let planned = plan.forward(&network, std::iter::empty());
     let interpreted = network.forward();
 
@@ -303,182 +298,6 @@ fn training_liveness_retains_the_gather_selection() {
         planned.backward(loss).of(table).to_vec(),
         interpreted.backward(loss).of(table).to_vec()
     );
-}
-
-#[test]
-fn remat_matches_the_interpreter_on_a_convnet() {
-    // A tiny threshold forces deep drop chains through the conv motif;
-    // backward rematerializes them and must agree with the interpreter
-    // bit for bit on the loss and every parameter gradient.
-    use crate::{conv2d, cross_entropy, max_pool};
-
-    let network = Network::new();
-    let input = network.leaf(Tensor::new(
-        [2, 1, 4, 4],
-        (0..32).map(|v| (v as f64) / 16.0 - 1.0).collect::<Vec<_>>(),
-    ));
-    let weights = network.parameter(Tensor::new(
-        [2, 1, 3, 3],
-        (0..18)
-            .map(|v| (v as f64) / 32.0 - 0.25)
-            .collect::<Vec<_>>(),
-    ));
-    let bias = network.parameter(Tensor::new([2], [0.1, -0.1]));
-    let head = network.parameter(Tensor::new(
-        [8, 3],
-        (0..24)
-            .map(|v| (v as f64) / 48.0 - 0.25)
-            .collect::<Vec<_>>(),
-    ));
-    let targets = network.leaf(Tensor::selection([1, 2], 3, 1.0));
-
-    let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
-    let logits = pooled.reshape([2, 8]).matmul(head);
-    let loss = cross_entropy(logits, targets);
-
-    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 4);
-    let description = plan.describe();
-    assert!(description.contains("(remat)"));
-    assert!(description.contains("remat drops"));
-
-    let planned = plan.forward(&network, std::iter::empty());
-    let interpreted = network.forward();
-    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
-
-    let planned_gradients = planned.backward(loss);
-    let interpreted_gradients = interpreted.backward(loss);
-    for parameter in [weights, bias, head] {
-        assert_eq!(
-            planned_gradients.of(parameter).to_vec(),
-            interpreted_gradients.of(parameter).to_vec()
-        );
-    }
-}
-
-#[test]
-fn full_remat_matches_the_interpreter_on_every_value_reader() {
-    // Threshold 1 drops every non-source, non-readable value: the
-    // whole backward runs on rematerialized payloads across every
-    // retention class.
-    let network = Network::new();
-    let w = network.parameter(0.7_f64);
-    let x = network.leaf(1.3_f64);
-
-    let product = w * x;
-    let squashed = product.tanh();
-    let grown = squashed.exp();
-    let logged = grown.ln();
-    let rooted = grown.sqrt();
-    let raised = product.powf(x);
-    let divided = grown / product;
-    let rectified = product.relu();
-    let larger = product.maximum(x);
-    let loss =
-        (squashed + grown + logged + rooted + raised + divided + rectified + larger) * product;
-
-    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 1);
-    let planned = plan.forward(&network, no_feeds());
-    let interpreted = network.forward();
-
-    assert_eq!(*planned.of(loss), *interpreted.of(loss));
-    assert_eq!(
-        *planned.backward(loss).of(w),
-        *interpreted.backward(loss).of(w)
-    );
-}
-
-#[test]
-fn remat_never_drops_the_gather_selection() {
-    // Sources are never dropped, so the selection an input carries
-    // stays genuine for the backward scatter even under full remat.
-    let network = Network::new();
-    let table = network.parameter(Tensor::new(
-        [4, 2],
-        (0..8).map(|v| v as f64 * 0.5).collect::<Vec<_>>(),
-    ));
-    let selection = network.input(Tensor::selection([2, 0, 3], 4, 1.0));
-    let loss = table.gather(selection).sum();
-
-    let plan = Plan::new(&network, &[loss.symbol()], &[], Some(Memory::Remat), 1);
-    let planned = plan.forward(&network, std::iter::empty());
-    let interpreted = network.forward();
-
-    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
-    assert_eq!(
-        planned.backward(loss).of(table).to_vec(),
-        interpreted.backward(loss).of(table).to_vec()
-    );
-}
-
-#[test]
-fn compact_training_drops_where_the_default_retains() {
-    // A value crossing the remat size class: the default plan keeps
-    // it, the compact plan drops and rematerializes it.
-    let network = Network::new();
-    let w = network.parameter(Tensor::filled([300, 300], 0.5_f64));
-    let x = network.leaf(Tensor::filled([300, 300], 2.0));
-    let big = w * x;
-    let loss = (big * big).sum();
-
-    let default = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
-    let compact = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
-    assert!(default.describe().contains("remat drops 0 slots"));
-    assert!(!compact.describe().contains("remat drops 0 slots"));
-    assert!(compact.describe().contains("(remat)"));
-
-    let planned = compact.forward(&network, std::iter::empty());
-    let interpreted = network.forward();
-    assert_eq!(
-        planned.backward(loss).of(w).to_vec(),
-        interpreted.backward(loss).of(w).to_vec()
-    );
-}
-
-#[test]
-fn window_gemm_fusion_matches_the_interpreter() {
-    // The conv facade's emission fuses; forward and backward stay
-    // bitwise against the interpreter with the chain never
-    // materialized.
-    use crate::{conv2d, cross_entropy, max_pool};
-
-    let network = Network::new();
-    let input = network.leaf(Tensor::new(
-        [2, 1, 4, 4],
-        (0..32).map(|v| (v as f64) / 16.0 - 1.0).collect::<Vec<_>>(),
-    ));
-    let weights = network.parameter(Tensor::new(
-        [2, 1, 3, 3],
-        (0..18)
-            .map(|v| (v as f64) / 32.0 - 0.25)
-            .collect::<Vec<_>>(),
-    ));
-    let bias = network.parameter(Tensor::new([2], [0.1, -0.1]));
-    let head = network.parameter(Tensor::new(
-        [8, 3],
-        (0..24)
-            .map(|v| (v as f64) / 48.0 - 0.25)
-            .collect::<Vec<_>>(),
-    ));
-    let targets = network.leaf(Tensor::selection([1, 2], 3, 1.0));
-    let pooled = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2);
-    let loss = cross_entropy(pooled.reshape([2, 8]).matmul(head), targets);
-
-    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
-    let description = plan.describe();
-    assert!(description.contains("fused 1 window-gemm"));
-    assert!(description.contains("fused (window-gemm)"));
-
-    let planned = plan.forward(&network, std::iter::empty());
-    let interpreted = network.forward();
-    assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
-    let planned_gradients = planned.backward(loss);
-    let interpreted_gradients = interpreted.backward(loss);
-    for parameter in [weights, bias, head] {
-        assert_eq!(
-            planned_gradients.of(parameter).to_vec(),
-            interpreted_gradients.of(parameter).to_vec()
-        );
-    }
 }
 
 #[test]
@@ -527,18 +346,14 @@ fn kept_interiors_bar_fusion() {
         .reshape([9, 4]);
     let loss = patches.matmul(kernel).sum();
 
-    let fused = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
+    let fused = network.compile(Compile::roots([loss.symbol()]));
     assert!(fused.describe().contains("window-gemm"));
-    // The default retain-all training plan does not fuse at all: its
-    // memory contract stays exact.
-    let default = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Retain));
-    assert!(!default.describe().contains("window-gemm"));
+    // Engine-backward plans do not fuse at all: their memory
+    // contract stays exact for the reverse scan.
+    let engine = network.compile(Compile::roots([loss.symbol()]).engine_backward());
+    assert!(!engine.describe().contains("window-gemm"));
 
-    let barred = network.compile(
-        Compile::roots([loss.symbol()])
-            .observe([patches.symbol()])
-            .engine_backward(Memory::Remat),
-    );
+    let barred = network.compile(Compile::roots([loss.symbol()]).observe([patches.symbol()]));
     assert!(!barred.describe().contains("window-gemm"));
     let run = barred.forward(&network, std::iter::empty());
     assert_eq!(
@@ -565,7 +380,7 @@ fn shared_windows_bar_fusion() {
     let patches = windows.permute([0, 2, 4, 1, 3, 5]).reshape([9, 4]);
     let loss = patches.matmul(kernel).sum() + windows.sum();
 
-    let plan = network.compile(Compile::roots([loss.symbol()]).engine_backward(Memory::Remat));
+    let plan = network.compile(Compile::roots([loss.symbol()]));
     assert!(!plan.describe().contains("window-gemm"));
 
     let planned = plan.forward(&network, std::iter::empty());

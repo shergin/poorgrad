@@ -1,15 +1,15 @@
-//! Grades the three training routes of the `cifar10` convnet against
-//! each other — the CIFAR memory story the `differentiate` design
-//! left open: do conv gradients recorded through `Fold` beat the
-//! engine backward's retain-all and compact-remat postures at scale?
+//! Grades the training routes of the `cifar10` convnet against each
+//! other — the CIFAR memory story the `differentiate` design left
+//! open. Its 2026-08-14 verdict: conv gradients recorded through
+//! `Fold` beat the engine postures on both axes (~337 ms/step and
+//! ~1.05 GiB against retain-all's ~379/1.35; the since-retired remat
+//! posture measured ~414/1.31).
 //!
 //! The model, seeds, and batch schedule are identical to `cifar10`,
-//! so all three routes train bit-identically; what changes is where
-//! the gradients come from and what the plan retains:
+//! so the routes train bit-identically; what changes is where the
+//! gradients come from and what the plan retains:
 //!
-//! - `engine`: `engine_backward(Memory::Retain)` + `backward`.
-//! - `compact`: `engine_backward(Memory::Remat)` + `backward`,
-//!   rematerializing the dropped intermediates.
+//! - `engine`: `engine_backward()` + `backward` (retain-all).
 //! - `recorded`: `differentiate` + one forward-only plan over
 //!   `[loss, gradients...]` + `recorded_gradients` — no backward
 //!   pass executes at all.
@@ -21,14 +21,14 @@
 //! parity is checked by diffing two lines.
 //!
 //! Run with: `/usr/bin/time -l cargo run --release --example
-//! cifar10_grading` (set `POORGRAD_ROUTE=engine|compact|recorded`).
+//! cifar10_grading` (set `POORGRAD_ROUTE=engine|recorded`).
 
 mod dataset;
 
 use std::time::Instant;
 
 use poorgrad::{
-    Compile, Conv2d, Linear, Memory, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
+    Compile, Conv2d, Linear, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
 
@@ -176,11 +176,7 @@ fn main() {
     // the gradients come from.
     let (plan, gradient_symbols) = match route.as_str() {
         "engine" => (
-            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Retain)),
-            Vec::new(),
-        ),
-        "compact" => (
-            network.compile(Compile::roots([loss_symbol]).engine_backward(Memory::Remat)),
+            network.compile(Compile::roots([loss_symbol]).engine_backward()),
             Vec::new(),
         ),
         "recorded" => {
@@ -196,7 +192,7 @@ fn main() {
                 gradient_symbols,
             )
         }
-        other => panic!("unknown POORGRAD_ROUTE {other:?}; use engine, compact, or recorded"),
+        other => panic!("unknown POORGRAD_ROUTE {other:?}; use engine or recorded"),
     };
     for line in plan
         .describe()

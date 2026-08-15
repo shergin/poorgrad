@@ -289,17 +289,6 @@ impl<Data> Function<Data> {
         }
     }
 
-    /// Returns whether this function is a source — a leaf, parameter,
-    /// or input — supplied rather than computed, and therefore never a
-    /// rematerialization candidate: recompute recursion bottoms out on
-    /// sources.
-    pub(crate) fn is_source(&self) -> bool {
-        matches!(
-            self,
-            Function::Leaf(_) | Function::Parameter(_) | Function::Input(_)
-        )
-    }
-
     /// Returns which payload values this function's derivative rule
     /// reads: the read contract behind training-plan liveness.
     /// Sources have no rule and retain nothing.
