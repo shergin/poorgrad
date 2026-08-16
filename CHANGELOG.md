@@ -46,6 +46,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Dropout` and `init::dropout` — mask-fed dropout: the module
+  multiplies its input by a declared mask input whose default payload
+  is all ones, so an unfed run is the identity and inference is the
+  absence of a feed, not a mode; the seeded factory draws
+  inverted-dropout masks (`0` or `1 / keep`) host-side, fed per
+  training step like any other run state. No RNG enters the graph, so
+  seeded replay stays bitwise — held by a masked-training replay
+  test — and an emitted training step gains one dynamic argument.
+  The transformer act trains with dropout on both residual writes
+  (keep 0.9 on the page) and samples through the unfed default.
+
 - The `makemore_attention_grading` example: the transformer training
   joint step recorded twice — rank-2 head loop and batched
   attention, identical payloads and arguments — both emitted to

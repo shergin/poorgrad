@@ -12,8 +12,12 @@
 //! `concat`, and the per-sample prediction rows come back through a
 //! one-hot `gather`. The block is pre-norm: attention and feed-forward
 //! each read an `RmsNorm` of their input and add onto the residual
-//! stream. Loss is measured at the last context position only, so the
-//! number is comparable to the MLP acts (uniform cost: ln 27 ~ 3.30).
+//! stream, and mask-fed dropout (keep probability `KEEP`) guards both
+//! residual writes — fed per training step from a seeded factory,
+//! while the sampling twin runs unfed on the all-ones identity
+//! default. Loss is measured at the last context position only, so
+//! the number is comparable to the MLP acts (uniform cost:
+//! ln 27 ~ 3.30).
 //!
 //! Run with: `cargo run --release --example makemore_transformer`
 
@@ -23,7 +27,8 @@ mod corpus;
 use std::time::Instant;
 
 use poorgrad::{
-    Compile, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy, init,
+    Compile, Dropout, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy,
+    init,
 };
 
 use chart::loss_chart;
@@ -50,6 +55,11 @@ const BATCH_LEN: usize = 32;
 
 /// How many token rows the packed training batch holds.
 const PACKED_LEN: usize = BATCH_LEN * CONTEXT_LEN;
+
+/// The dropout keep probability: masks carry `1 / KEEP` or zero, and
+/// only the training expression is ever fed — the sampling twin runs
+/// on the all-ones identity default.
+const KEEP: f64 = 0.9;
 
 /// One attention head's projections, each `[EMBED_DIM, HEAD_DIM]`.
 struct Head<'network> {
@@ -124,6 +134,7 @@ impl<'network> Model<'network> {
         tokens: Value<'network, Tensor<f32>>,
         positions: Value<'network, Tensor<f32>>,
         mask: Value<'network, Tensor<f32>>,
+        dropouts: &[Dropout<Tensor<f32>>; 2],
     ) -> Value<'network, Tensor<f32>> {
         let stream = self.embeddings.gather(tokens) + self.positions.gather(positions);
 
@@ -143,15 +154,19 @@ impl<'network> Model<'network> {
                 weights.matmul(normalized.matmul(head.value))
             })
             .collect();
-        let stream = stream + concat(&heads, 1).matmul(self.projection);
+        let stream =
+            stream + dropouts[0].express(network, concat(&heads, 1).matmul(self.projection));
 
         // Pre-norm feed-forward onto the residual stream.
         let normalized = self.hidden_norm.express(network, stream);
         let stream = stream
-            + normalized
-                .matmul(self.hidden_weights)
-                .relu()
-                .matmul(self.output_weights);
+            + dropouts[1].express(
+                network,
+                normalized
+                    .matmul(self.hidden_weights)
+                    .relu()
+                    .matmul(self.output_weights),
+            );
 
         self.final_norm.express(network, stream)
     }
@@ -217,7 +232,13 @@ fn main() {
         1.0,
     ));
     let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
-    let states = model.states(&network, tokens, positions, mask);
+    // Dropout on both residual writes; the mask inputs default to
+    // ones, so only the fed training steps ever drop anything.
+    let dropouts = [
+        Dropout::new(&network, [PACKED_LEN, EMBED_DIM]),
+        Dropout::new(&network, [PACKED_LEN, EMBED_DIM]),
+    ];
+    let states = model.states(&network, tokens, positions, mask, &dropouts);
     let loss = cross_entropy(model.logits(states, extraction), targets);
 
     // The sampling twin is the same expression over one window.
@@ -230,7 +251,19 @@ fn main() {
     let sample_mask = network.leaf(block_causal_mask(1));
     let sample_extraction =
         network.leaf(Tensor::selection(vec![CONTEXT_LEN - 1], CONTEXT_LEN, 1.0));
-    let sample_states = model.states(&network, sample_tokens, sample_positions, sample_mask);
+    // The twin's dropouts are never fed: the identity default is the
+    // inference mode, with no flag and no second formula.
+    let sample_dropouts = [
+        Dropout::new(&network, [CONTEXT_LEN, EMBED_DIM]),
+        Dropout::new(&network, [CONTEXT_LEN, EMBED_DIM]),
+    ];
+    let sample_states = model.states(
+        &network,
+        sample_tokens,
+        sample_positions,
+        sample_mask,
+        &sample_dropouts,
+    );
     let sample_probabilities = model.logits(sample_states, sample_extraction).softmax(1);
 
     let tokens_symbol = tokens.symbol();
@@ -244,6 +277,11 @@ fn main() {
     // forward-only.
     let training_plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
     let sampling_plan = network.compile(Compile::roots([sample_probabilities_symbol]));
+
+    // The seeded mask factory: two draws per step, one per residual
+    // write, deterministic in `(seed, step)` so runs replay bitwise.
+    let mut dropout_masks = init::dropout::<f32>(13, KEEP);
+    let mask_shape = Shape::new([PACKED_LEN, EMBED_DIM]);
 
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
@@ -272,6 +310,8 @@ fn main() {
                     targets_symbol,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
+                (dropouts[0].mask(), dropout_masks(&mask_shape)),
+                (dropouts[1].mask(), dropout_masks(&mask_shape)),
             ],
         );
         let batch_loss = run.of(loss_value).to_vec()[0];
