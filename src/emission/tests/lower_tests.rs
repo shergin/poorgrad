@@ -167,6 +167,51 @@ fn differentiated_modules_carry_the_new_lowerings() {
     assert!(module.contains("_weights"), "{module}");
 }
 
+/// Builds a batched product with its recorded gradients: the batched
+/// `dot_general` lowering (batching dims on both sides) and its
+/// permute-closed adjoint.
+fn batched_case() -> Case {
+    let network = Network::new();
+    let a = Tensor::new(
+        [2, 2, 3],
+        (0..12).map(|v| v as f32 / 6.0 - 1.0).collect::<Vec<_>>(),
+    );
+    let a_value = network.parameter(a.clone());
+    let b = Tensor::new(
+        [2, 3, 2],
+        (0..12).map(|v| v as f32 / 4.0 - 1.5).collect::<Vec<_>>(),
+    );
+    let b_value = network.input(b.clone());
+    let loss = a_value.matmul(b_value).sum();
+    let gradients = network.differentiate(loss, [a_value, b_value]);
+
+    // The module's result list follows recording order, so the
+    // expected vectors must too.
+    let mut readable: Vec<_> = std::iter::once(loss.into())
+        .chain(gradients.iter().copied())
+        .collect();
+    readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
+    let plan = network.compile(Compile::roots(readable.clone()));
+    let run = plan.forward(&network, []);
+    Case {
+        name: "batched",
+        tolerance: 1e-4,
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![a, b],
+        expected: readable
+            .iter()
+            .map(|&symbol| run.of(symbol).to_vec())
+            .collect(),
+    }
+}
+
+#[test]
+fn batched_products_lower_with_batching_dims() {
+    let module = batched_case().module;
+    assert!(module.contains("batching_dims = [0] x [0]"), "{module}");
+    assert!(module.contains("contracting_dims = [2] x [1]"), "{module}");
+}
+
 /// Builds overlapping windows over a parameter: the static-gather
 /// completeness fallback for `unfold`.
 fn unfold_case() -> Case {
@@ -432,6 +477,7 @@ fn emitted_modules_parse_through_the_toolchain() {
         attention_case(),
         cross_entropy_case(),
         gradient_case(),
+        batched_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),
@@ -492,6 +538,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         attention_case(),
         cross_entropy_case(),
         gradient_case(),
+        batched_case(),
         unfold_case(),
         convolution_case(),
         probe_case(),

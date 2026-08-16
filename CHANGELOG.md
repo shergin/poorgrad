@@ -46,6 +46,20 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- Batched matmul: operands of rank above two multiply batched — the
+  trailing two axes contract as the plain product, and every leading
+  axis is a batch axis, required identical on both operands (no
+  broadcast batching; rank-2 behavior is unchanged). The forward
+  loops the rank-2 gemm seam over the batch prefix, so the
+  accelerated backends and the bf16 accumulator contract are
+  inherited and each batch slice is bitwise the rank-2 product of
+  that slice — held by an op-level test against a narrowed head
+  loop, forward and gradients both. The adjoint closes inside the
+  existing op set through `permute`, `differentiate` covers the
+  batched case in the bitwise closure suite, and emission lowers to
+  `dot_general` with batching dimensions, conformance-run through
+  the XLA evaluator.
+
 - The `makemore_mlp_emitted` example — E2, emitted training: the
   `makemore_mlp_compiled` model's loss and recorded gradients
   compiled as one forward-only plan and emitted as a single StableHLO

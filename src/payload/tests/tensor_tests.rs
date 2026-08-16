@@ -523,6 +523,85 @@ fn shapes_are_known_before_anything_runs() {
 }
 
 #[test]
+fn batched_matmul_multiplies_each_slice() {
+    let a = Tensor::new(
+        [2, 2, 3],
+        (0..12).map(|v| v as f64 * 0.5 - 2.0).collect::<Vec<_>>(),
+    );
+    let b = Tensor::new(
+        [2, 3, 2],
+        (0..12).map(|v| v as f64 * 0.25 - 1.0).collect::<Vec<_>>(),
+    );
+    let product = a.matmul(&b);
+    assert_eq!(product.shape(), Shape::new([2, 2, 2]));
+    // Each batch slice is bitwise the rank-2 product of that slice.
+    for batch in 0..2 {
+        let a_slice = Tensor::new([2, 3], a.to_vec()[batch * 6..(batch + 1) * 6].to_vec());
+        let b_slice = Tensor::new([3, 2], b.to_vec()[batch * 6..(batch + 1) * 6].to_vec());
+        assert_eq!(
+            product.to_vec()[batch * 4..(batch + 1) * 4],
+            a_slice.matmul(&b_slice).to_vec()
+        );
+    }
+}
+
+#[test]
+fn batched_matmul_reads_strided_views() {
+    // A permuted batch axis keeps a dense strided view; the fast path
+    // must address each slice through the layout's strides.
+    let stored = Tensor::new(
+        [3, 2, 4],
+        (0..24).map(|v| v as f64 * 0.1 - 1.2).collect::<Vec<_>>(),
+    );
+    let view = stored.permute(&[1, 0, 2]);
+    let materialized = Tensor::new([2, 3, 4], view.to_vec());
+    let b = Tensor::new(
+        [2, 4, 2],
+        (0..16).map(|v| v as f64 * 0.3 - 2.4).collect::<Vec<_>>(),
+    );
+    assert_eq!(view.matmul(&b).to_vec(), materialized.matmul(&b).to_vec());
+}
+
+#[test]
+fn batched_matmul_falls_back_for_constant_storage() {
+    // A constant operand has no dense buffer, so the product walks
+    // the logical path; it must agree with the dense equivalent.
+    let counted = Tensor::<f64>::counted(Shape::new([2, 2, 3]), 2);
+    let dense = Tensor::filled([2, 2, 3], 2.0_f64);
+    let b = Tensor::new(
+        [2, 3, 2],
+        (0..12).map(|v| v as f64 * 0.5 - 1.0).collect::<Vec<_>>(),
+    );
+    assert_eq!(counted.matmul(&b).to_vec(), dense.matmul(&b).to_vec());
+}
+
+#[test]
+fn recording_infers_batched_matmul_shapes() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2, 3, 4], vec![1.0_f64; 24]));
+    let b = network.leaf(Tensor::new([2, 4, 5], vec![1.0_f64; 40]));
+    assert_eq!(a.matmul(b).shape(), Shape::new([2, 3, 5]));
+}
+
+#[test]
+#[should_panic(expected = "matmul operands must agree in rank, got [2, 2, 2] and [2, 2]")]
+fn recording_rejects_matmul_rank_mismatch() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2, 2, 2], vec![1.0_f64; 8]));
+    let b = network.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
+    a.matmul(b);
+}
+
+#[test]
+#[should_panic(expected = "matmul batch axes must agree, got [2, 2, 3] and [3, 3, 4]")]
+fn recording_rejects_matmul_batch_mismatch() {
+    let network = Network::new();
+    let a = network.leaf(Tensor::new([2, 2, 3], vec![1.0_f64; 12]));
+    let b = network.leaf(Tensor::new([3, 3, 4], vec![1.0_f64; 36]));
+    a.matmul(b);
+}
+
+#[test]
 #[should_panic(expected = "matmul cannot multiply [2, 2] by [3, 1]")]
 fn recording_rejects_disagreeing_matmul_shapes() {
     let network = Network::new();

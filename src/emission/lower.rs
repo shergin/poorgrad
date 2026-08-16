@@ -224,6 +224,23 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             Function::MatMul(_) => {
                 let left = operand(0);
                 let right = operand(1);
+                // Rank two contracts plainly; the batched ranks name
+                // every leading axis a batching dimension on both
+                // sides — `dot_general` carries them natively.
+                let rank = shapes[left].rank();
+                let dims = if rank > 2 {
+                    let batching: Vec<String> =
+                        (0..rank - 2).map(|axis| axis.to_string()).collect();
+                    format!(
+                        "batching_dims = [{batching}] x [{batching}], \
+                         contracting_dims = [{}] x [{}]",
+                        rank - 1,
+                        rank - 2,
+                        batching = batching.join(", "),
+                    )
+                } else {
+                    "contracting_dims = [1] x [0]".to_string()
+                };
                 // An element with a declared accumulation type states
                 // it in the IR: the dot produces the wider result type
                 // and converts back, exactly what the home `gemm` seam
@@ -233,7 +250,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                     let accumulated_type = named_tensor_type(shape, accumulation);
                     emitter.line(format!(
                         "{accumulated} = stablehlo.dot_general {}, {}, \
-                         contracting_dims = [1] x [0] : ({}, {}) -> {accumulated_type}",
+                         {dims} : ({}, {}) -> {accumulated_type}",
                         emitter.name(left),
                         emitter.name(right),
                         tensor_type::<Element>(&shapes[left]),
@@ -245,7 +262,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                     ));
                 } else {
                     emitter.line(format!(
-                        "{result} = stablehlo.dot_general {}, {}, contracting_dims = [1] x [0] \
+                        "{result} = stablehlo.dot_general {}, {}, {dims} \
                          : ({}, {}) -> {result_type}",
                         emitter.name(left),
                         emitter.name(right),

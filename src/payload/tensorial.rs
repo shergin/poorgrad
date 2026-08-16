@@ -21,6 +21,11 @@ use super::{Elementary, Shape};
 /// [`Tensorial::sum_along`], respectively.
 pub trait Tensorial: Elementary {
     /// Returns the matrix product of `self` and `rhs`.
+    ///
+    /// Operands of rank above two multiply batched: the trailing two
+    /// axes contract as the plain product, and every leading axis is
+    /// a batch axis, required identical on both operands. Each batch
+    /// slice is bitwise the rank-2 product of that slice.
     fn matmul(&self, rhs: &Self) -> Self;
 
     /// Returns `self` with its two axes swapped.

@@ -363,6 +363,31 @@ fn kept_interiors_bar_fusion() {
 }
 
 #[test]
+fn batched_products_do_not_fuse() {
+    // The window-GEMM matcher keys on the rank-2 im2col shape; a
+    // batched product must leave it indifferent.
+    let network = Network::new();
+    let lhs = network
+        .leaf(Tensor::new(
+            [72],
+            (0..72).map(|v| v as f64 * 0.05 - 1.8).collect::<Vec<_>>(),
+        ))
+        .reshape([2, 9, 4]);
+    let rhs = network.leaf(Tensor::new(
+        [2, 4, 2],
+        (0..16).map(|v| v as f64 * 0.25 - 2.0).collect::<Vec<_>>(),
+    ));
+    let loss = lhs.matmul(rhs).sum();
+    let plan = network.compile(Compile::roots([loss.symbol()]));
+    assert!(!plan.describe().contains("window-gemm"));
+    let planned = plan.forward(&network, std::iter::empty());
+    assert_eq!(
+        planned.of(loss).to_vec(),
+        network.forward().of(loss).to_vec()
+    );
+}
+
+#[test]
 fn shared_windows_bar_fusion() {
     // A second consumer inside the chain bars fusion, and results
     // stay bitwise either way.

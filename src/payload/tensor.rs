@@ -62,14 +62,14 @@ impl<Element> Tensor<Element> {
     }
 
     /// Returns this payload as a gemm operand when it is a dense
-    /// rank-2 tensor: the backing slice from the layout's offset,
-    /// with the layout's strides. Other storages answer `None` and
-    /// take the logical path.
-    fn gemm_operand(&self) -> Option<(&[Element], [usize; 2])> {
+    /// tensor of rank two or higher: the backing slice from the
+    /// layout's offset, with the layout's full strides — the trailing
+    /// two drive each `GemmTask`, the leading ones step the batch.
+    /// Other storages answer `None` and take the logical path.
+    fn gemm_operand(&self) -> Option<(&[Element], &[usize])> {
         match &self.storage {
-            Storage::Dense { data, layout } if layout.rank() == 2 => {
-                let strides = [layout.strides()[0], layout.strides()[1]];
-                Some((&data.as_slice()[layout.offset()..], strides))
+            Storage::Dense { data, layout } if layout.rank() >= 2 => {
+                Some((&data.as_slice()[layout.offset()..], layout.strides()))
             }
             _ => None,
         }
@@ -793,50 +793,109 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
     fn matmul(&self, rhs: &Self) -> Self {
         let left = self.logical_shape();
         let right = rhs.logical_shape();
-        assert_eq!(left.rank(), 2, "matmul requires rank-2 tensors");
-        assert_eq!(right.rank(), 2, "matmul requires rank-2 tensors");
-        let (rows, inner) = (left.axes()[0], left.axes()[1]);
-        let (rhs_inner, columns) = (right.axes()[0], right.axes()[1]);
+        assert!(left.rank() >= 2, "matmul requires rank-2 or higher tensors");
+        assert_eq!(
+            left.rank(),
+            right.rank(),
+            "matmul operands must agree in rank"
+        );
+        let split = left.rank() - 2;
+        assert_eq!(
+            &left.axes()[..split],
+            &right.axes()[..split],
+            "matmul batch axes do not agree"
+        );
+        let (rows, inner) = (left.axes()[split], left.axes()[split + 1]);
+        let (rhs_inner, columns) = (right.axes()[split], right.axes()[split + 1]);
         assert_eq!(inner, rhs_inner, "matmul inner dimensions do not agree");
         assert!(
             rows > 0 && inner > 0 && columns > 0,
             "matmul requires non-empty dimensions"
         );
+        let batch_axes = &left.axes()[..split];
+        let batches: usize = batch_axes.iter().product();
+        let result_shape = Shape::new(batch_axes.iter().copied().chain([rows, columns]));
+        if batches == 0 {
+            return Self::dense(result_shape, Vec::new());
+        }
 
         if let (Some((a, a_strides)), Some((b, b_strides))) =
             (self.gemm_operand(), rhs.gemm_operand())
         {
-            let task = gemm::GemmTask::new(a, a_strides, b, b_strides, rows, inner, columns);
-            // Tier one is the element's acceleration seam (the
-            // compiled backend chain); tier two the built-in slice
-            // path. A declined task costs one call answering `None`.
-            let elements = match Element::gemm(&task) {
-                Some(product) => {
-                    assert_eq!(
-                        product.len(),
-                        rows * columns,
-                        "the `Elementary::gemm` contract requires `rows * columns` elements"
-                    );
-                    product
+            // Each batch slice is itself a valid 2D strided view, so
+            // the loop issues one rank-2 task per slice through the
+            // same seam — the backends and the accumulator contract
+            // are inherited unchanged, bitwise per slice. Tier one is
+            // the element's acceleration seam (the compiled backend
+            // chain); tier two the built-in slice path. A declined
+            // task costs one call answering `None`.
+            let mut elements = Vec::with_capacity(batches * rows * columns);
+            let mut index = vec![0usize; split];
+            loop {
+                let a_base: usize = index
+                    .iter()
+                    .zip(&a_strides[..split])
+                    .map(|(&at, &stride)| at * stride)
+                    .sum();
+                let b_base: usize = index
+                    .iter()
+                    .zip(&b_strides[..split])
+                    .map(|(&at, &stride)| at * stride)
+                    .sum();
+                let task = gemm::GemmTask::new(
+                    &a[a_base..],
+                    [a_strides[split], a_strides[split + 1]],
+                    &b[b_base..],
+                    [b_strides[split], b_strides[split + 1]],
+                    rows,
+                    inner,
+                    columns,
+                );
+                match Element::gemm(&task) {
+                    Some(product) => {
+                        assert_eq!(
+                            product.len(),
+                            rows * columns,
+                            "the `Elementary::gemm` contract requires `rows * columns` elements"
+                        );
+                        elements.extend(product);
+                    }
+                    None => elements.extend(gemm::multiply(&task)),
                 }
-                None => gemm::multiply(&task),
-            };
-            return Self::dense(Shape::new([rows, columns]), elements);
-        }
-
-        let mut elements = Vec::with_capacity(rows * columns);
-        for row in 0..rows {
-            for column in 0..columns {
-                let mut total = self.get(row * inner).promote() * rhs.get(column).promote();
-                for step in 1..inner {
-                    total = total
-                        + self.get(row * inner + step).promote()
-                            * rhs.get(step * columns + column).promote();
+                // The batch odometer over the leading axes.
+                let mut axis = split;
+                loop {
+                    if axis == 0 {
+                        return Self::dense(result_shape, elements);
+                    }
+                    axis -= 1;
+                    index[axis] += 1;
+                    if index[axis] < batch_axes[axis] {
+                        break;
+                    }
+                    index[axis] = 0;
                 }
-                elements.push(Element::demote(total));
             }
         }
-        Self::dense(Shape::new([rows, columns]), elements)
+
+        let mut elements = Vec::with_capacity(batches * rows * columns);
+        for batch in 0..batches {
+            let a_base = batch * rows * inner;
+            let b_base = batch * inner * columns;
+            for row in 0..rows {
+                for column in 0..columns {
+                    let mut total = self.get(a_base + row * inner).promote()
+                        * rhs.get(b_base + column).promote();
+                    for step in 1..inner {
+                        total = total
+                            + self.get(a_base + row * inner + step).promote()
+                                * rhs.get(b_base + step * columns + column).promote();
+                    }
+                    elements.push(Element::demote(total));
+                }
+            }
+        }
+        Self::dense(result_shape, elements)
     }
 
     /// Returns the tensor with its two axes swapped as a view over the same

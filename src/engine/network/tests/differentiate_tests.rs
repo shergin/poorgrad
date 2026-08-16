@@ -173,6 +173,58 @@ fn matmul_closes() {
 }
 
 #[test]
+fn batched_matmul_closes() {
+    let network = Network::new();
+    let a = network.parameter(varied([2, 2, 3], 1));
+    let b = network.parameter(varied([2, 3, 4], 2));
+    let loss = a.matmul(b).sum();
+    assert_closure(&network, loss.symbol(), &[a.symbol(), b.symbol()]);
+}
+
+#[test]
+fn batched_matmul_matches_the_head_loop_bitwise() {
+    // Two formulations of the same two-slice product: batched, and
+    // rank-2 head loops over narrowed slices. Products and operand
+    // gradients agree bit for bit, because each batch slice runs the
+    // same gemm.
+    let batched_network = Network::new();
+    let a = batched_network.parameter(varied([2, 3, 4], 1));
+    let b = batched_network.parameter(varied([2, 4, 5], 2));
+    let product = a.matmul(b);
+    let loss = product.sum();
+    let batched_run = batched_network.forward();
+    let batched_gradients = batched_run.backward(loss);
+
+    let looped_network = Network::new();
+    let a2 = looped_network.parameter(varied([2, 3, 4], 1));
+    let b2 = looped_network.parameter(varied([2, 4, 5], 2));
+    let heads: Vec<_> = (0..2)
+        .map(|head| {
+            let left = a2.narrow(0, head, 1).reshape([3, 4]);
+            let right = b2.narrow(0, head, 1).reshape([4, 5]);
+            left.matmul(right)
+        })
+        .collect();
+    let looped_loss = heads[0].sum() + heads[1].sum();
+    let looped_run = looped_network.forward();
+    let looped_gradients = looped_run.backward(looped_loss);
+
+    let slices: Vec<f64> = heads
+        .iter()
+        .flat_map(|&head| looped_run.of(head).to_vec())
+        .collect();
+    assert_eq!(batched_run.of(product).to_vec(), slices);
+    assert_eq!(
+        batched_gradients.of(a).to_vec(),
+        looped_gradients.of(a2).to_vec()
+    );
+    assert_eq!(
+        batched_gradients.of(b).to_vec(),
+        looped_gradients.of(b2).to_vec()
+    );
+}
+
+#[test]
 fn transpose_closes() {
     let network = Network::new();
     let a = network.parameter(varied([2, 3], 1));
