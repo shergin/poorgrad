@@ -127,6 +127,10 @@ name = "makemore_mlp_emitted"
 path = "examples/makemore/mlp_emitted.rs"
 
 [[example]]
+name = "makemore_attention_grading"
+path = "examples/makemore/attention_grading.rs"
+
+[[example]]
 name = "makemore_mlp_parallel"
 path = "examples/makemore/mlp_parallel.rs"
 

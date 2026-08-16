@@ -46,6 +46,18 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The `makemore_attention_grading` example: the transformer training
+  joint step recorded twice — rank-2 head loop and batched
+  attention, identical payloads and arguments — both emitted to
+  StableHLO and timed through one resident XLA server, with the
+  in-crate oracle as the envelope. On XLA-CPU the batched recording
+  serves ~3% faster (42 `dot_general`s against 48); on XLA-Metal
+  (`jax-metal`) both modules return the same wrong loss — red rows
+  the harness reports instead of hiding (`POORGRAD_ENVELOPE=report`)
+  — reproducing the tier-1 finding on training modules. The serving
+  script's device placement now falls back when a PJRT plugin
+  exposes but does not implement `buffer_from_pyval`.
+
 - Batched matmul: operands of rank above two multiply batched — the
   trailing two axes contract as the plain product, and every leading
   axis is a batch axis, required identical on both operands (no

@@ -67,8 +67,13 @@ except ImportError:
 def device_buffer(argument):
     """Places one numpy argument on the backend's first device."""
     if hasattr(backend, "buffer_from_pyval"):
-        # The pre-0.11 spelling, the era Apple's jax-metal plugin pins.
-        return backend.buffer_from_pyval(argument)
+        # The pre-0.11 spelling, the era Apple's jax-metal plugin
+        # pins — which may expose the method yet not implement it
+        # (Metal answers UNIMPLEMENTED), so fall through on failure.
+        try:
+            return backend.buffer_from_pyval(argument)
+        except Exception:
+            pass
     import jax
 
     return jax.device_put(argument, backend.local_devices()[0])
