@@ -755,6 +755,21 @@ observation that the re-centering half contributes little. Stateless
 like `LayerNorm`, and the cheaper modern default of transformer
 stacks. In poorgrad: [`RmsNorm`](src/neural/rms_norm.rs).
 
+**Dropout (mask-fed).** Randomly silencing features during training
+so co-adapted detectors cannot lean on each other (Srivastava et
+al., 2014). In poorgrad the randomness stays outside the graph: a
+[`Dropout`](src/neural/dropout.rs) module multiplies its input by a
+declared mask *input* whose default payload is all ones, so an unfed
+run is the identity — inference is the absence of a feed, not a
+mode — and the seeded
+[`init::dropout`](src/neural/init.rs) factory draws inverted-dropout
+masks (each element `0` or `1 / keep`) host-side, fed per training
+step like any other run state. An in-graph RNG opcode is rejected
+permanently: it would break bit-exact seeded replay, make the
+interpreter-versus-backend differential test meaningless, and hide
+generator state inside the spec. The keep probability is caller
+territory, chosen where the mask is drawn.
+
 **Running statistics.** The exponential moving averages of the batch
 means and variances that batch normalization accumulates during training
 and normalizes by at inference. Deliberately not engine state: the

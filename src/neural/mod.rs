@@ -6,6 +6,7 @@ mod batch_norm;
 // checkpoint verbs (`snapshot`, `restore`) need `checkpoint::`.
 pub mod checkpoint;
 mod convolution;
+mod dropout;
 pub mod init;
 mod layer_norm;
 mod linear;
@@ -24,6 +25,7 @@ pub use activation::Activation;
 pub use adam::{Adam, AdamW};
 pub use batch_norm::{BatchNorm, BatchNormInference, Normalization};
 pub use convolution::{Conv2d, conv2d};
+pub use dropout::Dropout;
 pub use layer_norm::LayerNorm;
 pub use linear::Linear;
 pub use loss::cross_entropy;

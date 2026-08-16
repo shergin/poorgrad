@@ -101,6 +101,34 @@ pub fn normal<Element: Sample>(seed: u64, deviation: f64) -> impl FnMut(&Shape) 
     }
 }
 
+/// Returns the inverted-dropout mask factory: every element is
+/// `1 / keep` with probability `keep` and `0` otherwise, so a masked
+/// value keeps its expectation and an inference run needs no
+/// rescaling.
+///
+/// Masks are ordinary run state — feed one to a
+/// [`Dropout`](super::Dropout) input per training step. Randomness
+/// stays outside the recorded graph, which is what keeps seeded runs
+/// bit-identical, the interpreter differentially testable, and the
+/// emitted form of a training step just one more dynamic argument.
+/// The keep probability is caller territory, chosen here where the
+/// mask is drawn.
+///
+/// # Panics
+/// Panics if `keep` is not within `(0, 1]`.
+pub fn dropout<Element: Sample>(seed: u64, keep: f64) -> impl FnMut(&Shape) -> Tensor<Element> {
+    assert!(
+        keep > 0.0 && keep <= 1.0,
+        "the keep probability must lie within (0, 1], got {keep}"
+    );
+    let mut state = seed;
+    move |shape| {
+        drawn(shape, &mut state, |state| {
+            if unit(state) < keep { 1.0 / keep } else { 0.0 }
+        })
+    }
+}
+
 /// Returns the Glorot (Xavier) initializer: rank-2 `[inputs, outputs]`
 /// weights are uniform within `±sqrt(6 / (inputs + outputs))`, keeping
 /// activation variance steady in both directions through `tanh`-like
