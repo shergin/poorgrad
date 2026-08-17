@@ -18,7 +18,7 @@ mod corpus;
 use std::time::Instant;
 
 use malevich::{Color, Frame, Plot, Text};
-use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, from_token, load_names, shuffle, training_samples};

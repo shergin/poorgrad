@@ -14,7 +14,7 @@ use std::time::Instant;
 use rayon::prelude::*;
 
 use malevich::{Frame, Line, Plot};
-use poorgrad::Network;
+use topos::Network;
 
 fn main() {
     let network = Network::new();

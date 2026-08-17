@@ -3,7 +3,7 @@
 //!
 //! A [`Plan`](crate::Plan) is already a closed, pure, statically shaped
 //! tensor function — exactly the input industrial compilers such as XLA
-//! and IREE schedule best — so poorgrad does not grow a code generator:
+//! and IREE schedule best — so topos does not grow a code generator:
 //! [`Plan::emit_stablehlo`](crate::Plan::emit_stablehlo) serializes the
 //! plan into the StableHLO dialect's textual form and any toolchain
 //! outside the crate takes it from there. The tape stays the observable

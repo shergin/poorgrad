@@ -4,7 +4,7 @@
 //! rich output is printing text in a fixed envelope. The envelope and
 //! the card background come from `malevich`, which paints its own plot
 //! cards with them, so a chart and a tensor table rendered side by side
-//! cannot disagree. What is local to this module is the chrome poorgrad
+//! cannot disagree. What is local to this module is the chrome topos
 //! adds on top: the header line and the muted color it is drawn in.
 
 use malevich::Theme;

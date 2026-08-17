@@ -1,11 +1,11 @@
 [package]
-name = "poorgrad"
+name = "topos"
 version = "0.10.0"
 edition = "2024"
-description = "A poor man's autograd: a tiny autograd engine for the GPU-poor, written in idiomatic Rust."
+description = "A tiny autograd engine for the GPU-poor, written in idiomatic Rust."
 readme = "README.md"
-repository = "https://github.com/shergin/poorgrad"
-documentation = "https://docs.rs/poorgrad"
+repository = "https://github.com/shergin/topos"
+documentation = "https://docs.rs/topos"
 license = "MIT OR Apache-2.0"
 keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
 categories = ["science", "mathematics"]
@@ -13,7 +13,7 @@ categories = ["science", "mathematics"]
 # The logo is README furniture, not something a dependent compiles
 # against, and as an already-compressed PNG it was about half the
 # published download. The README points at the repository copy.
-exclude = ["poorgrad.png"]
+exclude = ["topos.png"]
 
 # The default libtest bench harness would intercept criterion's CLI
 # flags (such as `--save-baseline`), so benchmarks run only through the
@@ -71,7 +71,7 @@ simd = ["dep:matrixmultiply"]
 # safe stub elsewhere. Unvalidated on hardware so far.
 cuda = ["dep:libloading"]
 
-# Renders poorgrad's own types as rich output in an Evcxr notebook or
+# Renders topos's own types as rich output in an Evcxr notebook or
 # REPL: every display is a `to_html` string plus an `evcxr_display`
 # that emits it through Evcxr's mime protocol. The core API is
 # untouched — the feature adds inherent methods to existing types and

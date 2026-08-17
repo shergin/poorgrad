@@ -1,4 +1,4 @@
-//! `poorgrad` is a tiny autograd engine for the GPU-poor.
+//! `topos` is a tiny autograd engine for the GPU-poor.
 //!
 //! Expressions record a static computation graph onto a shared
 //! `Network`; `forward` materializes every value, `backward`
@@ -6,7 +6,7 @@
 //! network generation from a gradient step:
 //!
 //! ```
-//! use poorgrad::Network;
+//! use topos::Network;
 //!
 //! let network = Network::new();
 //! let w = network.parameter(0.0_f64);

@@ -16,7 +16,7 @@
 //! each generation — the host sends them with the batch and never
 //! writes them back onto the tape.
 //!
-//! Serving needs a Python with `jax` (`POORGRAD_XLA_PYTHON` names
+//! Serving needs a Python with `jax` (`TOPOS_XLA_PYTHON` names
 //! the interpreter; default `python3`); the backend follows jax's
 //! own selection, CPU by default.
 //!
@@ -31,7 +31,7 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Compile, Differentiable, Network, Shape, Symbol, Tensor, Tensorial, Value, cross_entropy, init,
 };
 
@@ -118,7 +118,7 @@ struct XlaServer {
 
 impl XlaServer {
     fn new(module: &str, dynamic_shapes: &[&[usize]], response_len: usize) -> Self {
-        let directory = std::env::temp_dir().join("poorgrad-makemore-e2");
+        let directory = std::env::temp_dir().join("topos-makemore-e2");
         std::fs::create_dir_all(&directory).expect("the staging directory creates");
         let module_path = directory.join("joint-step.mlir");
         let static_path = directory.join("static.bin");
@@ -138,7 +138,7 @@ impl XlaServer {
         )
         .expect("the manifest writes");
 
-        let python = std::env::var("POORGRAD_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let python = std::env::var("TOPOS_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
         let mut command: Vec<String> = python.split_whitespace().map(str::to_string).collect();
         command.push("tools/serve-stablehlo-xla.py".to_string());
         let mut child = Command::new(&command[0])

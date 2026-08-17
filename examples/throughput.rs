@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 
-use poorgrad::{Backend, Network, Shape, Tensor, Tensorial, init};
+use topos::{Backend, Network, Shape, Tensor, Tensorial, init};
 
 fn main() {
     let mut accelerated = false;

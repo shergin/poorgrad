@@ -1,7 +1,7 @@
-# poorgrad
+# topos
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/shergin/poorgrad/master/poorgrad.png" alt="poorgrad logo" width="480">
+  <img src="https://raw.githubusercontent.com/shergin/topos/master/topos.png" alt="topos logo" width="480">
 </p>
 
 **An autodiff compiler stack in miniature, written the way Rust wants
@@ -11,23 +11,23 @@ that ships inside — and emit StableHLO when you want the XLA world's
 muscle. Small enough to learn from; rigorous enough to catch a vendor
 compiler computing GPT-2 wrong.**
 
-`poorgrad` begins from
+`topos` begins from
 [Karpathy's `micrograd`](https://github.com/karpathy/micrograd) and then
 takes the road the others don't: no `Rc<RefCell<...>>`, no single-threaded
 assumption, no graph rebuilt on every pass, and a payload generic over
 scalars and tensors alike. Sharing a computation graph across threads is
 not a feature bolted on with locks; it is what the types guarantee.
 
-Where micrograd teaches autodiff by being small, `poorgrad` also
+Where micrograd teaches autodiff by being small, `topos` also
 teaches what an ML compiler does. Eager frameworks hide the graph —
 the schedule is the program; lazy frameworks hide the schedule — the
-graph is whatever the scheduler did. `poorgrad` shows both and lets
+graph is whatever the scheduler did. `topos` shows both and lets
 you diff them: the tape is the specification, a compiled `Plan` is
 the schedule, `Plan::describe()` prints every decision — dead-node
 elimination, buffer liveness, fusion — and one
 assert checks any of them against the interpreter, bit for bit.
 
-The discipline is the product: no dependency doing poorgrad's own
+The discipline is the product: no dependency doing topos's own
 work,
 `#![forbid(unsafe_code)]` unless you opt into the FFI backends —
 whose `unsafe` is scoped by a crate-wide `deny`, argued block by
@@ -41,7 +41,7 @@ paths down to the last bit.
 
 Most autograd engines are define-by-run: the graph is built dynamically as
 code executes, mutated in place, and single-threaded by assumption.
-`poorgrad` goes the other way, and everything below follows from that one
+`topos` goes the other way, and everything below follows from that one
 choice:
 
 - **Record once, run anywhere.** Expressions record a static tape;
@@ -137,14 +137,14 @@ Jupyter kernel, with no wrapper API: `Network::leaked()` hands back a
 the rest is the ordinary crate.
 
 ```rust
-:dep poorgrad = { version = "0.10", features = ["evcxr"] }
-use poorgrad::*;
+:dep topos = { version = "0.10", features = ["evcxr"] }
+use topos::*;
 
 let mut network: &'static Network<f64> = Network::leaked();
 let w: Value<'static, f64> = network.parameter(0.0);
 ```
 
-The `evcxr` feature also draws poorgrad's own types as cell output —
+The `evcxr` feature also draws topos's own types as cell output —
 tensors as tables or heatmaps, gradients as a norm profile along the
 tape, and a `Plan` as its whole schedule with the live volume plotted
 beside it. Nothing about the core API changes: the feature adds
@@ -193,7 +193,7 @@ The idiom, what leaking costs, and the rough edges:
 ## A taste
 
 ```rust
-use poorgrad::Network;
+use topos::Network;
 
 let network = Network::new();
 let w = network.parameter(0.0_f64);
@@ -374,9 +374,11 @@ crate root keeps the public API flat. From tape to training:
 
 ## The name
 
-A poor man's autograd: no GPU required, none wanted — and the poor, it
-turns out, were sitting on a matrix coprocessor the whole time. The
-name is the only modest thing about the design.
+A topos — the Greek *τόπος* — is a place, and this crate is one: a
+small, self-contained place where the whole compiler stack stays in
+view. It began life as `poorgrad`, a poor man's autograd: no GPU
+required, none wanted — and the poor, it turned out, were sitting on
+a matrix coprocessor the whole time.
 
 ## Terminology
 

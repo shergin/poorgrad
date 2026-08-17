@@ -14,7 +14,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
-use poorgrad::Network;
+use topos::Network;
 
 fn scale(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("scale");

@@ -15,19 +15,19 @@
 //!   pass executes at all.
 //!
 //! One route runs per process so an external monitor attributes the
-//! peak RSS cleanly; pick it with `POORGRAD_ROUTE` and the step
-//! count with `POORGRAD_STEPS`. The end prints the first and final
+//! peak RSS cleanly; pick it with `TOPOS_ROUTE` and the step
+//! count with `TOPOS_STEPS`. The end prints the first and final
 //! losses as exact bit patterns, so route parity is checked by
 //! diffing two lines.
 //!
 //! Run with: `/usr/bin/time -l cargo run --release --example
-//! mnist_grading` (set `POORGRAD_ROUTE=engine|recorded`).
+//! mnist_grading` (set `TOPOS_ROUTE=engine|recorded`).
 
 mod dataset;
 
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Compile, Conv2d, Linear, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };
@@ -138,8 +138,8 @@ fn batch_payloads(split: &Split, indices: &[usize]) -> (Tensor<f32>, Tensor<f32>
 }
 
 fn main() {
-    let route = std::env::var("POORGRAD_ROUTE").unwrap_or_else(|_| "engine".to_string());
-    let steps: usize = std::env::var("POORGRAD_STEPS")
+    let route = std::env::var("TOPOS_ROUTE").unwrap_or_else(|_| "engine".to_string());
+    let steps: usize = std::env::var("TOPOS_STEPS")
         .ok()
         .and_then(|steps| steps.parse().ok())
         .unwrap_or(300);
@@ -182,7 +182,7 @@ fn main() {
                 gradient_symbols,
             )
         }
-        other => panic!("unknown POORGRAD_ROUTE {other:?}; use engine or recorded"),
+        other => panic!("unknown TOPOS_ROUTE {other:?}; use engine or recorded"),
     };
     for line in plan
         .describe()

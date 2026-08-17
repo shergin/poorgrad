@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 
-use poorgrad::{Gradients, Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Gradients, Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};

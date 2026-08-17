@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use poorgrad::Network;
+use topos::Network;
 
 const NODES: usize = 10_000;
 const THREADS: usize = 4;

@@ -20,7 +20,7 @@ mod dataset;
 
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Compile, Conv2d, Linear, Module, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
     cross_entropy, init, max_pool,
 };

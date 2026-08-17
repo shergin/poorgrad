@@ -13,7 +13,7 @@
 use std::time::Instant;
 
 use malevich::{Frame, Line, Plot, Points};
-use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial, init};
+use topos::{Mlp, Network, Shape, Tensor, Tensorial, init};
 
 /// How many noisy samples the model trains on; the chart grid reuses
 /// the count so the recorded expression serves both.

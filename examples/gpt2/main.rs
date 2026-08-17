@@ -17,7 +17,7 @@
 //! the tape.
 //!
 //! The same plan powers three runs. `tape` (the default) runs it on
-//! poorgrad's own interpreter. `bf16` records the identical module
+//! topos's own interpreter. `bf16` records the identical module
 //! tree over `Tensor<Bf16>` — the genericity the module tier
 //! promises, with the matmuls accumulating in f32 by the payload's
 //! contract; measured at 341 ms/token against the f32 tape's 195 on
@@ -26,7 +26,7 @@
 //! (`tools/serve-stablehlo-xla.py`) that compiles it once, keeps the
 //! 124M parameters resident, and answers each step over binary pipes —
 //! the parameters cross the boundary once, each step ships only the
-//! embedded window. `POORGRAD_XLA_PYTHON` names the Python (any with
+//! embedded window. `TOPOS_XLA_PYTHON` names the Python (any with
 //! `jax`; default `python3`), and `JAX_PLATFORMS` picks the XLA
 //! backend. Stated as measured: XLA-CPU serves at 132 ms/token
 //! against the tape's 194 and reproduces its text; `JAX_PLATFORMS=METAL`
@@ -48,7 +48,7 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Bf16, Compile, Differentiable, Elementary, Emittable, Module, Network, Plan, Symbol, Tensor,
     checkpoint,
 };
@@ -62,7 +62,7 @@ const END_OF_TEXT: usize = 50256;
 
 /// Which executor runs the compiled plan.
 enum Engine {
-    /// Poorgrad's own interpreter.
+    /// Topos's own interpreter.
     Tape,
     /// The emitted StableHLO under a serving XLA process.
     Xla,
@@ -136,7 +136,7 @@ impl XlaServer {
         )
         .expect("the manifest writes");
 
-        let python = std::env::var("POORGRAD_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
+        let python = std::env::var("TOPOS_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
         let mut command: Vec<String> = python.split_whitespace().map(str::to_string).collect();
         command.push("tools/serve-stablehlo-xla.py".to_string());
         let mut child = Command::new(&command[0])

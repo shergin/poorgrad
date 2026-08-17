@@ -4,7 +4,7 @@ prints its results.
 
 The compiled sibling of `eval-stablehlo.py`, speaking the same line
 protocol, so it drops into the same suite seam: pointing
-`POORGRAD_STABLEHLO_EVALUATOR` at this script runs tier-1 conformance
+`TOPOS_STABLEHLO_EVALUATOR` at this script runs tier-1 conformance
 against a real XLA backend instead of the reference interpreter. The
 backend follows jax's own selection: the default is the CPU, and
 `JAX_PLATFORMS` picks another registered PJRT plugin (for example

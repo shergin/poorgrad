@@ -1,6 +1,6 @@
 # Notebooks
 
-poorgrad runs in [Evcxr](https://github.com/evcxr/evcxr), the Rust
+topos runs in [Evcxr](https://github.com/evcxr/evcxr), the Rust
 Jupyter kernel and REPL, with no wrapper API and no separate build. The
 `evcxr` feature adds rich cell output and two leaking constructors;
 everything else in a notebook is the ordinary crate.
@@ -13,8 +13,8 @@ evcxr_jupyter --install
 Then, in the first cell:
 
 ```rust
-:dep poorgrad = { version = "0.10", features = ["evcxr"] }
-use poorgrad::*;
+:dep topos = { version = "0.10", features = ["evcxr"] }
+use topos::*;
 ```
 
 A `~/.config/evcxr/init.evcxr` saves typing it every session, and the
@@ -23,7 +23,7 @@ so the difference is felt immediately:
 
 ```
 :cache 500
-:dep poorgrad = { version = "0.10", features = ["evcxr"] }
+:dep topos = { version = "0.10", features = ["evcxr"] }
 ```
 
 ## The two rules
@@ -118,7 +118,7 @@ than after it leaks a parameter store per step.
 
 ## Cell output
 
-With the `evcxr` feature on, ending a cell with a poorgrad value draws
+With the `evcxr` feature on, ending a cell with a topos value draws
 it instead of dumping `Debug`:
 
 | Ends with | Shows |

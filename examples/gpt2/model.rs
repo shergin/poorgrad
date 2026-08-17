@@ -1,5 +1,5 @@
 //! GPT-2 (124M) as a module tree: the released checkpoint's layout,
-//! expressed in poorgrad's composition tier.
+//! expressed in topos's composition tier.
 //!
 //! Every struct here is an ordinary [`Module`] implementation — the
 //! blocks are structs of [`Linear`]s and [`LayerNorm`]s, the stack of
@@ -15,8 +15,8 @@
 //! the f32 model and the `Bf16` one, which is the genericity the
 //! module design promises.
 
-use poorgrad::checkpoint::named_restore;
-use poorgrad::{
+use topos::checkpoint::named_restore;
+use topos::{
     Elementary, LayerNorm, Linear, Module, Network, Path, Segment, Sequential, Symbol, Tensor,
     Value, Visitor, concat, named_parameters,
 };

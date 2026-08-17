@@ -5,7 +5,7 @@
 //! byte offsets, then the raw data section.
 //!
 //! The cache lives outside the repository, under
-//! `$XDG_CACHE_HOME/poorgrad/gpt2` (`~/.cache` by default), so every
+//! `$XDG_CACHE_HOME/topos/gpt2` (`~/.cache` by default), so every
 //! checkout and worktree shares one 548 MB download and git never
 //! sees it.
 
@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use poorgrad::Tensor;
 use serde::Deserialize;
 use serde::de::IgnoredAny;
+use topos::Tensor;
 
 /// The published artifacts of the 124M model.
 const SOURCE: &str = "https://huggingface.co/openai-community/gpt2/resolve/main";
@@ -35,7 +35,7 @@ pub fn cache_directory() -> PathBuf {
             let home = std::env::var_os("HOME").expect("a home directory");
             Path::new(&home).join(".cache")
         });
-    let directory = base.join("poorgrad").join("gpt2");
+    let directory = base.join("topos").join("gpt2");
     std::fs::create_dir_all(&directory).expect("the cache directory exists");
     directory
 }

@@ -1,4 +1,4 @@
-# Running GPT-2 on poorgrad
+# Running GPT-2 on topos
 
 This example generates text with OpenAI's released GPT-2 (124M)
 weights, the whole model recorded on the tape from the existing op
@@ -16,7 +16,7 @@ cargo run --release --features accelerate --example gpt2 -- "Once upon a time"
 
 The first run downloads and caches three artifacts from Hugging Face
 (`model.safetensors` at 548 MB, `vocab.json`, `merges.txt`) into
-`~/.cache/poorgrad/gpt2` — shared by every checkout and worktree,
+`~/.cache/topos/gpt2` — shared by every checkout and worktree,
 never seen by git — then loads the checkpoint, records ~2800 nodes,
 compiles the sampling plan, and generates. Every later run starts in
 about a second.
@@ -46,7 +46,7 @@ their text exactly.
 
 ## The three engines
 
-**`tape`** runs the plan on poorgrad's own interpreter — the
+**`tape`** runs the plan on topos's own interpreter — the
 oracle. Everything happens in-process; the per-step feeds are the
 embedded token window and the prediction row's one-hot extraction,
 so generation never regrows the tape.
@@ -71,11 +71,11 @@ want Python 3.10-3.13:
 python3 -m venv ~/jax-venv
 ~/jax-venv/bin/pip install jax
 
-POORGRAD_XLA_PYTHON="$HOME/jax-venv/bin/python3" \
+TOPOS_XLA_PYTHON="$HOME/jax-venv/bin/python3" \
   cargo run --release --features accelerate --example gpt2 -- "Once upon a time" 40 xla
 ```
 
-`POORGRAD_XLA_PYTHON` names the Python (default `python3`), and
+`TOPOS_XLA_PYTHON` names the Python (default `python3`), and
 `JAX_PLATFORMS` picks the XLA backend the jax way. The first token
 waits a few seconds while the server compiles the module — a warmup
 step keeps that out of the per-token figure — and the server's log
@@ -103,12 +103,12 @@ jax 0.4.26 era:
 python3 -m venv ~/jax-metal-venv
 ~/jax-metal-venv/bin/pip install "jax==0.4.26" "jaxlib==0.4.26" jax-metal
 
-JAX_PLATFORMS=METAL POORGRAD_XLA_PYTHON="$HOME/jax-metal-venv/bin/python3" \
+JAX_PLATFORMS=METAL TOPOS_XLA_PYTHON="$HOME/jax-metal-venv/bin/python3" \
   cargo run --release --features accelerate --example gpt2 -- "Once upon a time" 40 xla
 ```
 
 It runs this module at 26 ms/token on the GPU — and generates
-confident nonsense. The plugin passes poorgrad's small conformance
+confident nonsense. The plugin passes topos's small conformance
 modules but miscomputes this one, and the verdict is provable rather
 than a matter of taste because three independent implementations —
 the tape, compiled XLA-CPU, and the StableHLO reference
@@ -152,10 +152,10 @@ self-check.
 ## Troubleshooting
 
 - **The download fails.** The example shells out to `curl`; place
-  the three files under `~/.cache/poorgrad/gpt2` by hand and it
+  the three files under `~/.cache/topos/gpt2` by hand and it
   will use them as-is.
 - **The XLA server does not start.** The named Python cannot import
-  `jax` — check `POORGRAD_XLA_PYTHON` and the venv. Its compile log
+  `jax` — check `TOPOS_XLA_PYTHON` and the venv. Its compile log
   and any traceback go to standard error.
 - **Memory.** Loading holds the checkpoint plus the recorded
   parameters — a few gigabytes at peak; any machine that runs a

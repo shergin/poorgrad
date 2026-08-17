@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use poorgrad::{Network, Tensor, Tensorial};
+use topos::{Network, Tensor, Tensorial};
 
 const PARAMETERS: usize = 100;
 

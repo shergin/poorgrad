@@ -6,10 +6,10 @@ Tier-1 conformance for `Plan::emit_stablehlo`: the reference
 interpreter is the StableHLO specification's executable semantics, so
 agreement here is semantic conformance, not just syntax. Any Python
 with `jax` installed serves, through its bundled bindings. Point the
-`POORGRAD_STABLEHLO_EVALUATOR` environment variable at this script to
+`TOPOS_STABLEHLO_EVALUATOR` environment variable at this script to
 enable the execution test in the suite:
 
-    POORGRAD_STABLEHLO_EVALUATOR="python3 tools/eval-stablehlo.py" cargo test
+    TOPOS_STABLEHLO_EVALUATOR="python3 tools/eval-stablehlo.py" cargo test
 
 Usage: eval-stablehlo.py <module.mlir> <arguments.txt>
 

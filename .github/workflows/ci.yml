@@ -74,5 +74,5 @@ jobs:
       - run: pip install jax
       - run: cargo test emission
         env:
-          POORGRAD_STABLEHLO_VALIDATOR: python3 tools/validate-stablehlo.py
-          POORGRAD_STABLEHLO_EVALUATOR: python3 tools/eval-stablehlo.py
+          TOPOS_STABLEHLO_VALIDATOR: python3 tools/validate-stablehlo.py
+          TOPOS_STABLEHLO_EVALUATOR: python3 tools/eval-stablehlo.py

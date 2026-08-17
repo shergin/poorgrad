@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use poorgrad::{Elementary, Shape, Tensor, Tensorial};
+use topos::{Elementary, Shape, Tensor, Tensorial};
 
 /// Builds a `[len]` tensor with a deterministic, cheap fill.
 fn filled(len: usize, seed: u64) -> Tensor<f32> {

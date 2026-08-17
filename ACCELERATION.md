@@ -1,6 +1,6 @@
 # Acceleration
 
-How poorgrad uses the hardware the GPU poor already own. The stack
+How topos uses the hardware the GPU poor already own. The stack
 is deliberately explicit: backends are opt-in cargo features,
 enabling a feature is the whole activation, and every number below
 is measured, not asserted — `cargo bench` and the `throughput`
@@ -105,7 +105,7 @@ exist, both diagnostics rather than switches:
 
 ```rust
 // Loud mode: refuse to run slow instead of falling back silently.
-poorgrad::Backend::Metal.status().expect("metal backend unavailable");
+topos::Backend::Metal.status().expect("metal backend unavailable");
 ```
 
 `Backend::ALL` lists every defined backend in chain order, and
@@ -195,20 +195,20 @@ Metal), never per-call-site.
 
 ## Past the boundary: emitted plans on XLA
 
-Everything above accelerates poorgrad's own execution. There is a
+Everything above accelerates topos's own execution. There is a
 second road, for serving: a compiled forward plan is a closed, pure
 tensor function, and `Plan::emit_stablehlo` writes it down as a
 textual StableHLO module that any XLA-world runtime compiles and
 runs. Nothing links in-crate — the boundary is text, and the
 runners are scripts in [tools/](tools/) driven by two environment
-variables the test suite also honors (`POORGRAD_STABLEHLO_VALIDATOR`
-parses every emitted module, `POORGRAD_STABLEHLO_EVALUATOR` executes
+variables the test suite also honors (`TOPOS_STABLEHLO_VALIDATOR`
+parses every emitted module, `TOPOS_STABLEHLO_EVALUATOR` executes
 it and checks the results against the interpreter's own).
 
 Measured steady state on the same machine, modules emitted from
 real plans, compile costs (16-121 ms) amortized:
 
-| per run | poorgrad plan (`accelerate`) | XLA-CPU | XLA on the GPU (`jax-metal`) | reference interpreter |
+| per run | topos plan (`accelerate`) | XLA-CPU | XLA on the GPU (`jax-metal`) | reference interpreter |
 |---|---|---|---|---|
 | batch-8 CNN forward | 2.6 ms | 0.24 ms | 5.4 ms | 3.0 s |
 | 256-token attention block | 0.46 ms | 0.37 ms | 0.65 ms | 6.3 s |
@@ -248,7 +248,7 @@ libm, the simd kernels pack and re-associate — though
 single-threaded, so nothing varies between runs), the same way any
 BLAS differs from a textbook loop. One
 cargo caveat: features unify across a dependency graph, so any
-dependency enabling `poorgrad/accelerate` enables it for the whole
+dependency enabling `topos/accelerate` enables it for the whole
 binary.
 
 ## Safety

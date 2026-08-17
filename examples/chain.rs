@@ -3,7 +3,7 @@
 //!
 //! Run with: `cargo run --example chain`
 
-use poorgrad::Network;
+use topos::Network;
 
 fn main() {
     let network = Network::new();

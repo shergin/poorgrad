@@ -22,7 +22,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{BatchNorm, Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
+use topos::{BatchNorm, Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};

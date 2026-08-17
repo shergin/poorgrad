@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- Renamed the crate from `poorgrad` to `topos`. The repository moved
+  to `https://github.com/shergin/topos`, the `POORGRAD_*` environment
+  variables the examples, tools, and CI honor are now `TOPOS_*`, and
+  emitted StableHLO modules open with `module @topos`.
+
 - One compile verb: `Network::compile` takes an explicit `Compile`
   request — `roots` (no root is special; recorded gradient symbols
   compile as ordinary roots), `observe` (extra readable interiors),
@@ -64,7 +69,7 @@ The format is based on [Keep a Changelog], and this project adheres to
   in-crate oracle as the envelope. On XLA-CPU the batched recording
   serves ~3% faster (42 `dot_general`s against 48); on XLA-Metal
   (`jax-metal`) both modules return the same wrong loss — red rows
-  the harness reports instead of hiding (`POORGRAD_ENVELOPE=report`)
+  the harness reports instead of hiding (`TOPOS_ENVELOPE=report`)
   — reproducing the tier-1 finding on training modules. The serving
   script's device placement now falls back when a PJRT plugin
   exposes but does not implement `buffer_from_pyval`.
@@ -103,7 +108,7 @@ The format is based on [Keep a Changelog], and this project adheres to
   with `Sgd` and once with `Adam`, both curves on one chart; the SGD
   run reproduces that example's losses bit for bit, and Adam
   converges below it (last-500 mean 2.2287 vs 2.2450) at one flat
-  learning rate. `POORGRAD_GRADIENTS=engine` flips the gradient
+  learning rate. `TOPOS_GRADIENTS=engine` flips the gradient
   source to the interpreter's backward — losses identical, but the
   moment fields densify: ~16.8 MB peak RSS against the recorded
   route's ~15.0 at makemore scale, confirming that recorded
@@ -276,7 +281,7 @@ The format is based on [Keep a Changelog], and this project adheres to
 - `malevich` moved from a dev-dependency to an optional dependency
   behind the `evcxr` feature, and both entries moved from 1.12 to
   1.15.0, whose public `evcxr` module supplies the stdout protocol and
-  the card background poorgrad's own cards are drawn on — the same two
+  the card background topos's own cards are drawn on — the same two
   a `Plot` paints itself with, so a tensor table and a chart in one
   notebook cell cannot disagree. A default build's dependency tree is
   unchanged.
@@ -310,7 +315,7 @@ The format is based on [Keep a Changelog], and this project adheres to
   They were harmless to a normal build and fatal to a notebook: Evcxr
   determines a cell's variable types by parsing rustc's output and
   treats a dependency's warnings as a compilation failure, so any
-  warning here broke every cell that bound a variable of a poorgrad
+  warning here broke every cell that bound a variable of a topos
   type.
 
 ## [0.9.0] - 2026-08-08
@@ -439,8 +444,8 @@ The format is based on [Keep a Changelog], and this project adheres to
   richer op abroad. A typed builder owns every fragment of MLIR
   syntax; nothing heavier than string building enters the crate.
 - Emission conformance, two tiers riding external toolchains the
-  crate never links: `POORGRAD_STABLEHLO_VALIDATOR` names a parser
-  and `POORGRAD_STABLEHLO_EVALUATOR` an executor (scripts under
+  crate never links: `TOPOS_STABLEHLO_VALIDATOR` names a parser
+  and `TOPOS_STABLEHLO_EVALUATOR` an executor (scripts under
   `tools/` serve both from any Python with `jax`), and the suite's
   round-trip and execution tests check every emitted module against
   the plan's own results, passing vacuously without a toolchain.
@@ -1003,19 +1008,19 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 [Keep a Changelog]: https://keepachangelog.com/en/1.1.0/
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-[Unreleased]: https://github.com/shergin/poorgrad/compare/v0.10.0...HEAD
-[0.10.0]: https://github.com/shergin/poorgrad/compare/v0.9.0...v0.10.0
-[0.9.0]: https://github.com/shergin/poorgrad/compare/v0.8.0...v0.9.0
-[0.8.0]: https://github.com/shergin/poorgrad/compare/v0.7.0...v0.8.0
-[0.7.0]: https://github.com/shergin/poorgrad/compare/v0.6.0...v0.7.0
-[0.6.0]: https://github.com/shergin/poorgrad/compare/v0.5.4...v0.6.0
-[0.5.4]: https://github.com/shergin/poorgrad/compare/v0.5.3...v0.5.4
-[0.5.3]: https://github.com/shergin/poorgrad/compare/v0.5.2...v0.5.3
-[0.5.2]: https://github.com/shergin/poorgrad/compare/v0.5.1...v0.5.2
-[0.5.1]: https://github.com/shergin/poorgrad/compare/v0.5.0...v0.5.1
-[0.5.0]: https://github.com/shergin/poorgrad/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/shergin/poorgrad/compare/v0.3.1...v0.4.0
-[0.3.1]: https://github.com/shergin/poorgrad/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/shergin/poorgrad/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/shergin/poorgrad/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/shergin/poorgrad/releases/tag/v0.1.0
+[Unreleased]: https://github.com/shergin/topos/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/shergin/topos/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/shergin/topos/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/shergin/topos/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/shergin/topos/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/shergin/topos/compare/v0.5.4...v0.6.0
+[0.5.4]: https://github.com/shergin/topos/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/shergin/topos/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/shergin/topos/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/shergin/topos/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/shergin/topos/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/shergin/topos/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/shergin/topos/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/shergin/topos/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/shergin/topos/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/shergin/topos/releases/tag/v0.1.0

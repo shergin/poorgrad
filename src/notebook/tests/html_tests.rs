@@ -12,7 +12,7 @@ fn escaping_leaves_ordinary_text_untouched() {
 
 #[test]
 fn a_mime_bundle_matches_the_evcxr_protocol() {
-    // The protocol emitter is `malevich`'s; this pins the shape poorgrad
+    // The protocol emitter is `malevich`'s; this pins the shape topos
     // relies on rather than restating its unit tests.
     assert_eq!(
         mime_bundle(&[("text/html", "<b>x</b>"), ("text/plain", "x")]),
@@ -35,7 +35,7 @@ fn cards_carry_their_theme_colors_and_place_the_body_verbatim() {
 }
 
 #[test]
-fn a_poorgrad_card_and_a_malevich_chart_share_one_background() {
+fn a_topos_card_and_a_malevich_chart_share_one_background() {
     // The reason the colors come from `malevich` rather than a local
     // copy: a tensor table and a chart in one cell must not disagree.
     let plot = malevich::Plot::new().layer(malevich::Line::y(vec![1.0, 2.0]));

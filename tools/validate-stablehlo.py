@@ -4,10 +4,10 @@
 Tier-0 conformance for `Plan::emit_stablehlo`: any MLIR build with the
 StableHLO dialect serves, and the smallest is a Python with `jax`
 installed, whose bundled bindings this script uses. Point the
-`POORGRAD_STABLEHLO_VALIDATOR` environment variable at this script
+`TOPOS_STABLEHLO_VALIDATOR` environment variable at this script
 (under such a Python) to enable the round-trip test in the suite:
 
-    POORGRAD_STABLEHLO_VALIDATOR="python3 tools/validate-stablehlo.py" cargo test
+    TOPOS_STABLEHLO_VALIDATOR="python3 tools/validate-stablehlo.py" cargo test
 """
 
 import sys

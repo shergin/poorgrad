@@ -20,7 +20,7 @@ mod corpus;
 use std::time::Instant;
 
 use malevich::{Cells, Frame, Plot, Scale};
-use poorgrad::{Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Network, Shape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};

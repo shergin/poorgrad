@@ -1,6 +1,6 @@
 # Terminology
 
-The vocabulary used across poorgrad's code and docs. Each entry gives the
+The vocabulary used across topos's code and docs. Each entry gives the
 meaning of the term in the automatic-differentiation literature and how it
 maps onto this crate's types. This file is part of the codebase contract:
 when a concept is added, renamed, or changes meaning, update it in the same
@@ -12,14 +12,14 @@ change.
 a program by decomposing it into primitive operations with known local
 derivatives and composing them via the chain rule. Distinct from numeric
 differentiation (finite differences; approximate) and symbolic
-differentiation (expression rewriting; can blow up). Poorgrad implements
+differentiation (expression rewriting; can blow up). Topos implements
 reverse-mode AD over scalar programs.
 
 **Reverse-mode AD (backpropagation).** The AD flavor that computes the
 derivative of *one* output with respect to *all* inputs in a single backward
 sweep costing about one forward evaluation. Its mirror image, forward mode,
 computes one input against all outputs. Reverse mode wins for machine
-learning (one loss, many parameters). In poorgrad:
+learning (one loss, many parameters). In topos:
 [`Run::backward`](src/engine/run.rs). The sweep executes derivative
 rules only for the target's ancestors; every other value's gradient is
 exactly zero, so expressions the target does not depend on — including
@@ -32,14 +32,14 @@ in [`Operation::backward`](src/engine/function/operation.rs).
 
 **Gradient.** The vector of partial derivatives of one chosen scalar (the
 *target*) with respect to every other value. A gradient is always "of a
-target"; there is no target-free gradient of a network. In poorgrad:
+target"; there is no target-free gradient of a network. In topos:
 [`Gradients`](src/engine/field.rs), produced by one backward sweep and tied to
 one run and one target; it is a named role of `Field`, not a separate
 type.
 
 **Gradient accumulation.** When a value feeds several consumers, its
 gradient is the *sum* of the contributions along every path (the
-multivariate chain rule). In poorgrad the rule is stated once, in the
+multivariate chain rule). In topos the rule is stated once, in the
 engine: `Operation::backward` returns one cotangent per operand, and
 [`Run::backward`](src/engine/run.rs) adds each into the
 gradient buffer — no operation can assign where it should accumulate,
@@ -48,7 +48,7 @@ because no operation ever touches the buffer.
 **Seed (cotangent).** The gradient planted at the target before the backward
 sweep; `one` for a plain gradient. Seeding several nodes with arbitrary
 weights computes a vector-Jacobian product, the general form of reverse
-mode. In poorgrad [`Run::backward`](src/engine/run.rs) seeds
+mode. In topos [`Run::backward`](src/engine/run.rs) seeds
 `one_like` at the target, which must be rank 0: a non-scalar value is
 reduced explicitly with `sum` before differentiation, never summed
 implicitly.
@@ -61,7 +61,7 @@ a loss: `w <- w - learning_rate * dLoss/dw`. One step is
 ## Graph model
 
 **Computation graph.** The directed acyclic graph whose nodes are values and
-whose edges link operations to their operands. In poorgrad the graph is
+whose edges link operations to their operands. In topos the graph is
 implicit in the tape: each recorded node lists its operand links, in the
 operation's positional order, in the tape's operands column, and
 allocation order is a topological order.
@@ -70,13 +70,13 @@ allocation order is a topological order.
 operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
-poorgrad: [`Tape`](src/engine/network/tape/tape.rs), crate-internal, shared by a
+topos: [`Tape`](src/engine/network/tape/tape.rs), crate-internal, shared by a
 network and all of its proxies, and the engine's single synchronization
 point. Beside its immutable columns the tape carries the generation's
 parameter store: the one piece of state that changes across generations.
 
 **Node.** One recorded entry of the graph: the operation that produced a
-value, its operand links, and its parameters. In poorgrad a node is a
+value, its operand links, and its parameters. In topos a node is a
 [`Function<Data>`](src/engine/function/function.rs) (the operation and its
 parameters) stored on the tape beside its operand links (the
 [`Operands`](src/engine/network/tape/operands.rs) column) and its inferred `Shape`;
@@ -97,7 +97,7 @@ snapshot share one `Structure`. Construction boundaries (`Tensor::new`,
 `Tensor::filled`, `Value::reshape`) accept `impl Into<Shape>` — axis
 literals, vectors, slices, and shapes or their references all convert —
 so the nominal type is never decomposed at the rim; `Shape::new` remains
-the iterator-based base constructor. In poorgrad:
+the iterator-based base constructor. In topos:
 [`Shape`](src/payload/shape.rs), reachable via `Value::shape` and
 `Differentiable::shape`.
 
@@ -114,7 +114,7 @@ operands column, and `backward` returns one cotangent per operand
 (`None` for an operand that is data, like a gather's selection) for the
 engine to accumulate. No rule ever sees the tape, a `ValueId`, or a run
 buffer, so every rule is plain math, testable without a network. In
-poorgrad: the [`Operation`](src/engine/function/operation.rs) trait,
+topos: the [`Operation`](src/engine/function/operation.rs) trait,
 implemented by each computed `Function` variant (`Add`, `Sub`, `Mul`,
 `Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `Sqrt`, `Powf`, `Maximum`, `Relu`,
 `MatMul`, `Transpose`, `Sum`, `SumAlong`, `Broadcast`, `BroadcastAlong`,
@@ -130,13 +130,13 @@ tensor-native ones raise the bound of running (not building) a graph to
 **Leaf.** A node with no operands: a constant supplied at recording
 time. Gradients stop there and get read out; its `backward` is a no-op.
 Parameters and inputs are the other leaf kinds: trainable and fed
-per-run respectively. In poorgrad: `Function::Leaf`, allocated with
+per-run respectively. In topos: `Function::Leaf`, allocated with
 [`Network::leaf`](src/engine/network.rs); payload literals in expressions
 (`x * 2.0`) record leaves implicitly, one per appearance.
 
 **Parameter.** A trainable leaf: identical to `Leaf` during runs, but
 designated as updatable so a training step knows which leaves to replace.
-In poorgrad: `Function::Parameter`, allocated with
+In topos: `Function::Parameter`, allocated with
 [`Network::parameter`](src/engine/network.rs) and replaced by
 `Network::update`. The node holds only its slot; the payload lives in the
 generation's parameter store.
@@ -147,11 +147,11 @@ run, validated against the recorded shape at the feed site. Unfed
 inputs fall back to their defaults, so plain `forward` stays total.
 Feeds are run state, not graph state — feeding never touches the tape,
 which is what lets concurrent runs forward one shared network on
-different batches. In poorgrad: `Function::Input`, fed via
+different batches. In topos: `Function::Input`, fed via
 [`Network::forward_with`](src/engine/network.rs).
 
 **Topological (allocation) order.** Any ordering in which every operand
-precedes its consumers. Poorgrad's recording enforces it by construction —
+precedes its consumers. Topos's recording enforces it by construction —
 a proxy must exist before it can be an operand — so `forward` is one
 left-to-right scan and `backward` one right-to-left scan, with no explicit
 sorting.
@@ -161,12 +161,12 @@ sorting.
 **Network.** The single owner of the state of one computation graph: it owns
 the tape, hands out proxies, and is the boundary of type homogeneity (one
 `Data` type per network). Mutation happens only through state transitions
-that produce new generations. In poorgrad: [`Network`](src/engine/network.rs).
+that produce new generations. In topos: [`Network`](src/engine/network.rs).
 
 **Value (proxy).** A `Copy` handle pairing a borrow of the network's tape
 with a node position. Proxies cannot outlive their network, are never
 consumed by operators (`let x = v1 + v2;` records a node and keeps `v1`,
-`v2` usable), and cross threads freely. In poorgrad:
+`v2` usable), and cross threads freely. In topos:
 [`Value`](src/engine/value.rs).
 
 **Composite (operation).** A method that expands to several primitive
@@ -203,7 +203,7 @@ payloads of one rule — derivative knowledge cannot fork). The
 recorded scan mirrors the engine's seed, ancestor masking, and
 accumulation order, so a compiled plan over `[loss, gradients...]`
 reproduces `Run::backward` bitwise; per-variant closure tests
-hold that contract. In poorgrad: `Network::differentiate`, the
+hold that contract. In topos: `Network::differentiate`, the
 `Trace` payload, and the closure suite in
 `engine/tests/differentiate_tests.rs`.
 
@@ -215,7 +215,7 @@ returns that generation's proxy; a failed resolution panics as a programmer
 error, while `try_resolve` probes and returns `None`. The symbol carries its
 lineage and its branch, so resolving into an unrelated network — or into a
 fork that diverged before the symbol was minted — panics rather than
-misbinding; within a branch, resolution is positional. In poorgrad:
+misbinding; within a branch, resolution is positional. In topos:
 [`Symbol`](src/engine/symbol.rs), obtained with `Value::symbol`.
 
 **Value reference.** Either handle to a recorded value, accepted
@@ -229,7 +229,7 @@ dispatch is a monomorphized match, never a trait object. Reads
 (`Run::of`, `Run::backward`, `Field::of`), compile requests
 (`Compile::roots` and `Compile::observe`), `forward_for` targets,
 and `differentiate` accept it; feed pairs stay `Symbol`-typed so
-empty list literals keep inferring. In poorgrad:
+empty list literals keep inferring. In topos:
 [`ValueRef`](src/engine/reference.rs).
 
 **Generation.** A network state produced by a state transition: a fork
@@ -357,7 +357,7 @@ a discrete gradient field over the graph, which is why `Gradients` is an
 alias for `Field` rather than a wrapper around it: the buffer's invariant is
 alignment to a graph, not differentiation, and Adam's second moment or a
 run's forward payloads are fields that are not gradients at all. In
-poorgrad: [`Field`](src/engine/field.rs).
+topos: [`Field`](src/engine/field.rs).
 
 **Origin.** The family of networks descending from a common construction
 through forks and updates. Within an origin, positions are attributed to
@@ -365,7 +365,7 @@ branches, and they are stable within a branch — which is what makes
 symbols resolve and fields combine across generations. Tracked by a
 `Copy` token minted from a process-global counter at network creation
 and carried through every transition; same-origin is equality. In
-poorgrad: the crate-internal [`Origin`](src/engine/network/tape/identity.rs),
+topos: the crate-internal [`Origin`](src/engine/network/tape/identity.rs),
 embedded in every `Symbol` and in every
 [`Witness`](src/engine/network/tape/witness.rs).
 
@@ -377,13 +377,13 @@ exactly where their recordings part ways. Symbols carry the branch that
 owned their position when they were minted, and resolution checks branch
 membership before the positional lookup, so a divergent sibling's symbol
 panics instead of misbinding. Linear histories never mint branches:
-chains stay as short as the program's real divergence. In poorgrad: the
+chains stay as short as the program's real divergence. In topos: the
 crate-internal [`Branch`](src/engine/network/tape/identity.rs) and its segment chain.
 
 **Identity.** Live structural identity under the tape lock: origin, branch
 chain, and tip protocol together. Fork and update share the tip; record
 claims it. Detached carriers never hold an `Identity` — they take a
-[`Witness`](src/engine/network/tape/witness.rs). In poorgrad: the crate-internal
+[`Witness`](src/engine/network/tape/witness.rs). In topos: the crate-internal
 [`Identity`](src/engine/network/tape/identity.rs).
 
 **Witness.** A read-only proof of graph identity: origin plus branch chain,
@@ -391,7 +391,7 @@ without the tip. Fields, plans, and tape snapshots hold one and answer
 same-origin and prefix agreement without borrowing the live tape. A
 failed symbol probe reports a misbinding reason without panicking;
 coverage discipline and panic messages stay at the call site. In
-poorgrad: the crate-internal [`Witness`](src/engine/network/tape/witness.rs).
+topos: the crate-internal [`Witness`](src/engine/network/tape/witness.rs).
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
@@ -425,12 +425,12 @@ tensors are immutable and buffer-shared, `transpose` and the broadcasts
 are O(1) views (or constants) rather than copies: no operation ever
 writes through an alias. Elements are read in logical row-major order
 through `iter`, as a contiguous slice through `as_slice` when the
-representation allows, or copied out with `to_vec`. In poorgrad:
+representation allows, or copied out with `to_vec`. In topos:
 [`Tensor`](src/payload/tensor.rs).
 
 **Bf16 (brain float 16).** The truncated-single float format — one sign
 bit, the eight exponent bits of `f32`, seven stored mantissa bits — and
-poorgrad's first payload beyond the IEEE singles: a `u16` newtype whose
+topos's first payload beyond the IEEE singles: a `u16` newtype whose
 every operation converts to `f32`, computes there, and rounds the result
 to nearest-even. Same range as `f32`, precision of about two decimal
 digits; integers are exact up to 256. Half the memory of `f32` at rest,
@@ -442,7 +442,7 @@ accumulating operations — matmul, the sum reductions, `fold`, and
 `Accumulator` is `f32` (the bf16 hardware convention), every term
 promotes exactly, and only the final total rounds; the emitted
 StableHLO states the same semantic through `f32`-typed contractions
-and reduces with explicit `convert`s. In poorgrad:
+and reduces with explicit `convert`s. In topos:
 [`Bf16`](src/payload/bf16.rs).
 
 **Storage.** The buffer representation behind a `Tensor`, and the
@@ -459,7 +459,7 @@ per-node gradient seed from allocating a zeroed buffer for every node.
 `Selection` is the second: a one-hot `[count, vocab]` matrix stored as its
 row indices, which keeps an embedding lookup's token indices as `usize`
 inside a homogeneous payload and lets a `Gather` read them directly.
-In poorgrad: the crate-internal [`Storage`](src/payload/storage.rs).
+In topos: the crate-internal [`Storage`](src/payload/storage.rs).
 
 **Layout.** How a dense buffer's logical indices map onto its flat
 storage: the shape, the per-axis strides, and the offset of the first
@@ -469,7 +469,7 @@ element. The element at multi-index `(i0, ..., in)` lives at
 produce a new layout over the same buffer without moving any element. A
 stride of `0` marks a broadcast axis, whose steps do not advance within
 the buffer, which is how `broadcast_along` repeats without copying. In
-poorgrad: the crate-internal [`Layout`](src/payload/layout.rs).
+topos: the crate-internal [`Layout`](src/payload/layout.rs).
 
 **Contiguity.** Whether a dense layout addresses a row-major slice of its
 buffer starting at its offset (extent-1 axes impose no constraint;
@@ -511,7 +511,7 @@ of recorded operations could do); the former routes its gradient as
 node's own output. Broadcasting is explicit by design: a
 single value spread across a named reference's shape, or a payload
 repeated along one named axis of a reference — the axis is always
-written, and no operation aligns shapes implicitly. In poorgrad: the
+written, and no operation aligns shapes implicitly. In topos: the
 [`Tensorial`](src/payload/tensorial.rs) trait, recorded into graphs via
 `Value::matmul`, `transpose`, `sum`, `sum_along`, `broadcast_like`,
 `broadcast_along`, `reshape`, `permute`, `narrow`, `gather`,
@@ -531,7 +531,7 @@ immutability makes safe. `fold` is its adjoint and gradient rule: the
 window pair folds back onto an axis of a given extent, each source
 position summing, output-centrically and in window order, the window
 elements read from it — deterministic under any evaluation strategy.
-Two `unfold`s produce 2-D windows (torch semantics). In poorgrad:
+Two `unfold`s produce 2-D windows (torch semantics). In topos:
 [`Tensorial::unfold`/`fold`](src/payload/tensorial.rs) over
 [`Layout::unfold`](src/payload/layout.rs), recorded by
 [`Value::unfold`](src/engine/value.rs) (with `fold` as its gradient
@@ -558,7 +558,7 @@ without further recording) are memory-clean: the parameter store turns
 over per generation and does not use the arena. Structure recorded on a
 sibling can keep arena memory alive for the lineage — that is the cost of
 O(1) sharing, reclaimed by dropping every sharer or by compaction. In
-poorgrad: `Network::clone`, built on [`Tape::fork`](src/engine/network/tape/tape.rs).
+topos: `Network::clone`, built on [`Tape::fork`](src/engine/network/tape/tape.rs).
 
 **Compaction.** Rebuilding a network's structure columns into private
 arenas that hold only its live nodes, so sibling-fork garbage no longer
@@ -566,7 +566,7 @@ pins memory once the compacted form replaces the polluted parent (or the
 polluted side is dropped). Same lineage and generation state as a fork:
 symbols resolve, parameters are shared until the next `update`, tip
 contention is the same. Cost is O(live nodes), not O(1). Prefer a plain
-fork when no post-fork recording is involved. In poorgrad:
+fork when no post-fork recording is involved. In topos:
 [`Network::compacted`](src/engine/network.rs).
 
 ## Acceleration
@@ -574,7 +574,7 @@ fork when no post-fork recording is involved. In poorgrad:
 **GEMM.** General matrix-matrix multiplication, the dense core of
 `matmul` and the unit of acceleration: one job multiplying an
 `m x k` operand by a `k x n` operand into a contiguous row-major
-product. In poorgrad: [`GemmTask`](src/payload/gemm.rs), which
+product. In topos: [`GemmTask`](src/payload/gemm.rs), which
 describes the job as two spanning slices read through per-axis
 strides — a transposed or narrowed view is a stride pattern, not a
 copy — plus the three extents, validated at construction and
@@ -590,7 +590,7 @@ whole-buffer transcendental (a `MapOperation`: `exp`, `ln`, `sqrt`,
 `tanh`), consulted by the tensor's elementwise operations for
 contiguous dense buffers. Both live in the payload tier, so
 `Operation` rules stay backend-blind (the columns-as-IR rule) and
-custom payload implementations keep the defaults. In poorgrad:
+custom payload implementations keep the defaults. In topos:
 [`Elementary`](src/payload/elementary.rs).
 
 **Backend.** A provider of GEMM kernels compiled into the crate
@@ -647,13 +647,13 @@ kernel — which is why composing through `dyn Module` (in
 Programmatic access (tying, freezing) goes through typed accessors
 (`weights()`, struct fields), never names; names exist only as the
 structured `Path`/`Segment` checkpoint identity. Distinct from a Rust
-module (a namespace): this is the ML term of art. In poorgrad:
+module (a namespace): this is the ML term of art. In topos:
 [`Module`](src/neural/module.rs).
 
 **Sequential.** The ordered module chain: each stage's output feeds
 the next, stages heterogeneous behind `dyn Module`, appended with the
 boxing `then`. `Residual` is its skip-connection companion —
-`input + inner(input)`, path-transparent. In poorgrad:
+`input + inner(input)`, path-transparent. In topos:
 [`Sequential`](src/neural/sequential.rs),
 [`Residual`](src/neural/residual.rs).
 
@@ -663,7 +663,7 @@ order — sufficient for resuming the same code) and named
 (`named_snapshot`/`named_restore`, matched by structured path — what
 survives code evolution and what foreign name-to-tensor checkpoints
 require). Restoring builds a new network generation through
-`update_each`; nothing mutates. In poorgrad:
+`update_each`; nothing mutates. In topos:
 [`checkpoint`](src/neural/checkpoint.rs).
 
 **Neuron.** The smallest learnable unit: a weighted sum of inputs plus a
@@ -673,7 +673,7 @@ network at construction but held as symbols, so the neuron itself is
 detached: it survives generations, and `express` records its expression
 against whichever generation it is given. It is the scalar-granularity
 teaching block; `Linear` records at tensor granularity and does not
-build on it. In poorgrad: [`Neuron`](src/neural/neuron.rs).
+build on it. In topos: [`Neuron`](src/neural/neuron.rs).
 
 **Linear.** The dense (fully connected) affine transform at tensor
 granularity: `x . w + b` over a `[batch, inputs]` value, with one
@@ -683,14 +683,14 @@ instead of one node per scalar weight, and deliberately *unfused*: an
 activation is its own composition stage, which unlocks the orderings
 a bundled activation forbids. Detached like `Neuron`, and the
 weight-tying constructor `from_symbols` builds one over another
-module's parameters. In poorgrad:
+module's parameters. In topos:
 [`Linear`](src/neural/linear.rs).
 
 **Mlp.** A multilayer perceptron: affine stages chained by a topology
 of value widths (`[3, 4, 4, 1]`), hidden stages squashing with `Tanh`
 and an affine output stage. The convenience constructor over
 `Linear`, with initialization owned by the caller through a
-shape-to-payload initializer. In poorgrad:
+shape-to-payload initializer. In topos:
 [`Mlp`](src/neural/mlp.rs).
 
 **Batch normalization (BatchNorm).** Standardizing every feature of a
@@ -698,7 +698,7 @@ shape-to-payload initializer. In poorgrad:
 per-feature affine `scale * normalized + shift` (Ioffe & Szegedy, 2015).
 Training mode normalizes by the batch's own mean and biased variance,
 with gradients flowing through the statistics; inference mode normalizes
-by running estimates accumulated during training. In poorgrad:
+by running estimates accumulated during training. In topos:
 [`BatchNorm`](src/neural/batch_norm.rs), whose `express` records the
 training-mode expression and returns a `Normalization` — the output plus
 the batch-statistic values — and whose `express_with` records the
@@ -715,12 +715,12 @@ the batch axis — and passed through the learned per-feature affine
 (Ba, Kiros & Hinton, 2016). Samples normalize independently, so there
 is no batch coupling, no running estimates, and no training/inference
 split: one recorded expression serves both. The transformer stack's
-norm. In poorgrad: [`LayerNorm`](src/neural/layer_norm.rs).
+norm. In topos: [`LayerNorm`](src/neural/layer_norm.rs).
 
 **Convolution (Conv2d).** Sliding a stack of learned kernels across a
 `[batch, channels, height, width]` value: each output position is the
 kernel-weighted sum of a window of the (zero-padded) input, plus a
-per-filter bias. In poorgrad it is a composed formula, not a
+per-filter bias. In topos it is a composed formula, not a
 primitive: [`conv2d`](src/neural/convolution.rs) records `pad`, two
 single-axis `unfold`s, an axis permutation, the im2col reshape (the
 formula's one deliberate copy, which turns the whole computation into
@@ -734,12 +734,12 @@ the weight-side `permute` + `reshape` to the GEMM operand per run.
 kernel-sized window out as a matrix row (`[windows, channels *
 kernel]`), so one GEMM computes all positions and filters at once. The
 classic eager-framework trade: a `kernel`-fold memory copy buys the
-fastest kernel the machine has. In poorgrad the copy is not special
+fastest kernel the machine has. In topos the copy is not special
 code — it is `reshape`'s ordinary view-else-copy fallback firing on
 the overlapping window view.
 
 **Pooling.** Downsampling a spatial value by reducing each window to
-one number. In poorgrad both pools compose over the same `unfold`
+one number. In topos both pools compose over the same `unfold`
 windows: [`average_pool`](src/neural/pooling.rs) reduces with
 `mean_along`, and [`max_pool`](src/neural/pooling.rs) folds the
 window lanes with the binary `maximum`, left-biased, so a tied
@@ -753,11 +753,11 @@ square of its features, `sqrt(mean(x^2) + epsilon)`, and scaled per
 feature (Zhang & Sennrich, 2019) — re-scaling alone, on the
 observation that the re-centering half contributes little. Stateless
 like `LayerNorm`, and the cheaper modern default of transformer
-stacks. In poorgrad: [`RmsNorm`](src/neural/rms_norm.rs).
+stacks. In topos: [`RmsNorm`](src/neural/rms_norm.rs).
 
 **Dropout (mask-fed).** Randomly silencing features during training
 so co-adapted detectors cannot lean on each other (Srivastava et
-al., 2014). In poorgrad the randomness stays outside the graph: a
+al., 2014). In topos the randomness stays outside the graph: a
 [`Dropout`](src/neural/dropout.rs) module multiplies its input by a
 declared mask *input* whose default payload is all ones, so an unfed
 run is the identity — inference is the absence of a feed, not a
@@ -790,7 +790,7 @@ carried as payloads, so steps are exact and deterministic), and
 two and above decays, rank one is spared, decided through the
 identity-aware `Network::update_each`. The learning rate is a
 per-step argument — schedules stay caller-owned loop arithmetic. In
-poorgrad: the [`Optimizer`](src/neural/optimizer.rs) trait and
+topos: the [`Optimizer`](src/neural/optimizer.rs) trait and
 [`Adam`/`AdamW`](src/neural/adam.rs).
 
 **Activation.** The nonlinearity applied to a neuron's weighted sum, which
@@ -809,7 +809,7 @@ exponential overflows), `LeakyRelu` as `maximum(x, x / 100)`, and
 cannot overflow, and the left-biased tie keeps the subgradient at
 zero equal to one). Constants are integer `counted` ratios per the
 settled literal decision; arbitrary-constant activations stay caller
-territory, like GPT-2's GELU. In poorgrad: the
+territory, like GPT-2's GELU. In topos: the
 [`Activation`](src/neural/activation.rs) enum and its
 `Activation::express`.
 
@@ -831,7 +831,7 @@ soft or weighted targets normalize by their own weight. The same one-hot
 run. Losses are the third tier of the operation surface (see Composite):
 free functions rather than `Value` methods, because their operands play
 distinct roles and a method would arbitrarily privilege one of them. In
-poorgrad: [`cross_entropy`](src/neural/loss.rs) in the loss module.
+topos: [`cross_entropy`](src/neural/loss.rs) in the loss module.
 
 **Initializer.** The shape-to-payload closure a caller hands to a
 building block at construction: initialization is caller-owned, and
@@ -849,7 +849,7 @@ pipeline runs in `f64` and converts once at the end, so the `f64`
 path is the identity (seeded outputs stay bit-identical forever,
 pinned by a golden-bits test) and the `f32` path is the same stream
 rounded once per element, with the element inferred from the network
-the closure feeds. In poorgrad: [`init`](src/neural/init.rs), the
+the closure feeds. In topos: [`init`](src/neural/init.rs), the
 crate's one public module, qualified because `uniform` and `normal`
 are meaningless names without it.
 
@@ -862,4 +862,4 @@ are meaningless names without it.
 - A. G. Baydin et al., "Automatic Differentiation in Machine Learning: a
   Survey", JMLR (2018).
 - A. Karpathy, [micrograd](https://github.com/karpathy/micrograd) — the
-  educational engine poorgrad is loosely inspired by.
+  educational engine topos is loosely inspired by.

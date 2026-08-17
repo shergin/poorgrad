@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use poorgrad::{Network, Tensor};
+use topos::{Network, Tensor};
 
 fn run(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("run");

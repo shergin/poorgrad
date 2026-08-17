@@ -386,25 +386,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "poorgrad"
-version = "0.10.0"
-dependencies = [
- "cow_vec",
- "criterion",
- "libloading",
- "malevich",
- "matrixmultiply",
- "objc2",
- "objc2-foundation",
- "objc2-metal",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "static_assertions",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -600,6 +581,25 @@ checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "topos"
+version = "0.10.0"
+dependencies = [
+ "cow_vec",
+ "criterion",
+ "libloading",
+ "malevich",
+ "matrixmultiply",
+ "objc2",
+ "objc2-foundation",
+ "objc2-metal",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "static_assertions",
 ]
 
 [[package]]

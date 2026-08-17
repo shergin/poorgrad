@@ -12,7 +12,7 @@
 //! comparison below iterates strategies through `&mut dyn Optimizer`,
 //! the sanctioned example-side use of dynamic dispatch.
 //!
-//! `POORGRAD_GRADIENTS=engine` flips the gradient source to the
+//! `TOPOS_GRADIENTS=engine` flips the gradient source to the
 //! interpreter's `backward`. The losses are bit-identical either way
 //! (the parity contract), but the gradient fields are not the same
 //! shape of object: recorded gradients reach the optimizer with
@@ -32,7 +32,7 @@ use std::time::Instant;
 
 use malevich::stat::Window;
 use malevich::{Frame, Line, Plot, Rule};
-use poorgrad::{
+use topos::{
     Adam, Compile, Network, Optimizer, Sgd, Shape, Symbol, Tensor, Value, cross_entropy, init,
 };
 
@@ -227,10 +227,10 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let recorded = match std::env::var("POORGRAD_GRADIENTS").as_deref() {
+    let recorded = match std::env::var("TOPOS_GRADIENTS").as_deref() {
         Ok("engine") => false,
         Ok("recorded") | Err(_) => true,
-        Ok(other) => panic!("unknown POORGRAD_GRADIENTS {other:?}; use recorded or engine"),
+        Ok(other) => panic!("unknown TOPOS_GRADIENTS {other:?}; use recorded or engine"),
     };
     println!(
         "gradients: {}",

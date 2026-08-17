@@ -16,7 +16,7 @@ impl<Data: Differentiable + 'static> Network<Data> {
     ///
     /// # Examples
     /// ```
-    /// use poorgrad::{Network, Value};
+    /// use topos::{Network, Value};
     ///
     /// let network: &'static Network<f64> = Network::leaked();
     /// let w: Value<'static, f64> = network.parameter(2.0);
@@ -36,7 +36,7 @@ impl<Data: Differentiable + 'static> Network<Data> {
     ///
     /// # Examples
     /// ```
-    /// use poorgrad::{Network, Value};
+    /// use topos::{Network, Value};
     ///
     /// let network: &'static Network<f64> = Network::leaked();
     /// let w: Value<'static, f64> = network.parameter(1.0);

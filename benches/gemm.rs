@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 
-use poorgrad::{Tensor, Tensorial};
+use topos::{Tensor, Tensorial};
 
 /// Builds a `[rows, columns]` tensor with a deterministic, cheap fill.
 fn filled_f64(rows: usize, columns: usize, seed: u64) -> Tensor<f64> {

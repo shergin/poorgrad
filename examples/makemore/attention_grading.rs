@@ -9,7 +9,7 @@
 //! `dot_general` with batching dimensions is better source for
 //! someone else's compiler than a head loop it must re-fuse.
 //!
-//! `POORGRAD_XLA_PYTHON` names the serving interpreter (default
+//! `TOPOS_XLA_PYTHON` names the serving interpreter (default
 //! `python3`); the backend follows jax's own selection, so
 //! `JAX_PLATFORMS` picks a PJRT plugin — CPU by default, Metal when
 //! the `jax-metal` plugin is installed in that interpreter.
@@ -25,7 +25,7 @@ use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Compile, Differentiable, Network, RmsNorm, Shape, Symbol, Tensor, Value, concat, cross_entropy,
     init, stack,
 };
@@ -244,7 +244,7 @@ fn recorded(
 
 /// Serves one module and times repeated identical requests.
 fn timed(module: &str, name: &str, request: &[u8], response_len: usize) -> (f32, f64) {
-    let directory = std::env::temp_dir().join("poorgrad-attention-grading");
+    let directory = std::env::temp_dir().join("topos-attention-grading");
     std::fs::create_dir_all(&directory).expect("the staging directory creates");
     let module_path = directory.join(format!("{name}.mlir"));
     let static_path = directory.join("static.bin");
@@ -271,7 +271,7 @@ fn timed(module: &str, name: &str, request: &[u8], response_len: usize) -> (f32,
     )
     .expect("the manifest writes");
 
-    let python = std::env::var("POORGRAD_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let python = std::env::var("TOPOS_XLA_PYTHON").unwrap_or_else(|_| "python3".to_string());
     let mut command: Vec<String> = python.split_whitespace().map(str::to_string).collect();
     command.push("tools/serve-stablehlo-xla.py".to_string());
     let mut child: Child = Command::new(&command[0])
@@ -354,9 +354,9 @@ fn main() {
         let drift = (f64::from(formulation.oracle_loss) - f64::from(first)).abs()
             / f64::from(formulation.oracle_loss);
         // A red row on a flaky target is a finding, not a crash:
-        // `POORGRAD_ENVELOPE=report` keeps timing while naming the
+        // `TOPOS_ENVELOPE=report` keeps timing while naming the
         // deviation, the manifest posture for jax-metal.
-        if std::env::var("POORGRAD_ENVELOPE").as_deref() == Ok("report") {
+        if std::env::var("TOPOS_ENVELOPE").as_deref() == Ok("report") {
             if drift >= 1e-3 {
                 println!("{name}: RED ROW — left the oracle envelope, drift {drift:.1e}");
             }

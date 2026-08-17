@@ -15,7 +15,7 @@ use std::f32::consts::PI;
 use std::time::Instant;
 
 use malevich::{Cells, Frame, Line, Plot, Points};
-use poorgrad::{Mlp, Network, Shape, Tensor, Tensorial, init};
+use topos::{Mlp, Network, Shape, Tensor, Tensorial, init};
 
 /// How many points each half-moon holds.
 const MOON_LEN: usize = 100;

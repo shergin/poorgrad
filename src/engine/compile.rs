@@ -17,7 +17,7 @@ use super::{Designation, Symbol, Value, ValueRef};
 ///
 /// # Examples
 /// ```
-/// # use poorgrad::{Compile, Network};
+/// # use topos::{Compile, Network};
 /// # let network = Network::new();
 /// # let weight = network.parameter(1.0_f64);
 /// # let loss = (weight * weight).sum();

@@ -26,7 +26,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use poorgrad::{
+use topos::{
     Compile, Dropout, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy,
     init,
 };

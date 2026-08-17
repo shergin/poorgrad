@@ -20,7 +20,7 @@
 //! persist like any other value.
 //!
 //! ```no_run
-//! use poorgrad::{Network, Value};
+//! use topos::{Network, Value};
 //!
 //! let mut network: &'static Network<f64> = Network::leaked();
 //! let w: Value<'static, f64> = network.parameter(0.0);
@@ -43,7 +43,7 @@
 //! generations are still in scope:
 //!
 //! ```no_run
-//! # use poorgrad::{Network, Value};
+//! # use topos::{Network, Value};
 //! # let mut network: &'static Network<f64> = Network::leaked();
 //! # let w: Value<'static, f64> = network.parameter(0.0);
 //! # let loss: Value<'static, f64> = w * w;

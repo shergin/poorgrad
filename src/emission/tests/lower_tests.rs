@@ -233,7 +233,7 @@ fn unfold_case() -> Case {
 #[test]
 fn a_small_plan_emits_the_golden_module() {
     let expected = "\
-module @poorgrad {
+module @topos {
   func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> (tensor<f32>) {
     %v2 = stablehlo.dot_general %arg1, %arg0, contracting_dims = [1] x [0] : (tensor<2x2xf32>, tensor<2x2xf32>) -> tensor<2x2xf32>
     %v3_zero = stablehlo.constant dense<0.0> : tensor<2x2xf32>
@@ -409,7 +409,7 @@ fn toolchain(variable: &str, binary: &str) -> Option<Vec<String>> {
 
 /// Writes `content` to a unique temp file and returns its path.
 fn temp_file(name: &str, content: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("poorgrad-{name}-{}", std::process::id()));
+    let path = std::env::temp_dir().join(format!("topos-{name}-{}", std::process::id()));
     std::fs::write(&path, content).expect("the temp file writes");
     path
 }
@@ -468,7 +468,7 @@ fn bf16_matmuls_emit_the_accumulation_form() {
 fn emitted_modules_parse_through_the_toolchain() {
     // Tier-0 conformance: an external StableHLO parser must accept the
     // emitted text.
-    let Some(command) = toolchain("POORGRAD_STABLEHLO_VALIDATOR", "stablehlo-opt") else {
+    let Some(command) = toolchain("TOPOS_STABLEHLO_VALIDATOR", "stablehlo-opt") else {
         eprintln!("no StableHLO validator available; skipping the round-trip");
         return;
     };
@@ -529,7 +529,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
     // own results. The envelope is a coarse relative tolerance for
     // now; deriving envelopes from an `f64` oracle run is the designed
     // refinement.
-    let Some(command) = toolchain("POORGRAD_STABLEHLO_EVALUATOR", "poorgrad-stablehlo-eval") else {
+    let Some(command) = toolchain("TOPOS_STABLEHLO_EVALUATOR", "topos-stablehlo-eval") else {
         eprintln!("no StableHLO evaluator available; skipping the execution check");
         return;
     };

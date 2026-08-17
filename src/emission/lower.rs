@@ -141,7 +141,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         let result_names: Vec<&str> = results.iter().map(|(name, _)| name.as_str()).collect();
 
         let mut module = String::new();
-        writeln!(module, "module @poorgrad {{").expect("writing to a string cannot fail");
+        writeln!(module, "module @topos {{").expect("writing to a string cannot fail");
         writeln!(
             module,
             "  func.func @main({}) -> ({}) {{",
