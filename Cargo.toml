@@ -10,9 +10,9 @@ license = "MIT OR Apache-2.0"
 keywords = ["autograd", "autodiff", "backpropagation", "machine-learning", "educational"]
 categories = ["science", "mathematics"]
 
-# The logo is README furniture, not something a dependent compiles
-# against, and as an already-compressed PNG it was about half the
-# published download. The README points at the repository copy.
+# The logo is repository furniture, not something a dependent
+# compiles against, and as an already-compressed PNG it was about
+# half the published download.
 exclude = ["topos.png"]
 
 # The default libtest bench harness would intercept criterion's CLI
