@@ -13,7 +13,7 @@ evcxr_jupyter --install
 Then, in the first cell:
 
 ```rust
-:dep topos = { version = "0.10", features = ["evcxr"] }
+:dep topos = { version = "0.11", features = ["evcxr"] }
 use topos::*;
 ```
 
@@ -23,7 +23,7 @@ so the difference is felt immediately:
 
 ```
 :cache 500
-:dep topos = { version = "0.10", features = ["evcxr"] }
+:dep topos = { version = "0.11", features = ["evcxr"] }
 ```
 
 ## The two rules
