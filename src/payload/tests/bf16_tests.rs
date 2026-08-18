@@ -1,4 +1,4 @@
-use crate::{Network, Tensor};
+use crate::{Tape, Tensor};
 
 use super::Bf16;
 
@@ -172,11 +172,13 @@ fn scatter_accumulates_duplicate_rows_in_f32() {
 
 #[test]
 fn scalar_networks_differentiate_bf16() {
-    let network = Network::new();
-    let x = network.parameter(Bf16::from_f32(1.5));
-    let loss = x * x;
+    let tape = Tape::new();
+    let x = tape.parameter(Bf16::from_f32(1.5));
+    let loss = (x * x).symbol();
+    let x = x.symbol();
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(loss), Bf16::from_f32(2.25));
 
     let gradients = run.backward(loss);
@@ -213,18 +215,24 @@ fn bf16_gradients_track_f32_within_epsilon() {
     let weights = Tensor::new([2, 2], vec![0.8_f32, -1.3, 0.4, 2.1]);
     let x = Tensor::new([2, 2], vec![0.5_f32, -1.1, 1.9, 0.7]);
 
-    let oracle = Network::new();
-    let oracle_weights = oracle.parameter(weights.clone());
-    let oracle_x = oracle.leaf(x.clone());
-    let oracle_loss = oracle_x.matmul(oracle_weights).relu().sum();
-    let oracle_gradients = oracle.forward().backward(oracle_loss);
+    let oracle_tape = Tape::new();
+    let oracle_weights = oracle_tape.parameter(weights.clone());
+    let oracle_x = oracle_tape.leaf(x.clone());
+    let oracle_loss = oracle_x.matmul(oracle_weights).relu().sum().symbol();
+    let oracle_weights = oracle_weights.symbol();
+    let oracle = oracle_tape.into_network();
+    let oracle_gradients = oracle
+        .forward(&oracle.parameters(), [])
+        .backward(oracle_loss);
     let expected = oracle_gradients.of(oracle_weights).to_vec();
 
-    let network: Network<Tensor<Bf16>> = Network::new();
-    let narrowed_weights: Value<'_, Tensor<Bf16>> = network.parameter(weights.convert());
-    let narrowed_x = network.leaf(x.convert());
-    let loss = narrowed_x.matmul(narrowed_weights).relu().sum();
-    let gradients = network.forward().backward(loss);
+    let tape: Tape<Tensor<Bf16>> = Tape::new();
+    let narrowed_weights: Value<'_, Tensor<Bf16>> = tape.parameter(weights.convert());
+    let narrowed_x = tape.leaf(x.convert());
+    let loss = narrowed_x.matmul(narrowed_weights).relu().sum().symbol();
+    let narrowed_weights = narrowed_weights.symbol();
+    let network = tape.into_network();
+    let gradients = network.forward(&network.parameters(), []).backward(loss);
 
     let epsilon = 7.8125e-3_f32;
     for (narrow, wide) in gradients.of(narrowed_weights).iter().zip(expected) {
@@ -237,12 +245,14 @@ fn bf16_gradients_track_f32_within_epsilon() {
 
 #[test]
 fn tensor_networks_differentiate_bf16() {
-    let network = Network::new();
+    let tape = Tape::new();
     let elements: Vec<Bf16> = [-2.0, 0.0, 3.0].map(Bf16::from_f32).to_vec();
-    let x = network.leaf(Tensor::new([3], elements));
-    let loss = x.abs().sum();
+    let x = tape.leaf(Tensor::new([3], elements));
+    let loss = x.abs().sum().symbol();
+    let x = x.symbol();
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(loss).to_vec(), vec![Bf16::from_f32(5.0)]);
 
     let gradients = run.backward(loss);

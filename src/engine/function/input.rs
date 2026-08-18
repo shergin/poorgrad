@@ -4,8 +4,9 @@ use crate::engine::SlotId;
 /// run starts, falling back to a recorded default.
 ///
 /// The node holds only its slot; the default payload lives in the
-/// tape's input slot store, and `Network::forward_with` overlays fed
-/// payloads for one run without touching the graph. It behaves exactly
+/// spec's input slot store, and the feed pairs of `Network::forward`
+/// and `Plan::forward` overlay fed payloads for one run without
+/// touching the graph. It behaves exactly
 /// like `Leaf` during runs: supplied rather than computed, with no
 /// gradients routed back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

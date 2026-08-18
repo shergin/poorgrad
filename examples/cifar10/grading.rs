@@ -28,8 +28,8 @@ mod dataset;
 use std::time::Instant;
 
 use topos::{
-    Compile, Conv2d, Linear, Module, Network, Shape, Symbol, Tensor, Tensorial, Value,
-    cross_entropy, init, max_pool,
+    Compile, Conv2d, Linear, Module, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy,
+    init, max_pool,
 };
 
 use dataset::{Split, load, shuffle};
@@ -52,8 +52,8 @@ const FILTERS: [usize; 3] = [16, 32, 64];
 /// The flattened feature length after three 2x2 pools: `64 * 4 * 4`.
 const FLAT_LEN: usize = FILTERS[2] * (IMAGE_SIDE / 8) * (IMAGE_SIDE / 8);
 
-/// The model's layers, holding parameter symbols across generations;
-/// identical to `cifar10`, including every seed.
+/// The model's layers, holding parameter symbols; identical to
+/// `cifar10`, including every seed.
 struct Model {
     conv_1: Conv2d<Tensor<f32>>,
     conv_2: Conv2d<Tensor<f32>>,
@@ -62,9 +62,9 @@ struct Model {
 }
 
 impl Model {
-    /// Allocates the parameters on `network` exactly as `cifar10`
+    /// Allocates the parameters on `tape` exactly as `cifar10`
     /// does, so the routes train the same trajectory it would.
-    fn new(network: &Network<Tensor<f32>>) -> Self {
+    fn new(tape: &Tape<Tensor<f32>>) -> Self {
         let conv_1_weights =
             init::normal(21, (2.0 / 27.0_f64).sqrt())(&Shape::new([FILTERS[0], 3, 3, 3]));
         let conv_2_weights =
@@ -74,28 +74,28 @@ impl Model {
         let mut head_weights = init::kaiming(24);
         Self {
             conv_1: Conv2d::new(
-                network,
+                tape,
                 conv_1_weights,
                 Tensor::filled([FILTERS[0]], 0.0),
                 1,
                 1,
             ),
             conv_2: Conv2d::new(
-                network,
+                tape,
                 conv_2_weights,
                 Tensor::filled([FILTERS[1]], 0.0),
                 1,
                 1,
             ),
             conv_3: Conv2d::new(
-                network,
+                tape,
                 conv_3_weights,
                 Tensor::filled([FILTERS[2]], 0.0),
                 1,
                 1,
             ),
             head: Linear::new(
-                network,
+                tape,
                 head_weights(&Shape::new([FLAT_LEN, CLASSES])),
                 head_weights(&Shape::new([CLASSES])),
             ),
@@ -105,17 +105,16 @@ impl Model {
     /// Records the model's expression over `images` and returns the
     /// `[rows, 10]` logits: conv, rectify, pool, three times, then
     /// flatten and score.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<f32>>,
-        images: Value<'network, Tensor<f32>>,
+        tape: &'tape Tape<Tensor<f32>>,
+        images: Value<'tape, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f32>> {
-        let stage_1 = max_pool(self.conv_1.express(network, images).relu(), 2, 2);
-        let stage_2 = max_pool(self.conv_2.express(network, stage_1).relu(), 2, 2);
-        let stage_3 = max_pool(self.conv_3.express(network, stage_2).relu(), 2, 2);
-        self.head
-            .express(network, stage_3.reshape([rows, FLAT_LEN]))
+    ) -> Value<'tape, Tensor<f32>> {
+        let stage_1 = max_pool(self.conv_1.express(tape, images).relu(), 2, 2);
+        let stage_2 = max_pool(self.conv_2.express(tape, stage_1).relu(), 2, 2);
+        let stage_3 = max_pool(self.conv_3.express(tape, stage_2).relu(), 2, 2);
+        self.head.express(tape, stage_3.reshape([rows, FLAT_LEN]))
     }
 
     /// Returns the parameter symbols in a fixed order, for `wrt` and
@@ -157,42 +156,45 @@ fn main() {
     let (train, _test) = load();
     println!("route {route}: {steps} steps over {} images", train.len());
 
-    let network = Network::new();
-    let model = Model::new(&network);
-    let images = network.input(Tensor::filled(
+    let recorded = match route.as_str() {
+        "engine" => false,
+        "recorded" => true,
+        other => panic!("unknown TOPOS_ROUTE {other:?}; use engine or recorded"),
+    };
+
+    let tape = Tape::new();
+    let model = Model::new(&tape);
+    let images = tape.input(Tensor::filled(
         [BATCH_LEN, 3, IMAGE_SIDE, IMAGE_SIDE],
         0.0_f32,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], CLASSES, 1.0));
-    let loss = cross_entropy(model.express(&network, images, BATCH_LEN), targets);
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], CLASSES, 1.0));
+    let loss = cross_entropy(model.express(&tape, images, BATCH_LEN), targets);
 
-    let images_symbol = images.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
+    let (images, targets, loss) = (images.symbol(), targets.symbol(), loss.symbol());
     let parameter_symbols = model.parameters();
-    let forward_nodes = network.len();
+    let forward_nodes = tape.len();
 
     // The routes differ only here: what the plan computes and where
     // the gradients come from.
-    let (plan, gradient_symbols) = match route.as_str() {
-        "engine" => (
-            network.compile(Compile::roots([loss_symbol]).engine_backward()),
-            Vec::new(),
-        ),
-        "recorded" => {
-            let gradient_symbols = network.differentiate(loss_symbol, parameter_symbols);
-            println!(
-                "recorded the chain rule: {forward_nodes} forward nodes + {} gradient nodes",
-                network.len() - forward_nodes
-            );
-            (
-                network.compile(Compile::roots(
-                    std::iter::once(loss_symbol).chain(gradient_symbols.iter().copied()),
-                )),
-                gradient_symbols,
-            )
-        }
-        other => panic!("unknown TOPOS_ROUTE {other:?}; use engine or recorded"),
+    let gradient_symbols = if recorded {
+        let gradient_symbols = tape.differentiate(loss, parameter_symbols);
+        println!(
+            "recorded the chain rule: {forward_nodes} forward nodes + {} gradient nodes",
+            tape.len() - forward_nodes
+        );
+        gradient_symbols
+    } else {
+        Vec::new()
+    };
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
+    let plan = if recorded {
+        network.compile(Compile::roots(
+            std::iter::once(loss).chain(gradient_symbols.iter().copied()),
+        ))
+    } else {
+        network.compile(Compile::roots([loss]).engine_backward())
     };
     for line in plan
         .describe()
@@ -208,7 +210,6 @@ fn main() {
 
     let fast = Tensor::new([], [0.05_f32]);
     let slow = Tensor::new([], [0.005_f32]);
-    let mut network = network;
     let mut first_loss = 0.0_f32;
     let mut last_loss = 0.0_f32;
     let training = Instant::now();
@@ -218,27 +219,27 @@ fn main() {
         let (batch_images, batch_targets) = batch_payloads(&train, batch);
 
         let run = plan.forward(
-            &network,
-            [
-                (images_symbol, batch_images),
-                (targets_symbol, batch_targets),
-            ],
+            &parameters,
+            [(images, batch_images), (targets, batch_targets)],
         );
-        let batch_loss = run.of(network.resolve(loss_symbol)).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         if step == 0 {
             first_loss = batch_loss;
         }
         last_loss = batch_loss;
 
-        let gradients = if route == "recorded" {
-            run.recorded_gradients(parameter_symbols.iter().zip(&gradient_symbols).map(
-                |(&parameter, &gradient)| (network.resolve(parameter), network.resolve(gradient)),
-            ))
+        let gradients = if recorded {
+            run.recorded_gradients(
+                parameter_symbols
+                    .iter()
+                    .copied()
+                    .zip(gradient_symbols.iter().copied()),
+            )
         } else {
-            run.backward(network.resolve(loss_symbol))
+            run.backward(loss)
         };
         let learning_rate = if step < steps * 3 / 4 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }

@@ -1,7 +1,7 @@
-use crate::{Differentiable, Gradients, Network, Tensorial};
+use crate::{Differentiable, Gradients, Parameters, Tensorial};
 
-/// A training-step strategy: how one generation's gradients become the
-/// next generation's parameters.
+/// A training-step strategy: how gradients and the current parameter
+/// state become the next state.
 ///
 /// It is the loop-land analogue of what [`Activation`](super::Activation)
 /// is to a layer — a uniform slot the training loop can hand any
@@ -16,18 +16,18 @@ use crate::{Differentiable, Gradients, Network, Tensorial};
 /// schedules stay caller-owned loop arithmetic, visible on the page
 /// like every other training decision.
 pub trait Optimizer<Data: Tensorial> {
-    /// Returns the next network generation stepped by `gradients` at
-    /// `learning_rate`, updating this optimizer's own state.
+    /// Returns `parameters` stepped by `gradients` at `learning_rate`,
+    /// updating this optimizer's own state.
     ///
     /// The gradients may come from [`Run::backward`](crate::Run::backward)
     /// or from [`Run::recorded_gradients`](crate::Run::recorded_gradients)
     /// over a compiled gradient plan — a field is a field.
     fn step(
         &mut self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         gradients: &Gradients<Data>,
         learning_rate: &Data,
-    ) -> Network<Data>;
+    ) -> Parameters<Data>;
 }
 
 /// Plain stochastic gradient descent: the strategy every example's
@@ -40,11 +40,11 @@ pub struct Sgd;
 impl<Data: Tensorial> Optimizer<Data> for Sgd {
     fn step(
         &mut self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         gradients: &Gradients<Data>,
         learning_rate: &Data,
-    ) -> Network<Data> {
-        network.update(gradients, |parameter, gradient| {
+    ) -> Parameters<Data> {
+        parameters.step(gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         })
     }

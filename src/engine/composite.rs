@@ -20,7 +20,7 @@ use crate::{Elementary, Shape, Tensorial};
 
 use super::Value;
 
-impl<'network, Data: Elementary> Value<'network, Data> {
+impl<'tape, Data: Elementary> Value<'tape, Data> {
     /// Records the absolute value of this value as the composition
     /// `self.maximum(-self)` and returns a proxy to it; the subgradient
     /// at zero is one, by `maximum`'s left-biased tie rule.
@@ -29,7 +29,7 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     }
 }
 
-impl<'network, Data: Tensorial> Value<'network, Data> {
+impl<'tape, Data: Tensorial> Value<'tape, Data> {
     /// Records the softmax probabilities of this value along `axis` as
     /// the composition `self.log_softmax(axis).exp()` and returns a proxy
     /// to it.
@@ -160,10 +160,10 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
 /// # Panics
 /// Panics if `values` is empty, the values belong to different networks,
 /// `axis` is out of rank, or the shapes disagree anywhere but `axis`.
-pub fn concat<'network, Data: Tensorial>(
-    values: &[Value<'network, Data>],
+pub fn concat<'tape, Data: Tensorial>(
+    values: &[Value<'tape, Data>],
     axis: usize,
-) -> Value<'network, Data> {
+) -> Value<'tape, Data> {
     let first = values.first().expect("concat requires at least one value");
     let reference = first.shape();
     assert!(
@@ -184,7 +184,7 @@ pub fn concat<'network, Data: Tensorial>(
     }
     let combined: usize = values.iter().map(|value| value.shape().axes()[axis]).sum();
     let mut offset = 0;
-    let mut total: Option<Value<'network, Data>> = None;
+    let mut total: Option<Value<'tape, Data>> = None;
     for &value in values {
         let padded = value.pad(axis, offset, combined);
         offset += value.shape().axes()[axis];
@@ -203,11 +203,11 @@ pub fn concat<'network, Data: Tensorial>(
 /// # Panics
 /// Panics if `values` is empty, the values belong to different networks,
 /// `axis` exceeds the values' rank, or the shapes differ.
-pub fn stack<'network, Data: Tensorial>(
-    values: &[Value<'network, Data>],
+pub fn stack<'tape, Data: Tensorial>(
+    values: &[Value<'tape, Data>],
     axis: usize,
-) -> Value<'network, Data> {
-    let lifted: Vec<Value<'network, Data>> =
+) -> Value<'tape, Data> {
+    let lifted: Vec<Value<'tape, Data>> =
         values.iter().map(|&value| value.unsqueeze(axis)).collect();
     concat(&lifted, axis)
 }

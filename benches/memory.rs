@@ -1,9 +1,9 @@
 //! Reports the allocation behavior of training, in exact bytes rather
 //! than timings: how much a step allocates in total, and how much of it
-//! survives the step. The parameter store drove retention to zero —
-//! replaced payloads drop with their generation instead of accumulating
-//! in the arena — and this report is the regression fence keeping it
-//! there.
+//! survives the step. The caller-owned parameter state keeps retention
+//! at zero — replaced payloads drop with the previous state instead of
+//! accumulating in the arena — and this report is the regression fence
+//! keeping it there.
 //!
 //! Not a criterion benchmark: a counting global allocator gives
 //! deterministic numbers where RSS sampling is noisy. The `unsafe` here
@@ -13,7 +13,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use topos::{Network, Tensor, Tensorial};
+use topos::{Tape, Tensor, Tensorial};
 
 static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 static FREED: AtomicUsize = AtomicUsize::new(0);
@@ -75,37 +75,36 @@ fn main() {
     const STEPS: usize = 1000;
 
     // A 200-parameter quadratic bowl: the scalar training pattern.
-    let scalar = Network::new();
+    let scalar_tape = Tape::new();
     let target = (0..200)
-        .map(|index| scalar.parameter(index as f64))
+        .map(|index| scalar_tape.parameter(index as f64))
         .reduce(|total, parameter| total + parameter * parameter)
-        .expect("at least one parameter");
-    let target_symbol = target.symbol();
-    let mut scalar = scalar;
+        .expect("at least one parameter")
+        .symbol();
+    let scalar = scalar_tape.into_network();
+    let mut scalar_parameters = scalar.parameters();
     report("scalar training, 200 parameters", STEPS, || {
-        let target = scalar.resolve(target_symbol);
-        let evaluation = scalar.forward();
+        let evaluation = scalar.forward(&scalar_parameters, []);
         let gradients = evaluation.backward(target);
-        scalar = scalar.update(&gradients, |parameter, gradient| {
+        scalar_parameters = scalar_parameters.step(&gradients, |parameter, gradient| {
             parameter - 0.01 * gradient
         });
     });
 
     // The matrix-form regression: one tensor parameter of 512 elements.
-    let tensor = Network::new();
-    let inputs = tensor.leaf(Tensor::filled([64, 32], 0.5_f64));
-    let weights = tensor.parameter(Tensor::filled([32, 16], 0.1_f64));
-    let targets = tensor.leaf(Tensor::filled([64, 16], 1.0_f64));
+    let tensor_tape = Tape::new();
+    let inputs = tensor_tape.leaf(Tensor::filled([64, 32], 0.5_f64));
+    let weights = tensor_tape.parameter(Tensor::filled([32, 16], 0.1_f64));
+    let targets = tensor_tape.leaf(Tensor::filled([64, 16], 1.0_f64));
     let error = inputs.matmul(weights) - targets;
-    let loss = (error * error).sum();
-    let loss_symbol = loss.symbol();
+    let loss = (error * error).sum().symbol();
     let learning_rate = Tensor::new([], [0.01_f64]);
-    let mut tensor = tensor;
+    let tensor = tensor_tape.into_network();
+    let mut tensor_parameters = tensor.parameters();
     report("tensor training, [32, 16] parameter", STEPS, || {
-        let loss = tensor.resolve(loss_symbol);
-        let evaluation = tensor.forward();
+        let evaluation = tensor.forward(&tensor_parameters, []);
         let gradients = evaluation.backward(loss);
-        tensor = tensor.update(&gradients, |parameter, gradient| {
+        tensor_parameters = tensor_parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     });

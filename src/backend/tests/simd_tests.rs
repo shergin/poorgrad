@@ -1,6 +1,6 @@
 use std::ops::{Add, Mul};
 
-use crate::{Differentiable, GemmTask, Network, Shape, Tensor, init};
+use crate::{Differentiable, GemmTask, Shape, Tape, Tensor, init};
 
 use super::{executed_f32, executed_f64, gemm_f32, strides_for};
 
@@ -217,26 +217,26 @@ fn training_runs_through_the_backend_end_to_end() {
     // so forward and backward (transposed views included) route
     // through the kernel against the real tape — on any platform,
     // which is the point of this backend.
-    let network = Network::new();
-    let inputs = network.input(Tensor::filled([64, 8], 0.5_f64));
-    let targets = network.input(Tensor::filled([64, 1], 1.0_f64));
+    let tape = Tape::new();
+    let inputs = tape.input(Tensor::filled([64, 8], 0.5_f64));
+    let targets = tape.input(Tensor::filled([64, 1], 1.0_f64));
     let mut initializer = init::uniform(11, 0.3);
-    let weights = network.parameter(initializer(&Shape::new([8, 64])));
-    let output_weights = network.parameter(initializer(&Shape::new([64, 1])));
+    let weights = tape.parameter(initializer(&Shape::new([8, 64])));
+    let output_weights = tape.parameter(initializer(&Shape::new([64, 1])));
     let hidden = inputs.matmul(weights).tanh();
     let prediction = hidden.matmul(output_weights);
     let error = prediction - targets;
     let loss = (error * error).sum();
     let loss_symbol = loss.symbol();
 
-    let mut network = network;
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
     let mut last_loss = f64::INFINITY;
     for _ in 0..50 {
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward();
-        last_loss = run.of(loss_value).to_vec()[0];
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |weight, gradient| {
+        let run = network.forward(&parameters, []);
+        last_loss = run.of(loss_symbol).to_vec()[0];
+        let gradients = run.backward(loss_symbol);
+        parameters = parameters.step(&gradients, |weight, gradient| {
             weight.clone() - Tensor::filled(gradient.shape(), 0.001) * gradient.clone()
         });
     }

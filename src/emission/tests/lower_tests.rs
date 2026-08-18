@@ -1,6 +1,6 @@
 use std::process::Command;
 
-use crate::{Bf16, Compile, Differentiable, Network, Shape, Tensor, concat, cross_entropy};
+use crate::{Bf16, Compile, Differentiable, Shape, Tape, Tensor, concat, cross_entropy};
 
 /// One emitted module with the payloads and oracle results the
 /// conformance tests replay: the arguments in the module's own order
@@ -23,14 +23,15 @@ struct Case {
 /// Builds the smallest interesting case: an input times a parameter,
 /// rectified and summed.
 fn small_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let weights = Tensor::new([2, 2], [1.0_f32, 2.0, 3.0, 4.0]);
-    let weights_value = network.parameter(weights.clone());
+    let weights_value = tape.parameter(weights.clone());
     let x = Tensor::new([2, 2], [0.5_f32, -1.0, 2.0, 3.0]);
-    let x_value = network.input(x.clone());
-    let loss = x_value.matmul(weights_value).relu().sum();
+    let x_value = tape.input(x.clone());
+    let loss = x_value.matmul(weights_value).relu().sum().symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([loss]));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     Case {
         name: "small",
         tolerance: 1e-4,
@@ -44,18 +45,18 @@ fn small_case() -> Case {
 /// gather, masked softmax over scaled scores, two heads joined by
 /// concat.
 fn attention_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let table = Tensor::new(
         [3, 4],
         (0..12)
             .map(|index| index as f32 / 10.0 - 0.5)
             .collect::<Vec<_>>(),
     );
-    let table_value = network.parameter(table.clone());
+    let table_value = tape.parameter(table.clone());
     let tokens = Tensor::selection(vec![0, 1], 3, 1.0_f32);
-    let tokens_value = network.input(tokens.clone());
-    let mask = network.leaf(Tensor::new([2, 2], [0.0_f32, f32::NEG_INFINITY, 0.0, 0.0]));
-    let scale = network.leaf(Tensor::filled([], 0.5_f32));
+    let tokens_value = tape.input(tokens.clone());
+    let mask = tape.leaf(Tensor::new([2, 2], [0.0_f32, f32::NEG_INFINITY, 0.0, 0.0]));
+    let scale = tape.leaf(Tensor::filled([], 0.5_f32));
 
     let stream = table_value.gather(tokens_value);
     let heads: Vec<_> = (0..2)
@@ -65,9 +66,10 @@ fn attention_case() -> Case {
             weights.matmul(stream)
         })
         .collect();
-    let output = concat(&heads, 1);
+    let output = concat(&heads, 1).symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([output]));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_tokens = Tensor::new(Shape::new([2, 3]), tokens.to_vec());
     Case {
@@ -83,19 +85,20 @@ fn attention_case() -> Case {
 /// stable expanded form the loss composes, exercising the newest
 /// lowering end to end.
 fn cross_entropy_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let logits = Tensor::new(
         [2, 3],
         (0..6)
             .map(|index| index as f32 * 0.7 - 2.0)
             .collect::<Vec<_>>(),
     );
-    let logits_value = network.parameter(logits.clone());
+    let logits_value = tape.parameter(logits.clone());
     let targets = Tensor::selection(vec![0, 2], 3, 1.0_f32);
-    let targets_value = network.input(targets.clone());
-    let loss = cross_entropy(logits_value, targets_value);
+    let targets_value = tape.input(targets.clone());
+    let loss = cross_entropy(logits_value, targets_value).symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([loss]));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     // The one-hot selection crosses the boundary as its dense matrix.
     let dense_targets = Tensor::new(Shape::new([2, 3]), targets.to_vec());
     Case {
@@ -112,38 +115,39 @@ fn cross_entropy_case() -> Case {
 /// the result list, exercising the `Step`, `Fold`, and `Scatter`
 /// lowerings the derivative rules introduce.
 fn gradient_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let signal = Tensor::new(
         [8],
         (0..8).map(|v| v as f32 * 0.6 - 2.1).collect::<Vec<_>>(),
     );
-    let signal_value = network.parameter(signal.clone());
+    let signal_value = tape.parameter(signal.clone());
     let mix = Tensor::new(
         [3, 3],
         (0..9).map(|v| v as f32 * 0.25 - 1.0).collect::<Vec<_>>(),
     );
-    let mix_value = network.parameter(mix.clone());
+    let mix_value = tape.parameter(mix.clone());
     let table = Tensor::new(
         [3, 2],
         (0..6).map(|v| v as f32 * 0.5 - 1.25).collect::<Vec<_>>(),
     );
-    let table_value = network.parameter(table.clone());
+    let table_value = tape.parameter(table.clone());
     let tokens = Tensor::selection(vec![0, 2, 0], 3, 1.0_f32);
-    let tokens_value = network.input(tokens.clone());
+    let tokens_value = tape.input(tokens.clone());
 
     let windows = (signal_value.unfold(0, 3, 2, 1) * mix_value).relu().sum();
     let lookup = table_value.gather(tokens_value).sum();
     let loss = windows + lookup;
-    let gradients = network.differentiate(loss, [signal_value, table_value]);
+    let gradients = tape.differentiate(loss, [signal_value, table_value]);
 
     // The module's result list follows recording order, so the
     // expected vectors must too.
     let mut readable: Vec<_> = std::iter::once(loss.into())
         .chain(gradients.iter().copied())
         .collect();
-    readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
+    readable.sort_by_key(|&symbol: &crate::Symbol| symbol.id.index());
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots(readable.clone()));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     let dense_tokens = Tensor::new(Shape::new([3, 3]), tokens.to_vec());
     Case {
         name: "gradient",
@@ -171,28 +175,29 @@ fn differentiated_modules_carry_the_new_lowerings() {
 /// `dot_general` lowering (batching dims on both sides) and its
 /// permute-closed adjoint.
 fn batched_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let a = Tensor::new(
         [2, 2, 3],
         (0..12).map(|v| v as f32 / 6.0 - 1.0).collect::<Vec<_>>(),
     );
-    let a_value = network.parameter(a.clone());
+    let a_value = tape.parameter(a.clone());
     let b = Tensor::new(
         [2, 3, 2],
         (0..12).map(|v| v as f32 / 4.0 - 1.5).collect::<Vec<_>>(),
     );
-    let b_value = network.input(b.clone());
+    let b_value = tape.input(b.clone());
     let loss = a_value.matmul(b_value).sum();
-    let gradients = network.differentiate(loss, [a_value, b_value]);
+    let gradients = tape.differentiate(loss, [a_value, b_value]);
 
     // The module's result list follows recording order, so the
     // expected vectors must too.
     let mut readable: Vec<_> = std::iter::once(loss.into())
         .chain(gradients.iter().copied())
         .collect();
-    readable.sort_by_key(|&symbol| network.resolve(symbol).id().index());
+    readable.sort_by_key(|&symbol: &crate::Symbol| symbol.id.index());
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots(readable.clone()));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     Case {
         name: "batched",
         tolerance: 1e-4,
@@ -215,12 +220,13 @@ fn batched_products_lower_with_batching_dims() {
 /// Builds overlapping windows over a parameter: the static-gather
 /// completeness fallback for `unfold`.
 fn unfold_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let x = Tensor::new([8], (1..=8).map(|value| value as f32).collect::<Vec<_>>());
-    let x_value = network.parameter(x.clone());
-    let windows = x_value.unfold(0, 3, 2, 1);
+    let x_value = tape.parameter(x.clone());
+    let windows = x_value.unfold(0, 3, 2, 1).symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([windows]));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     Case {
         name: "unfold",
         tolerance: 1e-4,
@@ -285,27 +291,28 @@ fn unfold_emits_a_static_gather() {
 fn convolution_case() -> Case {
     use crate::conv2d;
 
-    let network = Network::new();
+    let tape = Tape::new();
     let image = Tensor::new(
         [1, 2, 4, 4],
         (0..32)
             .map(|index| index as f32 / 8.0 - 2.0)
             .collect::<Vec<_>>(),
     );
-    let image_value = network.parameter(image.clone());
+    let image_value = tape.parameter(image.clone());
     let weights = Tensor::new(
         [2, 2, 2, 2],
         (0..16)
             .map(|index| index as f32 / 4.0 - 2.0)
             .collect::<Vec<_>>(),
     );
-    let weights_value = network.parameter(weights.clone());
+    let weights_value = tape.parameter(weights.clone());
     let bias = Tensor::new([2], [0.25_f32, -0.5]);
-    let bias_value = network.parameter(bias.clone());
-    let convolved = conv2d(image_value, weights_value, bias_value, 2, 1);
+    let bias_value = tape.parameter(bias.clone());
+    let convolved = conv2d(image_value, weights_value, bias_value, 2, 1).symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([convolved]));
     assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     Case {
         name: "convolution",
         tolerance: 1e-4,
@@ -321,37 +328,42 @@ fn convolution_case() -> Case {
 fn probe_case() -> Case {
     use crate::{conv2d, max_pool};
 
-    let network = Network::new();
+    let tape = Tape::new();
     let image = Tensor::new(
         [1, 2, 6, 6],
         (0..72)
             .map(|index| (index % 13) as f32 / 6.0 - 1.0)
             .collect::<Vec<_>>(),
     );
-    let image_value = network.parameter(image.clone());
+    let image_value = tape.parameter(image.clone());
     let weights = Tensor::new(
         [3, 2, 3, 3],
         (0..54)
             .map(|index| (index % 11) as f32 / 5.0 - 1.0)
             .collect::<Vec<_>>(),
     );
-    let weights_value = network.parameter(weights.clone());
+    let weights_value = tape.parameter(weights.clone());
     let bias = Tensor::new([3], [0.1_f32, -0.2, 0.3]);
-    let bias_value = network.parameter(bias.clone());
+    let bias_value = tape.parameter(bias.clone());
     let dense = Tensor::new(
         [27, 5],
         (0..135)
             .map(|index| (index % 7) as f32 / 3.0 - 1.0)
             .collect::<Vec<_>>(),
     );
-    let dense_value = network.parameter(dense.clone());
+    let dense_value = tape.parameter(dense.clone());
 
     let features = conv2d(image_value, weights_value, bias_value, 1, 1).relu();
     let pooled = max_pool(features, 2, 2);
-    let scores = pooled.reshape([1, 27]).matmul(dense_value).log_softmax(1);
+    let scores = pooled
+        .reshape([1, 27])
+        .matmul(dense_value)
+        .log_softmax(1)
+        .symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([scores]));
     assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     Case {
         name: "probe",
         tolerance: 1e-4,
@@ -426,16 +438,17 @@ fn expanded(tensor: &Tensor<Bf16>) -> Tensor<f32> {
 /// representable so the case stays stable across accumulation
 /// semantics.
 fn bf16_case() -> Case {
-    let network = Network::new();
+    let tape = Tape::new();
     let weights_elements: Vec<Bf16> = [1.0_f32, 2.0, 3.0, 4.0].map(Bf16::from_f32).to_vec();
     let weights = Tensor::new([2, 2], weights_elements);
-    let weights_value = network.parameter(weights.clone());
+    let weights_value = tape.parameter(weights.clone());
     let x_elements: Vec<Bf16> = [0.5_f32, -1.0, 2.0, 3.0].map(Bf16::from_f32).to_vec();
     let x = Tensor::new([2, 2], x_elements);
-    let x_value = network.input(x.clone());
-    let loss = x_value.matmul(weights_value).relu().sum();
+    let x_value = tape.input(x.clone());
+    let loss = x_value.matmul(weights_value).relu().sum().symbol();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots([loss]));
-    let run = plan.forward(&network, []);
+    let run = plan.forward(&network.parameters(), []);
     let expected: Vec<f32> = run.of(loss).iter().map(Bf16::to_f32).collect();
     Case {
         name: "bf16-small",

@@ -13,7 +13,7 @@
 //! result order is pinned by recording one same-shape `reshape`
 //! alias per gradient in the order the caller wants results, and
 //! training stages every argument dynamic, because parameters change
-//! each generation — the host sends them with the batch and never
+//! every step — the host sends them with the batch and never
 //! writes them back onto the tape.
 //!
 //! Serving needs a Python with `jax` (`TOPOS_XLA_PYTHON` names
@@ -32,7 +32,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Compile, Differentiable, Network, Shape, Symbol, Tensor, Tensorial, Value, cross_entropy, init,
+    Compile, Differentiable, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy, init,
 };
 
 use corpus::{VOCABULARY_LEN, load_names, shuffle, training_samples};
@@ -72,11 +72,11 @@ fn initial_parameters() -> [Tensor<f32>; 5] {
 /// Records the model's expression over `contexts` and returns the
 /// `[rows, vocab]` logits: embed, flatten the context window, squash,
 /// and score. `parameters` arrive in `initial_parameters` order.
-fn express<'network>(
-    parameters: &[Value<'network, Tensor<f32>>; 5],
-    contexts: Value<'network, Tensor<f32>>,
+fn express<'tape>(
+    parameters: &[Value<'tape, Tensor<f32>>; 5],
+    contexts: Value<'tape, Tensor<f32>>,
     rows: usize,
-) -> Value<'network, Tensor<f32>> {
+) -> Value<'tape, Tensor<f32>> {
     let [
         embeddings,
         hidden_weights,
@@ -108,7 +108,7 @@ fn batch_payloads(batch: &[([usize; CONTEXT_LEN], usize)]) -> (Tensor<f32>, Tens
 
 /// The resident XLA server over `tools/serve-stablehlo-xla.py`:
 /// compile once, then one request per training step. Every argument
-/// is dynamic — parameters change each generation.
+/// is dynamic — parameters change every step.
 struct XlaServer {
     child: Child,
     requests: ChildStdin,
@@ -196,22 +196,20 @@ fn main() {
     // Record the expression and the chain rule once. The network's
     // only job here is to be the spec: after `emit_stablehlo`, the
     // emitted route never touches it again.
-    let network = Network::new();
+    let tape = Tape::new();
     let initial = initial_parameters();
-    let parameters = initial.clone().map(|payload| network.parameter(payload));
-    let contexts = network.input(Tensor::selection(
+    let parameters = initial.clone().map(|payload| tape.parameter(payload));
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let loss = cross_entropy(express(&parameters, contexts, BATCH_LEN), targets);
 
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
+    let (contexts, targets, loss) = (contexts.symbol(), targets.symbol(), loss.symbol());
     let parameter_symbols = parameters.map(|parameter| parameter.symbol());
-    let gradient_symbols = network.differentiate(loss_symbol, parameter_symbols);
+    let gradient_symbols = tape.differentiate(loss, parameter_symbols);
     // Pin the emitted result order: results are the readable set in
     // recording order, and the raw gradient nodes sit at scan-artifact
     // positions, so record one same-shape reshape alias per gradient,
@@ -219,12 +217,13 @@ fn main() {
     let aliases: Vec<Symbol> = gradient_symbols
         .iter()
         .map(|&gradient| {
-            let value = network.resolve(gradient);
+            let value = tape.resolve(gradient);
             value.reshape(value.shape()).symbol()
         })
         .collect();
+    let network = tape.into_network();
     let plan = network.compile(Compile::roots(
-        std::iter::once(loss_symbol).chain(aliases.iter().copied()),
+        std::iter::once(loss).chain(aliases.iter().copied()),
     ));
     let module = plan.emit_stablehlo().expect("the joint step emits");
     println!(
@@ -239,32 +238,27 @@ fn main() {
 
     // Route one, the oracle: the in-crate recorded plan, bit-identical
     // to `makemore_mlp_compiled`.
-    let mut oracle_network = network.clone();
+    let mut oracle_parameters = network.parameters();
     let mut oracle_losses = Vec::new();
     let oracle_clock = Instant::now();
     for step in 0..STEPS {
         let start = (step * BATCH_LEN) % (samples.len() - BATCH_LEN);
         let (batch_contexts, batch_targets) = batch_payloads(&samples[start..start + BATCH_LEN]);
         let run = plan.forward(
-            &oracle_network,
-            [
-                (contexts_symbol, batch_contexts),
-                (targets_symbol, batch_targets),
-            ],
+            &oracle_parameters,
+            [(contexts, batch_contexts), (targets, batch_targets)],
         );
-        oracle_losses.push(run.of(loss_symbol).to_vec()[0]);
+        oracle_losses.push(run.of(loss).to_vec()[0]);
         // The aliases are the readable set; they carry the gradient
         // payloads bit for bit (a same-shape reshape is the identity).
-        let gradients = run.recorded_gradients(parameter_symbols.iter().zip(&aliases).map(
-            |(&parameter, &alias)| {
-                (
-                    oracle_network.resolve(parameter),
-                    oracle_network.resolve(alias),
-                )
-            },
-        ));
+        let gradients = run.recorded_gradients(
+            parameter_symbols
+                .iter()
+                .copied()
+                .zip(aliases.iter().copied()),
+        );
         let rate = learning_rate(step);
-        oracle_network = oracle_network.update(&gradients, |parameter, gradient| {
+        oracle_parameters = oracle_parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * rate.broadcast_like(gradient)
         });
     }

@@ -2,31 +2,31 @@
 //!
 //! The module adds no types and no vocabulary. It implements
 //! `evcxr_display` — the method name Evcxr's code generator calls on a
-//! cell's final expression — on the types the crate already has, and
-//! it adds [`Network::leaked`] and [`Network::leak`], two constructors
-//! that hand back a `&'static Network` so recorded proxies survive a
-//! cell boundary. Everything a notebook does here is the ordinary API.
+//! cell's final expression — on the types the crate already has.
+//! Everything a notebook does here is the ordinary API.
 //!
 //! # Persisting across cells
 //!
 //! Evcxr compiles every cell as its own crate and keeps the variables
-//! between them, which imposes two rules that shape the whole idiom.
+//! between them, which imposes two rules that shape the idiom.
 //!
 //! **A persisted variable cannot borrow another one.** A
-//! [`Value`](crate::Value) proxy borrows its network, so a plain
-//! `let w = network.parameter(0.0);` is rejected the moment the cell
-//! ends. Leaking the network resolves it: a `&'static Network` is
-//! borrowed from nothing, so its proxies are `Value<'static, _>` and
-//! persist like any other value.
+//! [`Value`](crate::Value) proxy borrows its tape, so it lives and
+//! dies inside one cell; the detached [`Symbol`](crate::Symbol) is
+//! the cross-cell currency. End a recording cell with `.symbol()`
+//! bindings and reenter through [`Tape::resolve`](crate::Tape::resolve):
 //!
 //! ```no_run
-//! use topos::{Network, Value};
+//! use topos::{Symbol, Tape};
 //!
-//! let mut network: &'static Network<f64> = Network::leaked();
-//! let w: Value<'static, f64> = network.parameter(0.0);
-//! let x: Value<'static, f64> = network.input(0.0);
-//! let y: Value<'static, f64> = network.input(0.0);
-//! let loss: Value<'static, f64> = (w * x - y) * (w * x - y);
+//! let tape: Tape<f64> = Tape::new();
+//! let w: Symbol = tape.parameter(0.0).symbol();
+//! let x: Symbol = tape.input(0.0).symbol();
+//! let y: Symbol = tape.input(0.0).symbol();
+//! let loss: Symbol = {
+//!     let (w, x, y) = (tape.resolve(w), tape.resolve(x), tape.resolve(y));
+//!     ((w * x - y) * (w * x - y)).symbol()
+//! };
 //! ```
 //!
 //! **A persisted variable needs an explicit type.** Evcxr infers a
@@ -35,46 +35,32 @@
 //! of this crate — it cannot infer `let v = vec![1.0_f64];` either —
 //! so annotate every binding that has to survive.
 //!
-//! # Crossing generations
+//! # Sealing and training
 //!
-//! [`Network::update`](crate::Network::update) returns the next
-//! generation, and a proxy stays bound to the generation that recorded
-//! it. In a notebook that distinction becomes visible, because both
-//! generations are still in scope:
+//! [`Tape::into_network`](crate::Tape::into_network) consumes the
+//! persisted tape — Evcxr tracks the move, so the `tape` variable
+//! simply ends where the `network` one begins. Training is pure data
+//! over the caller-owned state:
 //!
 //! ```no_run
-//! # use topos::{Network, Value};
-//! # let mut network: &'static Network<f64> = Network::leaked();
-//! # let w: Value<'static, f64> = network.parameter(0.0);
-//! # let loss: Value<'static, f64> = w * w;
-//! // A training cell keeps one owned generation and leaks once at the
-//! // end, so re-running it costs one parameter store, not one per step.
-//! let first = network.forward().backward(loss);
-//! let mut current = network.update(&first, |p, g| p - 0.02 * g);
-//! for _ in 1..300 {
-//!     let target = current.resolve(loss.symbol());
-//!     let gradients = current.forward().backward(target);
-//!     current = current.update(&gradients, |p, g| p - 0.02 * g);
+//! # use topos::{Network, Parameters, Symbol, Tape};
+//! # let tape: Tape<f64> = Tape::new();
+//! # let w: Symbol = tape.parameter(0.0).symbol();
+//! # let loss: Symbol = { let w = tape.resolve(w); (w * w).symbol() };
+//! let network: Network<f64> = tape.into_network();
+//! let mut parameters: Parameters<f64> = network.parameters();
+//! for _ in 0..300 {
+//!     let gradients = network.forward(&parameters, []).backward(loss);
+//!     parameters = parameters.step(&gradients, |p, g| p - 0.02 * g);
 //! }
-//! network = current.leak();
-//!
-//! w.payload();                                 // the generation that recorded it
-//! network.resolve(w.symbol()).payload();       // the generation that trained
+//! parameters.of(w);            // the trained payload, by name
 //! ```
 //!
-//! Read a trained parameter through its [`Symbol`](crate::Symbol):
-//! symbols are detached names that resolve in any compatible
-//! generation, which is exactly what a notebook needs and exactly what
-//! the generation machinery was built for.
-//!
-//! # Leaking, honestly
-//!
-//! [`Network::leaked`] and [`Network::leak`] never free. One leaked
-//! generation costs its parameter store; the recorded graph is shared,
-//! not copied. A session that leaks once per cell run stays negligible,
-//! and a process that ends when the notebook does reclaims all of it.
-//! Leaking inside a training loop instead of after it is the one
-//! mistake worth naming: that leaks a store per step.
+//! To record more later, reopen with
+//! [`Network::into_tape`](crate::Network::into_tape) — another
+//! tracked move — and carry the state across with
+//! [`Parameters::carried`](crate::Parameters::carried). Symbols keep
+//! resolving through every round trip.
 //!
 //! # Cell output
 //!
@@ -91,7 +77,9 @@
 mod field;
 mod html;
 mod network;
+mod parameters;
 mod plan;
 mod render;
+mod tape;
 mod tensor;
 mod value;

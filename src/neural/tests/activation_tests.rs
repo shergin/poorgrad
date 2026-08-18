@@ -1,23 +1,26 @@
-use crate::{Network, Tensor};
+use crate::{Tape, Tensor};
 
 use super::Activation;
 
-/// Evaluates `activation` over `inputs` on a fresh network and returns
+/// Evaluates `activation` over `inputs` on a fresh tape and returns
 /// the outputs.
 fn evaluated(activation: Activation, inputs: &[f64]) -> Vec<f64> {
-    let network = Network::new();
-    let value = network.leaf(Tensor::new([inputs.len()], inputs.to_vec()));
-    let expressed = activation.express(value);
-    let run = network.forward();
+    let tape = Tape::new();
+    let value = tape.leaf(Tensor::new([inputs.len()], inputs.to_vec()));
+    let expressed = activation.express(value).symbol();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     run.of(expressed).to_vec()
 }
 
 /// Evaluates `activation`'s gradient over `inputs`.
 fn gradient(activation: Activation, inputs: &[f64]) -> Vec<f64> {
-    let network = Network::new();
-    let value = network.parameter(Tensor::new([inputs.len()], inputs.to_vec()));
+    let tape = Tape::new();
+    let value = tape.parameter(Tensor::new([inputs.len()], inputs.to_vec()));
     let loss = activation.express(value).sum();
-    let run = network.forward();
+    let (loss, value) = (loss.symbol(), value.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     run.backward(loss).of(value).to_vec()
 }
 
@@ -88,14 +91,16 @@ fn compositions_differentiate_as_tape_bitwise() {
     // Facade compositions are made of closed operations, so recorded
     // gradients agree with the engine's for every new variant.
     for activation in [Activation::Sigmoid, Activation::LeakyRelu, Activation::Elu] {
-        let network = Network::new();
-        let value = network.parameter(Tensor::new([3], [0.8_f64, -1.3, 0.0]));
+        let tape = Tape::new();
+        let value = tape.parameter(Tensor::new([3], [0.8_f64, -1.3, 0.0]));
         let loss = activation.express(value).sum();
-        let recorded = network.differentiate(loss.symbol(), [value.symbol()]);
-        let run = network.forward();
-        let engine = run.backward(network.resolve(loss.symbol()));
+        let recorded = tape.differentiate(loss, [value]);
+        let (loss, value) = (loss.symbol(), value.symbol());
+        let network = tape.into_network();
+        let run = network.forward(&network.parameters(), []);
+        let engine = run.backward(loss);
         for (recorded, computed) in run
-            .of(network.resolve(recorded[0]))
+            .of(recorded[0])
             .to_vec()
             .iter()
             .zip(engine.of(value).to_vec())

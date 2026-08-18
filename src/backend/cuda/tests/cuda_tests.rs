@@ -1,7 +1,7 @@
 use std::ops::{Add, Mul};
 
 use crate::backend::operand::classify;
-use crate::{Differentiable, GemmTask, Network, Shape, Tensor, init};
+use crate::{Differentiable, GemmTask, Shape, Tape, Tensor, init};
 
 use super::context::{Context, SetupError};
 use super::{gemm, gemm_f32, gemm_f64, initialized};
@@ -264,28 +264,28 @@ fn training_runs_through_the_backend_end_to_end() {
     // output layer is GEMV-shaped and exercises the mixed-routing
     // fallback in the same run.
     let Some(_context) = device() else { return };
-    let network = Network::new();
-    let inputs = network.input(Tensor::filled([512, 256], 0.5_f64));
-    let targets = network.input(Tensor::filled([512, 1], 1.0_f64));
+    let tape = Tape::new();
+    let inputs = tape.input(Tensor::filled([512, 256], 0.5_f64));
+    let targets = tape.input(Tensor::filled([512, 1], 1.0_f64));
     let mut initializer = init::uniform(11, 0.05);
-    let weights = network.parameter(initializer(&Shape::new([256, 128])));
-    let output_weights = network.parameter(initializer(&Shape::new([128, 1])));
+    let weights = tape.parameter(initializer(&Shape::new([256, 128])));
+    let output_weights = tape.parameter(initializer(&Shape::new([128, 1])));
     let hidden = inputs.matmul(weights).tanh();
     let prediction = hidden.matmul(output_weights);
     let error = prediction - targets;
     let loss = (error * error).sum();
     let loss_symbol = loss.symbol();
 
-    let mut network = network;
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
     let mut first_loss = None;
     let mut last_loss = f64::INFINITY;
     for _ in 0..30 {
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward();
-        last_loss = run.of(loss_value).to_vec()[0];
+        let run = network.forward(&parameters, []);
+        last_loss = run.of(loss_symbol).to_vec()[0];
         first_loss.get_or_insert(last_loss);
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |weight, gradient| {
+        let gradients = run.backward(loss_symbol);
+        parameters = parameters.step(&gradients, |weight, gradient| {
             weight.clone() - Tensor::filled(gradient.shape(), 0.0002) * gradient.clone()
         });
     }

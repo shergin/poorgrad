@@ -1,4 +1,4 @@
-use crate::{Network, Tensorial, Value};
+use crate::{Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -13,12 +13,12 @@ use super::{Module, Visitor};
 pub struct Residual<M>(pub M);
 
 impl<Data: Tensorial, M: Module<Data>> Module<Data> for Residual<M> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        input + self.0.express(network, input)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        input + self.0.express(tape, input)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {

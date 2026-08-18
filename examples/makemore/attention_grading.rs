@@ -26,7 +26,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Compile, Differentiable, Network, RmsNorm, Shape, Symbol, Tensor, Value, concat, cross_entropy,
+    Compile, Differentiable, RmsNorm, Shape, Symbol, Tape, Tensor, Value, concat, cross_entropy,
     init, stack,
 };
 
@@ -120,51 +120,51 @@ fn recorded(
     feeds: &(Tensor<f32>, Tensor<f32>),
     batched: bool,
 ) -> Formulation {
-    let network = Network::new();
+    let tape = Tape::new();
     let mut supply = payloads.iter().cloned();
     let mut next = move || supply.next().expect("payloads cover the model");
 
-    let embeddings = network.parameter(next());
-    let positions_table = network.parameter(next());
+    let embeddings = tape.parameter(next());
+    let positions_table = tape.parameter(next());
     let heads: Vec<[Value<'_, Tensor<f32>>; 3]> = (0..HEAD_COUNT)
         .map(|_| {
             [
-                network.parameter(next()),
-                network.parameter(next()),
-                network.parameter(next()),
+                tape.parameter(next()),
+                tape.parameter(next()),
+                tape.parameter(next()),
             ]
         })
         .collect();
-    let projection = network.parameter(next());
-    let attention_norm = RmsNorm::new(&network, next(), Tensor::filled([], 1e-5));
-    let hidden_weights = network.parameter(next());
-    let output_weights = network.parameter(next());
-    let hidden_norm = RmsNorm::new(&network, next(), Tensor::filled([], 1e-5));
-    let final_norm = RmsNorm::new(&network, next(), Tensor::filled([], 1e-5));
-    let logit_weights = network.parameter(next());
-    let logit_bias = network.parameter(next());
-    let scale = network.leaf(Tensor::filled([], 1.0 / (HEAD_DIM as f32).sqrt()));
+    let projection = tape.parameter(next());
+    let attention_norm = RmsNorm::new(&tape, next(), Tensor::filled([], 1e-5));
+    let hidden_weights = tape.parameter(next());
+    let output_weights = tape.parameter(next());
+    let hidden_norm = RmsNorm::new(&tape, next(), Tensor::filled([], 1e-5));
+    let final_norm = RmsNorm::new(&tape, next(), Tensor::filled([], 1e-5));
+    let logit_weights = tape.parameter(next());
+    let logit_bias = tape.parameter(next());
+    let scale = tape.leaf(Tensor::filled([], 1.0 / (HEAD_DIM as f32).sqrt()));
 
-    let tokens = network.input(Tensor::selection(vec![0; PACKED_LEN], VOCABULARY_LEN, 1.0));
-    let positions = network.leaf(Tensor::selection(
+    let tokens = tape.input(Tensor::selection(vec![0; PACKED_LEN], VOCABULARY_LEN, 1.0));
+    let positions = tape.leaf(Tensor::selection(
         (0..PACKED_LEN)
             .map(|row| row % CONTEXT_LEN)
             .collect::<Vec<_>>(),
         CONTEXT_LEN,
         1.0,
     ));
-    let mask = network.leaf(block_causal_mask(BATCH_LEN));
-    let extraction = network.leaf(Tensor::selection(
+    let mask = tape.leaf(block_causal_mask(BATCH_LEN));
+    let extraction = tape.leaf(Tensor::selection(
         (0..BATCH_LEN)
             .map(|sample| sample * CONTEXT_LEN + CONTEXT_LEN - 1)
             .collect::<Vec<_>>(),
         PACKED_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
 
     let stream = embeddings.gather(tokens) + positions_table.gather(positions);
-    let normalized = attention_norm.express(&network, stream);
+    let normalized = attention_norm.express(&tape, stream);
     let attended = if batched {
         let project = |slot: usize| {
             let slices: Vec<_> = heads
@@ -193,17 +193,17 @@ fn recorded(
         concat(&outputs, 1)
     };
     let stream = stream + attended.matmul(projection);
-    let normalized = hidden_norm.express(&network, stream);
+    let normalized = hidden_norm.express(&tape, stream);
     let stream = stream
         + normalized
             .matmul(hidden_weights)
             .relu()
             .matmul(output_weights);
-    let states = final_norm.express(&network, stream);
+    let states = final_norm.express(&tape, stream);
     let product = states.gather(extraction).matmul(logit_weights);
     let loss = cross_entropy(product + logit_bias.broadcast_along(0, product), targets);
 
-    let forward_nodes = network.len();
+    let forward_nodes = tape.len();
     let wrt: Vec<Symbol> = std::iter::once(embeddings)
         .chain([positions_table])
         .chain(heads.iter().flatten().copied())
@@ -216,23 +216,23 @@ fn recorded(
         ])
         .map(|value| value.symbol())
         .collect();
-    let gradients = network.differentiate(loss, wrt);
+    let gradients = tape.differentiate(loss, wrt);
     let aliases: Vec<Symbol> = gradients
         .iter()
         .map(|&gradient| {
-            let value = network.resolve(gradient);
+            let value = tape.resolve(gradient);
             value.reshape(value.shape()).symbol()
         })
         .collect();
+    let (tokens, targets, loss) = (tokens.symbol(), targets.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let parameters = network.parameters();
     let plan = network.compile(Compile::roots(
-        std::iter::once(loss.symbol()).chain(aliases.iter().copied()),
+        std::iter::once(loss).chain(aliases.iter().copied()),
     ));
     let run = plan.forward(
-        &network,
-        [
-            (tokens.symbol(), feeds.0.clone()),
-            (targets.symbol(), feeds.1.clone()),
-        ],
+        &parameters,
+        [(tokens, feeds.0.clone()), (targets, feeds.1.clone())],
     );
     Formulation {
         module: plan.emit_stablehlo().expect("the joint step emits"),

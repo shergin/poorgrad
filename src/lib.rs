@@ -1,41 +1,40 @@
 //! `topos` is a tiny autograd engine for the GPU-poor.
 //!
-//! Expressions record a static computation graph onto a shared
-//! `Network`; `forward` materializes every value, `backward`
-//! differentiates one scalar target, and `update` produces the next
-//! network generation from a gradient step:
+//! Expressions record a static computation graph onto a [`Tape`];
+//! sealing it yields an immutable [`Network`] (the spec) and a
+//! caller-owned [`Parameters`] value (the state). `forward`
+//! materializes every value, `backward` differentiates one scalar
+//! target, and `step` is a pure data transformation of the
+//! parameters — training never touches the graph:
 //!
 //! ```
-//! use topos::Network;
+//! use topos::Tape;
 //!
-//! let network = Network::new();
-//! let w = network.parameter(0.0_f64);
-//! let x = network.input(0.0);
-//! let y = network.input(0.0);
+//! let tape = Tape::new();
+//! let w = tape.parameter(0.0_f64);
+//! let x = tape.input(0.0);
+//! let y = tape.input(0.0);
 //!
 //! // Operators record the graph; values are `Copy` and never consumed.
 //! let error = w * x - y;
 //! let loss = error * error;
 //!
-//! let w_symbol = w.symbol();
-//! let x_symbol = x.symbol();
-//! let y_symbol = y.symbol();
-//! let loss_symbol = loss.symbol();
+//! // Symbols are the detached names every later phase speaks.
+//! let (w, x, y, loss) = (w.symbol(), x.symbol(), y.symbol(), loss.symbol());
+//! let network = tape.into_network();
+//! let mut parameters = network.parameters();
 //!
 //! // The graph is recorded once; every step feeds one sample of the line
-//! // `y = 2 * x` and steps to the next generation, which shares the recorded
-//! // graph while replacing the parameter payloads.
+//! // `y = 2 * x` and steps the parameters, leaving the network untouched.
 //! let samples = [(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)];
-//! let mut network = network;
 //! for step in 0..100 {
 //!     let (sample_x, sample_y) = samples[step % samples.len()];
-//!     let loss = network.resolve(loss_symbol);
-//!     let run = network.forward_with([(x_symbol, sample_x), (y_symbol, sample_y)]);
+//!     let run = network.forward(&parameters, [(x, sample_x), (y, sample_y)]);
 //!     let gradients = run.backward(loss);
-//!     network = network.update(&gradients, |w, g| w - 0.02 * g);
+//!     parameters = parameters.step(&gradients, |w, g| w - 0.02 * g);
 //! }
 //!
-//! let learned = network.resolve(w_symbol).payload().unwrap();
+//! let learned = *parameters.of(w);
 //! assert!((learned - 2.0).abs() < 1e-6);
 //! ```
 // The default build forbids `unsafe` outright. A backend feature
@@ -63,7 +62,7 @@ mod payload;
 pub use backend::{Backend, BackendUnavailable};
 pub use emission::{EmitError, Emittable};
 pub use engine::{
-    Compile, Field, Gradients, Network, Plan, Run, Symbol, Value, ValueRef, concat, stack,
+    Compile, Field, Gradients, Network, Parameters, Plan, Run, Symbol, Tape, Value, concat, stack,
 };
 pub use neural::{
     Activation, Adam, AdamW, AveragePool, BatchNorm, BatchNormInference, Conv2d, Dropout, Flatten,

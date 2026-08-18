@@ -6,7 +6,7 @@
 //! binary `maximum` over the window lanes, so ties route their
 //! gradient deterministically to the earliest lane.
 
-use crate::{Network, Tensorial, Value};
+use crate::{Tape, Tensorial, Value};
 
 use super::Module;
 
@@ -16,11 +16,11 @@ use super::Module;
 /// It records the shared head of both pools: two unfolds, the axis
 /// permutation, and the lane-merging reshape (a copy, since the window
 /// view overlaps for `stride < size`).
-fn window_lanes<'network, Data: Tensorial>(
-    input: Value<'network, Data>,
+fn window_lanes<'tape, Data: Tensorial>(
+    input: Value<'tape, Data>,
     size: usize,
     stride: usize,
-) -> Value<'network, Data> {
+) -> Value<'tape, Data> {
     let shape = input.shape();
     assert_eq!(
         shape.rank(),
@@ -49,11 +49,11 @@ fn window_lanes<'network, Data: Tensorial>(
 /// # Panics
 /// Panics if `input` is not rank 4, `size` or `stride` is zero, or a
 /// window does not fit the spatial extents.
-pub fn max_pool<'network, Data: Tensorial>(
-    input: Value<'network, Data>,
+pub fn max_pool<'tape, Data: Tensorial>(
+    input: Value<'tape, Data>,
     size: usize,
     stride: usize,
-) -> Value<'network, Data> {
+) -> Value<'tape, Data> {
     let lanes = window_lanes(input, size, stride);
     let mut largest = lanes.narrow(4, 0, 1);
     for lane in 1..size * size {
@@ -69,11 +69,11 @@ pub fn max_pool<'network, Data: Tensorial>(
 /// # Panics
 /// Panics if `input` is not rank 4, `size` or `stride` is zero, or a
 /// window does not fit the spatial extents.
-pub fn average_pool<'network, Data: Tensorial>(
-    input: Value<'network, Data>,
+pub fn average_pool<'tape, Data: Tensorial>(
+    input: Value<'tape, Data>,
     size: usize,
     stride: usize,
-) -> Value<'network, Data> {
+) -> Value<'tape, Data> {
     window_lanes(input, size, stride).mean_along(4)
 }
 
@@ -96,11 +96,11 @@ impl MaxPool {
 }
 
 impl<Data: Tensorial> Module<Data> for MaxPool {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        _network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        _tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         max_pool(input, self.size, self.stride)
     }
 }
@@ -120,11 +120,11 @@ impl AveragePool {
 }
 
 impl<Data: Tensorial> Module<Data> for AveragePool {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        _network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        _tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         average_pool(input, self.size, self.stride)
     }
 }

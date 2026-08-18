@@ -1,4 +1,4 @@
-use crate::{Differentiable, Elementary, Network, Shape, Tensorial};
+use crate::{Differentiable, Elementary, Shape, Tape, Tensorial};
 
 use super::Tensor;
 
@@ -183,11 +183,12 @@ fn transcendentals_apply_elementwise() {
 
 #[test]
 fn tensor_payloads_flow_through_the_graph() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2], [0.0_f64, 1.0]));
-    let y = x.tanh();
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2], [0.0_f64, 1.0]));
+    let y = x.tanh().symbol();
 
-    let run = network.forward();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let result = run.of(y);
     assert!((result.to_vec()[0]).abs() < 1e-12);
     assert!((result.to_vec()[1] - 1.0_f64.tanh()).abs() < 1e-12);
@@ -201,29 +202,28 @@ fn engine_trains_tensor_payloads_unchanged() {
     // squared errors are reduced with `sum` into the scalar target that
     // `backward` requires; the per-element gradients are unchanged since
     // the problems are independent.
-    let network = Network::new();
-    let w = network.parameter(Tensor::filled([2], 0.0_f64));
-    let x = network.leaf(Tensor::new([2], [3.0, 2.0]));
-    let y = network.leaf(Tensor::new([2], [15.0, -6.0]));
+    let tape = Tape::new();
+    let w = tape.parameter(Tensor::filled([2], 0.0_f64));
+    let x = tape.leaf(Tensor::new([2], [3.0, 2.0]));
+    let y = tape.leaf(Tensor::new([2], [15.0, -6.0]));
 
     let error = w * x - y;
     let loss = (error * error).sum();
 
-    let w_symbol = w.symbol();
-    let loss_symbol = loss.symbol();
+    let (w, loss) = (w.symbol(), loss.symbol());
+    let network = tape.into_network();
 
     let learning_rate = Tensor::filled([2], 0.05);
-    let mut network = network;
+    let mut parameters = network.parameters();
     for _ in 0..200 {
-        let loss = network.resolve(loss_symbol);
-        let run = network.forward();
+        let run = network.forward(&parameters, []);
         let gradients = run.backward(loss);
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.clone()
         });
     }
 
-    let learned = network.resolve(w_symbol).payload().unwrap();
+    let learned = parameters.of(w);
     assert!((learned.to_vec()[0] - 5.0).abs() < 1e-6);
     assert!((learned.to_vec()[1] + 3.0).abs() < 1e-6);
 }
@@ -267,13 +267,15 @@ fn broadcast_rejects_multi_element_sources() {
 
 #[test]
 fn matmul_routes_gradients_through_transposed_operands() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
-    let b = network.leaf(Tensor::new([2, 1], [5.0, 6.0]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let b = tape.leaf(Tensor::new([2, 1], [5.0, 6.0]));
 
     let loss = a.matmul(b).sum();
 
-    let run = network.forward();
+    let (a, b, loss) = (a.symbol(), b.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(loss), Tensor::new([], [56.0]));
 
     // With the loss seeded at one, `dA = 1 . B^T` row-repeated and
@@ -285,13 +287,15 @@ fn matmul_routes_gradients_through_transposed_operands() {
 
 #[test]
 fn broadcast_and_sum_are_adjoint() {
-    let network = Network::new();
-    let scalar = network.leaf(Tensor::new([], [2.0_f64]));
-    let reference = network.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
+    let tape = Tape::new();
+    let scalar = tape.leaf(Tensor::new([], [2.0_f64]));
+    let reference = tape.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
 
     let loss = scalar.broadcast_like(reference).sum();
 
-    let run = network.forward();
+    let (scalar, reference, loss) = (scalar.symbol(), reference.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(loss), Tensor::new([], [6.0]));
 
     // The broadcast spreads to three positions, so the scalar's gradient
@@ -303,10 +307,10 @@ fn broadcast_and_sum_are_adjoint() {
 
 #[test]
 #[should_panic(expected = "a recording panicked earlier")]
-fn poisoned_network_names_its_cause() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
-    let b = network.leaf(Tensor::new([3], [1.0, 2.0, 3.0]));
+fn poisoned_tape_names_its_cause() {
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let b = tape.leaf(Tensor::new([3], [1.0, 2.0, 3.0]));
 
     // A caught shape mismatch poisons the tape; every later use fails
     // fatally, and the message must point at the recording panic, not
@@ -315,7 +319,7 @@ fn poisoned_network_names_its_cause() {
         let _ = a + b;
     }));
     assert!(mismatch.is_err());
-    network.len();
+    tape.len();
 }
 
 #[test]
@@ -386,13 +390,15 @@ fn broadcast_along_repeats_the_named_axis() {
 
 #[test]
 fn axis_sum_and_broadcast_are_adjoint() {
-    let network = Network::new();
-    let bias = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
-    let reference = network.leaf(Tensor::filled([2, 3], 0.0));
+    let tape = Tape::new();
+    let bias = tape.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let reference = tape.leaf(Tensor::filled([2, 3], 0.0));
 
     let loss = bias.broadcast_along(0, reference).sum();
 
-    let run = network.forward();
+    let (bias, reference, loss) = (bias.symbol(), reference.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(loss), Tensor::new([], [12.0]));
 
     // Each bias element is repeated across the two rows, so its
@@ -405,62 +411,71 @@ fn axis_sum_and_broadcast_are_adjoint() {
 #[test]
 #[should_panic(expected = "out of rank")]
 fn sum_along_rejects_excessive_axes() {
-    let network = Network::new();
-    let matrix = network.leaf(Tensor::filled([2, 3], 1.0_f64));
+    let tape = Tape::new();
+    let matrix = tape.leaf(Tensor::filled([2, 3], 1.0_f64));
     matrix.sum_along(2);
 }
 
 #[test]
 #[should_panic(expected = "requires the remaining shape")]
 fn broadcast_along_rejects_mismatched_operands() {
-    let network = Network::new();
-    let wrong = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
-    let reference = network.leaf(Tensor::filled([2, 3], 0.0));
+    let tape = Tape::new();
+    let wrong = tape.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let reference = tape.leaf(Tensor::filled([2, 3], 0.0));
     wrong.broadcast_along(0, reference);
 }
 
 #[test]
 #[should_panic(expected = "recorded shape")]
-fn forward_with_rejects_mismatched_shapes() {
-    let network = Network::new();
-    let input = network.input(Tensor::new([2], [1.0_f64, 2.0]));
-    network.forward_with([(input.symbol(), Tensor::new([3], [1.0, 2.0, 3.0]))]);
+fn feeds_reject_mismatched_shapes() {
+    let tape = Tape::new();
+    let input = tape.input(Tensor::new([2], [1.0_f64, 2.0])).symbol();
+    let network = tape.into_network();
+    network.forward(
+        &network.parameters(),
+        [(input, Tensor::new([3], [1.0, 2.0, 3.0]))],
+    );
 }
 
 #[test]
 #[should_panic(expected = "scalar target")]
 fn backward_rejects_non_scalar_targets() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
-    let doubled = x + x;
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let doubled = (x + x).symbol();
 
-    let run = network.forward();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     run.backward(doubled);
 }
 
 #[test]
 fn broadcast_restores_singleton_shapes_in_backward() {
-    let network = Network::new();
-    let source = network.leaf(Tensor::new([1], [2.0_f64]));
-    let reference = network.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
+    let tape = Tape::new();
+    let source = tape.leaf(Tensor::new([1], [2.0_f64]));
+    let reference = tape.leaf(Tensor::new([3], [1.0, 1.0, 1.0]));
 
     let loss = source.broadcast_like(reference).sum();
 
-    let run = network.forward();
+    let (source, loss) = (source.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(loss);
     assert_eq!(*gradients.of(source), Tensor::new([1], [3.0]));
 }
 
 #[test]
 #[should_panic(expected = "preserve the parameter's shape")]
-fn update_rejects_shape_changing_rules() {
-    let network = Network::new();
-    let w = network.parameter(Tensor::new([1], [1.0_f64]));
-    let loss = w.sum();
+fn step_rejects_shape_changing_rules() {
+    let tape = Tape::new();
+    let w = tape.parameter(Tensor::new([1], [1.0_f64]));
+    let loss = w.sum().symbol();
 
-    let run = network.forward();
+    let network = tape.into_network();
+    let parameters = network.parameters();
+    let run = network.forward(&parameters, []);
     let gradients = run.backward(loss);
-    network.update(&gradients, |_parameter, _gradient| {
+    parameters.step(&gradients, |_parameter, _gradient| {
         Tensor::new([2], [7.0, 8.0])
     });
 }
@@ -470,49 +485,49 @@ fn linear_regression_trains_in_matrix_form() {
     // Fit `X . w = y` for `w = [[2], [-1]]`: the layer-sized problem that
     // took O(inputs * outputs) scalar nodes now takes a handful of tensor
     // nodes.
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([3, 2], [1.0_f64, 0.0, 0.0, 1.0, 1.0, 1.0]));
-    let y = network.leaf(Tensor::new([3, 1], [2.0, -1.0, 1.0]));
-    let w = network.parameter(Tensor::filled([2, 1], 0.0_f64));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([3, 2], [1.0_f64, 0.0, 0.0, 1.0, 1.0, 1.0]));
+    let y = tape.leaf(Tensor::new([3, 1], [2.0, -1.0, 1.0]));
+    let w = tape.parameter(Tensor::filled([2, 1], 0.0_f64));
 
     let error = x.matmul(w) - y;
     let loss = (error * error).sum();
 
-    let w_symbol = w.symbol();
-    let loss_symbol = loss.symbol();
+    let (w, loss) = (w.symbol(), loss.symbol());
+    let network = tape.into_network();
 
     let learning_rate = Tensor::new([], [0.05]);
-    let mut network = network;
+    let mut parameters = network.parameters();
     for _ in 0..300 {
-        let loss = network.resolve(loss_symbol);
-        let run = network.forward();
+        let run = network.forward(&parameters, []);
         let gradients = run.backward(loss);
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
 
-    let learned = network.resolve(w_symbol).payload().unwrap();
+    let learned = parameters.of(w);
     assert!((learned.to_vec()[0] - 2.0).abs() < 1e-6);
     assert!((learned.to_vec()[1] + 1.0).abs() < 1e-6);
 }
 
 #[test]
 fn tensor_literals_mix_into_expressions() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2], [1.0_f64, 2.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2], [1.0_f64, 2.0]));
 
-    let y = Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0);
+    let y = (Tensor::filled([2], 10.0) * x + Tensor::filled([2], 1.0)).symbol();
 
-    let run = network.forward();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(y).to_vec(), &[11.0, 21.0]);
 }
 
 #[test]
 fn shapes_are_known_before_anything_runs() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([3, 2], vec![1.0_f64; 6]));
-    let w = network.parameter(Tensor::filled([2, 1], 0.0_f64));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([3, 2], vec![1.0_f64; 6]));
+    let w = tape.parameter(Tensor::filled([2, 1], 0.0_f64));
 
     let prediction = x.matmul(w);
     let loss = (prediction * prediction).sum();
@@ -577,54 +592,54 @@ fn batched_matmul_falls_back_for_constant_storage() {
 
 #[test]
 fn recording_infers_batched_matmul_shapes() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2, 3, 4], vec![1.0_f64; 24]));
-    let b = network.leaf(Tensor::new([2, 4, 5], vec![1.0_f64; 40]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2, 3, 4], vec![1.0_f64; 24]));
+    let b = tape.leaf(Tensor::new([2, 4, 5], vec![1.0_f64; 40]));
     assert_eq!(a.matmul(b).shape(), Shape::new([2, 3, 5]));
 }
 
 #[test]
 #[should_panic(expected = "matmul operands must agree in rank, got [2, 2, 2] and [2, 2]")]
 fn recording_rejects_matmul_rank_mismatch() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2, 2, 2], vec![1.0_f64; 8]));
-    let b = network.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2, 2, 2], vec![1.0_f64; 8]));
+    let b = tape.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
     a.matmul(b);
 }
 
 #[test]
 #[should_panic(expected = "matmul batch axes must agree, got [2, 2, 3] and [3, 3, 4]")]
 fn recording_rejects_matmul_batch_mismatch() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2, 2, 3], vec![1.0_f64; 12]));
-    let b = network.leaf(Tensor::new([3, 3, 4], vec![1.0_f64; 36]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2, 2, 3], vec![1.0_f64; 12]));
+    let b = tape.leaf(Tensor::new([3, 3, 4], vec![1.0_f64; 36]));
     a.matmul(b);
 }
 
 #[test]
 #[should_panic(expected = "matmul cannot multiply [2, 2] by [3, 1]")]
 fn recording_rejects_disagreeing_matmul_shapes() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
-    let b = network.leaf(Tensor::new([3, 1], vec![1.0_f64; 3]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2, 2], vec![1.0_f64; 4]));
+    let b = tape.leaf(Tensor::new([3, 1], vec![1.0_f64; 3]));
     a.matmul(b);
 }
 
 #[test]
 #[should_panic(expected = "equal shapes")]
 fn recording_rejects_mismatched_addition() {
-    let network = Network::new();
-    let a = network.leaf(Tensor::new([2], vec![1.0_f64; 2]));
-    let b = network.leaf(Tensor::new([3], vec![1.0_f64; 3]));
+    let tape = Tape::new();
+    let a = tape.leaf(Tensor::new([2], vec![1.0_f64; 2]));
+    let b = tape.leaf(Tensor::new([3], vec![1.0_f64; 3]));
     let _ = a + b;
 }
 
 #[test]
 #[should_panic(expected = "single-element operand")]
 fn recording_rejects_broadcast_of_multi_element_sources() {
-    let network = Network::new();
-    let source = network.leaf(Tensor::new([2], vec![1.0_f64; 2]));
-    let reference = network.leaf(Tensor::new([3], vec![0.0_f64; 3]));
+    let tape = Tape::new();
+    let source = tape.leaf(Tensor::new([2], vec![1.0_f64; 2]));
+    let reference = tape.leaf(Tensor::new([3], vec![0.0_f64; 3]));
     source.broadcast_like(reference);
 }
 
@@ -781,14 +796,16 @@ fn permute_rejects_non_permutations() {
 
 #[test]
 fn reshape_routes_gradients_back() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
-    let weight = network.leaf(Tensor::new([6], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let weight = tape.leaf(Tensor::new([6], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
 
     // Weighting each element of the flattened view by a distinct factor makes
     // the gradient the weights reshaped back to `x`'s shape.
     let loss = (x.reshape([6]) * weight).sum();
-    let gradients = network.forward().backward(loss);
+    let (x, loss) = (x.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let gradients = network.forward(&network.parameters(), []).backward(loss);
     assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
     assert_eq!(
         gradients.of(x).to_vec(),
@@ -798,14 +815,16 @@ fn reshape_routes_gradients_back() {
 
 #[test]
 fn permute_routes_gradients_back() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
-    let weight = network.leaf(Tensor::new([3, 2], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let weight = tape.leaf(Tensor::new([3, 2], [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]));
 
     // `x.permute([1, 0])` transposes, so weight `(i, j)` multiplies
     // `x(j, i)`; the gradient is the weights permuted back to `x`'s shape.
     let loss = (x.permute([1, 0]) * weight).sum();
-    let gradients = network.forward().backward(loss);
+    let (x, loss) = (x.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let gradients = network.forward(&network.parameters(), []).backward(loss);
     assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
     assert_eq!(
         gradients.of(x).to_vec(),
@@ -815,14 +834,16 @@ fn permute_routes_gradients_back() {
 
 #[test]
 fn squeeze_and_unsqueeze_adjust_extent_one_axes() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
     let unsqueezed = x.unsqueeze(0);
     let squeezed = unsqueezed.squeeze(0);
     assert_eq!(unsqueezed.shape(), Shape::new([1, 3]));
     assert_eq!(squeezed.shape(), Shape::new([3]));
 
-    let run = network.forward();
+    let (unsqueezed, squeezed) = (unsqueezed.symbol(), squeezed.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(unsqueezed).to_vec(), vec![1.0, 2.0, 3.0]);
     assert_eq!(run.of(squeezed).to_vec(), vec![1.0, 2.0, 3.0]);
 }
@@ -830,8 +851,8 @@ fn squeeze_and_unsqueeze_adjust_extent_one_axes() {
 #[test]
 #[should_panic(expected = "changes the number of elements")]
 fn recording_rejects_volume_changing_reshape() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
     x.reshape([4]);
 }
 
@@ -878,8 +899,8 @@ fn narrow_rejects_empty_windows_at_the_axis_end() {
 #[test]
 #[should_panic(expected = "at least one element")]
 fn narrow_rejects_empty_windows_at_recording() {
-    let network = Network::new();
-    let matrix = network.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
+    let tape = Tape::new();
+    let matrix = tape.leaf(Tensor::new([2, 3], vec![1.0_f64; 6]));
     matrix.narrow(1, 0, 0);
 }
 
@@ -905,13 +926,15 @@ fn pad_places_a_window_into_zeros() {
 
 #[test]
 fn narrow_routes_gradients_to_the_window() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2, 3], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
 
     // Summing columns 1..3 gives a gradient of one there and zero in the
     // column the window excludes.
     let loss = x.narrow(1, 1, 2).sum();
-    let gradients = network.forward().backward(loss);
+    let (x, loss) = (x.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let gradients = network.forward(&network.parameters(), []).backward(loss);
     assert_eq!(gradients.of(x).shape(), Shape::new([2, 3]));
     assert_eq!(gradients.of(x).to_vec(), vec![0.0, 1.0, 1.0, 0.0, 1.0, 1.0]);
 }
@@ -922,19 +945,22 @@ fn embedding_lookup_is_a_one_hot_matmul() {
     // needs no dedicated gather op. The one-hot rows are per-run data fed as
     // an input, so one recorded graph serves any minibatch, and `matmul`'s
     // backward is exactly the scatter-add embedding gradient.
-    let network = Network::new();
-    let table = network.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let tape = Tape::new();
+    let table = tape.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
     // Only the shape of the token batch is fixed at record time; the tokens
-    // themselves arrive per run through `forward_with`.
-    let onehot = network.input(Tensor::filled([3, 3], 0.0));
+    // themselves arrive per run as feeds.
+    let onehot = tape.input(Tensor::filled([3, 3], 0.0));
     let onehot_symbol = onehot.symbol();
 
     let embedded = onehot.matmul(table);
     let loss = embedded.sum();
 
+    let (table, embedded, loss) = (table.symbol(), embedded.symbol(), loss.symbol());
+    let network = tape.into_network();
+
     // Feed the tokens [0, 2, 0] as one-hot rows over a vocabulary of three.
     let tokens = Tensor::new([3, 3], [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]);
-    let run = network.forward_with([(onehot_symbol, tokens)]);
+    let run = network.forward(&network.parameters(), [(onehot_symbol, tokens)]);
 
     // The result rows are the looked-up table rows, in token order.
     assert_eq!(
@@ -1033,20 +1059,26 @@ fn selection_densifies_for_non_gather_operations() {
 
 #[test]
 fn gather_op_routes_gradients_by_scatter_add() {
-    let network = Network::new();
-    let table = network.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
+    let tape = Tape::new();
+    let table = tape.leaf(Tensor::new([3, 2], [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0]));
     // The selection is a per-run input: only its shape is fixed at record
     // time, so one graph serves any batch of tokens.
-    let selection = network.input(Tensor::selection(vec![0usize, 0, 0], 3, 1.0));
-    let selection_symbol = selection.symbol();
+    let selection = tape.input(Tensor::selection(vec![0usize, 0, 0], 3, 1.0));
 
     let embedded = table.gather(selection);
     let loss = embedded.sum();
 
-    let run = network.forward_with([(
-        selection_symbol,
-        Tensor::selection(vec![0usize, 2, 0], 3, 1.0),
-    )]);
+    let (table, selection, embedded, loss) = (
+        table.symbol(),
+        selection.symbol(),
+        embedded.symbol(),
+        loss.symbol(),
+    );
+    let network = tape.into_network();
+    let run = network.forward(
+        &network.parameters(),
+        [(selection, Tensor::selection(vec![0usize, 2, 0], 3, 1.0))],
+    );
     assert_eq!(
         run.of(embedded).to_vec(),
         vec![1.0, 2.0, 5.0, 6.0, 1.0, 2.0]
@@ -1065,9 +1097,9 @@ fn gather_op_routes_gradients_by_scatter_add() {
 
 #[test]
 fn gather_infers_the_result_shape() {
-    let network = Network::new();
-    let table = network.leaf(Tensor::new([4, 3], vec![0.0_f64; 12]));
-    let selection = network.input(Tensor::selection(vec![0usize, 1], 4, 1.0));
+    let tape = Tape::new();
+    let table = tape.leaf(Tensor::new([4, 3], vec![0.0_f64; 12]));
+    let selection = tape.input(Tensor::selection(vec![0usize, 1], 4, 1.0));
 
     let embedded = table.gather(selection);
     // [count, vocab] gather [vocab, dim] -> [count, dim].
@@ -1077,20 +1109,22 @@ fn gather_infers_the_result_shape() {
 #[test]
 #[should_panic(expected = "does not match table rows")]
 fn gather_rejects_vocabulary_mismatch() {
-    let network = Network::new();
-    let table = network.leaf(Tensor::new([3, 2], vec![0.0_f64; 6]));
-    let selection = network.input(Tensor::selection(vec![0usize], 4, 1.0));
+    let tape = Tape::new();
+    let table = tape.leaf(Tensor::new([3, 2], vec![0.0_f64; 6]));
+    let selection = tape.input(Tensor::selection(vec![0usize], 4, 1.0));
     table.gather(selection);
 }
 
 #[test]
 fn log_softmax_normalizes_along_the_named_axis() {
-    let network = Network::new();
-    let logits = network.leaf(Tensor::new([2, 2], [0.0_f64, 0.0, 1.0, 3.0]));
+    let tape = Tape::new();
+    let logits = tape.leaf(Tensor::new([2, 2], [0.0_f64, 0.0, 1.0, 3.0]));
     let log_probabilities = logits.log_softmax(1);
     assert_eq!(log_probabilities.shape(), Shape::new([2, 2]));
 
-    let run = network.forward();
+    let log_probabilities = log_probabilities.symbol();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let probabilities = run.of(log_probabilities).exp();
     for total in probabilities.sum_along(1).to_vec() {
         assert!((total - 1.0).abs() < 1e-12);
@@ -1099,14 +1133,16 @@ fn log_softmax_normalizes_along_the_named_axis() {
 
 #[test]
 fn log_softmax_routes_gradients_through_the_probabilities() {
-    let network = Network::new();
-    let logits = network.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));
+    let tape = Tape::new();
+    let logits = tape.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));
 
     // Summing one row of log-probabilities seeds every class with one, so
     // the cotangent is `1 - classes * softmax`: `[1 - 2 * 0.25, 1 - 2 * 0.75]`.
     let loss = logits.log_softmax(1).sum();
 
-    let run = network.forward();
+    let (logits, loss) = (logits.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(loss);
     let expected = [0.5, -0.5];
     for (computed, expected) in gradients.of(logits).to_vec().into_iter().zip(expected) {
@@ -1117,19 +1153,21 @@ fn log_softmax_routes_gradients_through_the_probabilities() {
 #[test]
 #[should_panic(expected = "out of rank")]
 fn log_softmax_rejects_excessive_axes() {
-    let network = Network::new();
-    let logits = network.leaf(Tensor::filled([2, 3], 0.0_f64));
+    let tape = Tape::new();
+    let logits = tape.leaf(Tensor::filled([2, 3], 0.0_f64));
     logits.log_softmax(2);
 }
 
 #[test]
 fn relu_masks_gradients_by_sign() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([4], [-2.0_f64, -0.5, 0.0, 3.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([4], [-2.0_f64, -0.5, 0.0, 3.0]));
     let activated = x.relu();
     let loss = activated.sum();
 
-    let run = network.forward();
+    let (x, activated, loss) = (x.symbol(), activated.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(activated).to_vec(), &[0.0, 0.0, 0.0, 3.0]);
 
     // The gradient passes only where the operand reached zero; the
@@ -1140,12 +1178,14 @@ fn relu_masks_gradients_by_sign() {
 
 #[test]
 fn roots_and_powers_route_gradients() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2], [4.0_f64, 9.0]));
-    let exponent = network.leaf(Tensor::filled([2], 2.0));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2], [4.0_f64, 9.0]));
+    let exponent = tape.leaf(Tensor::filled([2], 2.0));
     let loss = (x.sqrt() + x.powf(exponent)).sum();
 
-    let run = network.forward();
+    let (x, loss) = (x.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(loss), Tensor::new([], [102.0]));
 
     // Per element: `1 / (2 sqrt(x)) + 2 x`, so `[0.25 + 8, 1/6 + 18]`.
@@ -1159,9 +1199,9 @@ fn roots_and_powers_route_gradients() {
 #[test]
 #[should_panic(expected = "equal shapes")]
 fn maximum_rejects_mismatched_operands() {
-    let network = Network::new();
-    let left = network.leaf(Tensor::filled([2], 0.0_f64));
-    let right = network.leaf(Tensor::filled([3], 0.0));
+    let tape = Tape::new();
+    let left = tape.leaf(Tensor::filled([2], 0.0_f64));
+    let right = tape.leaf(Tensor::filled([3], 0.0));
     left.maximum(right);
 }
 

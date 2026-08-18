@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Shape, Symbol, Tensorial, Value};
+use crate::{Differentiable, Shape, Symbol, Tape, Tensorial, Value};
 
 use super::Module;
 
@@ -34,11 +34,11 @@ pub struct Dropout<Data> {
 }
 
 impl<Data: Differentiable> Dropout<Data> {
-    /// Declares the mask input on `network`, shaped like the values
+    /// Declares the mask input on `tape`, shaped like the values
     /// the module will express over, with the all-ones identity
     /// default.
-    pub fn new(network: &Network<Data>, shape: impl Into<Shape>) -> Self {
-        let mask = network.input(Data::counted(shape.into(), 1));
+    pub fn new(tape: &Tape<Data>, shape: impl Into<Shape>) -> Self {
+        let mask = tape.input(Data::counted(shape.into(), 1));
         Self {
             mask: mask.symbol(),
             _marker: PhantomData,
@@ -55,24 +55,24 @@ impl<Data: Differentiable> Dropout<Data> {
     ///
     /// # Panics
     /// Panics if `input`'s shape differs from the declared mask
-    /// shape, or if the module's mask does not resolve in `network`'s
+    /// shape, or if the module's mask does not resolve on `tape`
     /// generation.
-    pub fn express<'network>(
+    pub fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        input * network.resolve(self.mask)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        input * tape.resolve(self.mask)
     }
 }
 
 impl<Data: Tensorial> Module<Data> for Dropout<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        Dropout::express(self, network, input)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        Dropout::express(self, tape, input)
     }
 }
 

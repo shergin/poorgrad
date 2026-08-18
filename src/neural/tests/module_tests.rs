@@ -1,17 +1,17 @@
-use crate::{Activation, Linear, Network, Residual, Sequential, Tensor};
+use crate::{Activation, Linear, Residual, Sequential, Tape, Tensor};
 
 use super::{Module, named_parameters, parameters};
 
 /// Builds a small tree exercising positional segments, stateless
 /// stages, and `Residual` transparency.
-fn tree(network: &Network<Tensor<f64>>) -> Sequential<Tensor<f64>> {
+fn tree(tape: &Tape<Tensor<f64>>) -> Sequential<Tensor<f64>> {
     let entry = Linear::new(
-        network,
+        tape,
         Tensor::filled([3, 4], 0.0_f64),
         Tensor::filled([4], 0.0),
     );
     let inner = Linear::new(
-        network,
+        tape,
         Tensor::filled([4, 4], 0.0_f64),
         Tensor::filled([4], 0.0),
     );
@@ -23,8 +23,8 @@ fn tree(network: &Network<Tensor<f64>>) -> Sequential<Tensor<f64>> {
 
 #[test]
 fn named_parameters_carry_dotted_paths() {
-    let network = Network::new();
-    let model = tree(&network);
+    let tape = Tape::new();
+    let model = tree(&tape);
     let named = named_parameters(&model);
     let rendered: Vec<String> = named.iter().map(|(path, _)| path.to_string()).collect();
     // The activation contributes nothing, and `Residual` is
@@ -34,8 +34,8 @@ fn named_parameters_carry_dotted_paths() {
 
 #[test]
 fn parameters_follow_visit_order() {
-    let network = Network::new();
-    let model = tree(&network);
+    let tape = Tape::new();
+    let model = tree(&tape);
     let flat = parameters(&model);
     let named = named_parameters(&model);
     assert_eq!(flat.len(), 4);
@@ -46,12 +46,13 @@ fn parameters_follow_visit_order() {
 
 #[test]
 fn sequential_expresses_through_dyn_stages() {
-    let network = Network::new();
-    let model = tree(&network);
-    let input = network.leaf(Tensor::filled([2, 3], 0.5_f64));
-    let output = model.express(&network, input);
+    let tape = Tape::new();
+    let model = tree(&tape);
+    let input = tape.leaf(Tensor::filled([2, 3], 0.5_f64));
+    let output = model.express(&tape, input).symbol();
     // Zero weights and biases: tanh(0) = 0, and the residual passes
     // the zero through, so the output is exactly zero.
-    let run = network.forward();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(output).to_vec(), vec![0.0; 8]);
 }

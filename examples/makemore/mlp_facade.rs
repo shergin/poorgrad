@@ -18,7 +18,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use topos::{Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Mlp, Shape, Tape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -43,56 +43,58 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network: Network<Tensor<f32>> = Network::new();
+    let tape: Tape<Tensor<f32>> = Tape::new();
 
     // The embedding table stays a plain parameter; the facade covers
     // the dense layers only. The allocation order and seeds match
     // `makemore_mlp`, so both examples start from identical weights.
-    let embeddings = network.parameter(init::normal(8, 1.0)(&Shape::new([
+    let embeddings = tape.parameter(init::normal(8, 1.0)(&Shape::new([
         VOCABULARY_LEN,
         EMBED_DIM,
     ])));
     let mlp = Mlp::new(
-        &network,
+        &tape,
         &[CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN, VOCABULARY_LEN],
         init::xavier(7),
     );
 
     // The training expression, batch-shaped: contexts and targets are
     // one-hot selections fed per run, the defaults only fix the shapes.
-    let contexts = network.input(Tensor::selection(
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let embedded = embeddings
         .gather(contexts)
         .reshape([BATCH_LEN, CONTEXT_LEN * EMBED_DIM]);
-    let loss = cross_entropy(mlp.express(&network, embedded), targets);
+    let loss = cross_entropy(mlp.express(&tape, embedded), targets);
 
     // The sampling twin: the same parameters expressed over a single
     // context row, with the composite softmax on top.
-    let sample_context =
-        network.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
+    let sample_context = tape.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
     let sample_embedded = embeddings
         .gather(sample_context)
         .reshape([1, CONTEXT_LEN * EMBED_DIM]);
-    let sample_probabilities = mlp.express(&network, sample_embedded).softmax(1);
+    let sample_probabilities = mlp.express(&tape, sample_embedded).softmax(1);
 
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
-    let sample_context_symbol = sample_context.symbol();
-    let sample_probabilities_symbol = sample_probabilities.symbol();
-    let recorded_nodes = network.len();
+    let (contexts, targets, loss, sample_context, sample_probabilities) = (
+        contexts.symbol(),
+        targets.symbol(),
+        loss.symbol(),
+        sample_context.symbol(),
+        sample_probabilities.symbol(),
+    );
+    let recorded_nodes = tape.len();
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     // A fresh model is roughly uniform over the vocabulary, so the
     // first printed loss should sit near `ln(27) ~ 3.30`; the goal is
     // to push below the bigram limit of ~2.45.
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -105,23 +107,23 @@ fn main() {
             .collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let loss_value = network.resolve(loss_symbol);
         // Slice the run to the loss: the sampling twin on the same
         // tape is skipped during training.
         let run = network.forward_for(
-            [loss_symbol],
+            &parameters,
+            [loss],
             [
                 (
-                    contexts_symbol,
+                    contexts,
                     Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
                 ),
                 (
-                    targets_symbol,
+                    targets,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
             ],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -138,9 +140,9 @@ fn main() {
             );
             window_loss = 0.0;
         }
-        let gradients = run.backward(loss_value);
+        let gradients = run.backward(loss);
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -162,15 +164,14 @@ fn main() {
         let mut name = String::new();
         loop {
             let run = network.forward_for(
-                [sample_probabilities_symbol],
+                &parameters,
+                [sample_probabilities],
                 [(
-                    sample_context_symbol,
+                    sample_context,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = run
-                .of(network.resolve(sample_probabilities_symbol))
-                .to_vec();
+            let row = run.of(sample_probabilities).to_vec();
             let token = draw(&row, &mut state);
             if token == 0 {
                 break;

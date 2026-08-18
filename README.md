@@ -1,7 +1,8 @@
 # topos
 
 A small autodiff compiler stack in Rust: record a graph, inspect
-it, differentiate it, compile it, emit it. The interpreter ships
+it, differentiate it, compile it, emit it. The spec is an
+immutable value and the state is yours. The interpreter ships
 as the spec; everything faster must match it, bit for bit.
 
 The stack stays small enough to read. Every result is provable.

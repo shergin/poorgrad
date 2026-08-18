@@ -1,4 +1,4 @@
-use crate::{Differentiable, Network, Tensor, Value};
+use crate::{Differentiable, Tape, Tensor, Value};
 
 /// The half-width of the central difference.
 const STEP: f64 = 1e-5;
@@ -9,23 +9,26 @@ const TOLERANCE: f64 = 1e-6;
 /// Asserts that the analytic gradients of `expression` match central
 /// finite differences at `inputs`, for every input.
 ///
-/// Each numeric probe rebuilds the graph on a fresh network with one
+/// Each numeric probe rebuilds the graph on a fresh tape with one
 /// input nudged, so the check exercises recording, forward, and backward
 /// exactly as a user would.
 fn assert_gradients_match<const INPUTS: usize>(
     inputs: [f64; INPUTS],
-    expression: impl for<'network> Fn([Value<'network, f64>; INPUTS]) -> Value<'network, f64>,
+    expression: impl for<'tape> Fn([Value<'tape, f64>; INPUTS]) -> Value<'tape, f64>,
 ) {
     let evaluate = |point: [f64; INPUTS]| -> f64 {
-        let network = Network::new();
-        let target = expression(point.map(|value| network.leaf(value)));
-        *network.forward().of(target)
+        let tape = Tape::new();
+        let target = expression(point.map(|value| tape.leaf(value))).symbol();
+        let network = tape.into_network();
+        *network.forward(&network.parameters(), []).of(target)
     };
 
-    let network = Network::new();
-    let leaves = inputs.map(|value| network.leaf(value));
-    let target = expression(leaves);
-    let run = network.forward();
+    let tape = Tape::new();
+    let leaves = inputs.map(|value| tape.leaf(value));
+    let target = expression(leaves).symbol();
+    let leaves = leaves.map(|leaf| leaf.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(target);
 
     for (index, leaf) in leaves.iter().enumerate() {
@@ -94,28 +97,37 @@ fn dense_layer_gradients_match_finite_differences() {
     ];
 
     let loss_of = |tensors: &[Tensor<f64>]| -> f64 {
-        let network = Network::new();
-        let x = network.leaf(tensors[0].clone());
-        let w = network.leaf(tensors[1].clone());
-        let bias = network.leaf(tensors[2].clone());
-        let y = network.leaf(tensors[3].clone());
+        let tape = Tape::new();
+        let x = tape.leaf(tensors[0].clone());
+        let w = tape.leaf(tensors[1].clone());
+        let bias = tape.leaf(tensors[2].clone());
+        let y = tape.leaf(tensors[3].clone());
         let product = x.matmul(w);
         let activated = (product + bias.broadcast_along(0, product)).tanh();
         let error = activated - y;
-        let loss = (error * error).sum();
-        network.forward().of(loss).to_vec()[0]
+        let loss = (error * error).sum().symbol();
+        let network = tape.into_network();
+        network.forward(&network.parameters(), []).of(loss).to_vec()[0]
     };
 
-    let network = Network::new();
-    let x = network.leaf(base[0].clone());
-    let w = network.leaf(base[1].clone());
-    let bias = network.leaf(base[2].clone());
-    let y = network.leaf(base[3].clone());
+    let tape = Tape::new();
+    let x = tape.leaf(base[0].clone());
+    let w = tape.leaf(base[1].clone());
+    let bias = tape.leaf(base[2].clone());
+    let y = tape.leaf(base[3].clone());
     let product = x.matmul(w);
     let activated = (product + bias.broadcast_along(0, product)).tanh();
     let error = activated - y;
     let loss = (error * error).sum();
-    let run = network.forward();
+    let (x, w, bias, y, loss) = (
+        x.symbol(),
+        w.symbol(),
+        bias.symbol(),
+        y.symbol(),
+        loss.symbol(),
+    );
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(loss);
     let analytic = [
         gradients.of(x).clone(),
@@ -154,28 +166,37 @@ fn tensor_gradients_match_finite_differences() {
     ];
 
     let loss_of = |tensors: &[Tensor<f64>]| -> f64 {
-        let network = Network::new();
-        let x = network.leaf(tensors[0].clone());
-        let w = network.leaf(tensors[1].clone());
-        let bias = network.leaf(tensors[2].clone());
-        let y = network.leaf(tensors[3].clone());
+        let tape = Tape::new();
+        let x = tape.leaf(tensors[0].clone());
+        let w = tape.leaf(tensors[1].clone());
+        let bias = tape.leaf(tensors[2].clone());
+        let y = tape.leaf(tensors[3].clone());
         let product = x.matmul(w).transpose();
         let shifted = product + bias.broadcast_like(product);
         let error = shifted - y;
-        let loss = (error * error).sum();
-        network.forward().of(loss).to_vec()[0]
+        let loss = (error * error).sum().symbol();
+        let network = tape.into_network();
+        network.forward(&network.parameters(), []).of(loss).to_vec()[0]
     };
 
-    let network = Network::new();
-    let x = network.leaf(base[0].clone());
-    let w = network.leaf(base[1].clone());
-    let bias = network.leaf(base[2].clone());
-    let y = network.leaf(base[3].clone());
+    let tape = Tape::new();
+    let x = tape.leaf(base[0].clone());
+    let w = tape.leaf(base[1].clone());
+    let bias = tape.leaf(base[2].clone());
+    let y = tape.leaf(base[3].clone());
     let product = x.matmul(w).transpose();
     let shifted = product + bias.broadcast_like(product);
     let error = shifted - y;
     let loss = (error * error).sum();
-    let run = network.forward();
+    let (x, w, bias, y, loss) = (
+        x.symbol(),
+        w.symbol(),
+        bias.symbol(),
+        y.symbol(),
+        loss.symbol(),
+    );
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(loss);
     let analytic = [
         gradients.of(x).clone(),
@@ -203,25 +224,29 @@ fn tensor_gradients_match_finite_differences() {
 
 #[test]
 fn forward_materializes_every_value() {
-    let network = Network::new();
-    let a = network.leaf(2.0_f64);
-    let b = network.leaf(3.0);
-    let c = network.leaf(4.0);
+    let tape = Tape::new();
+    let a = tape.leaf(2.0_f64);
+    let b = tape.leaf(3.0);
+    let c = tape.leaf(4.0);
     let expression = -((a + b) * c);
+    let (a, expression) = (a.symbol(), expression.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(a), 2.0);
     assert_eq!(*run.of(expression), -20.0);
 }
 
 #[test]
 fn backward_accumulates_gradients_through_fan_out() {
-    let network = Network::new();
-    let a = network.leaf(2.0_f64);
-    let b = network.leaf(3.0);
+    let tape = Tape::new();
+    let a = tape.leaf(2.0_f64);
+    let b = tape.leaf(3.0);
     let output = a * b + a;
+    let (a, b, output) = (a.symbol(), b.symbol(), output.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(output), 8.0);
 
     let gradients = run.backward(output);
@@ -232,57 +257,71 @@ fn backward_accumulates_gradients_through_fan_out() {
 
 #[test]
 fn backward_routes_negation() {
-    let network = Network::new();
-    let input = network.leaf(2.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(2.0_f64);
     let output = -(input * input);
+    let (input, output) = (input.symbol(), output.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(output), -4.0);
     assert_eq!(*run.backward(output).of(input), -4.0);
 }
 
 #[test]
 fn subtraction_routes_signed_gradients() {
-    let network = Network::new();
-    let left = network.leaf(5.0_f64);
-    let right = network.leaf(3.0);
+    let tape = Tape::new();
+    let left = tape.leaf(5.0_f64);
+    let right = tape.leaf(3.0);
     let difference = left - right;
+    let (left, right, difference) = (left.symbol(), right.symbol(), difference.symbol());
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(difference);
+    let gradients = network
+        .forward(&network.parameters(), [])
+        .backward(difference);
     assert_eq!(*gradients.of(left), 1.0);
     assert_eq!(*gradients.of(right), -1.0);
 }
 
 #[test]
 fn division_reuses_its_output_in_backward() {
-    let network = Network::new();
-    let left = network.leaf(6.0_f64);
-    let right = network.leaf(2.0);
+    let tape = Tape::new();
+    let left = tape.leaf(6.0_f64);
+    let right = tape.leaf(2.0);
     let quotient = left / right;
+    let (left, right, quotient) = (left.symbol(), right.symbol(), quotient.symbol());
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(quotient);
+    let gradients = network
+        .forward(&network.parameters(), [])
+        .backward(quotient);
     assert_eq!(*gradients.of(left), 0.5);
     assert_eq!(*gradients.of(right), -1.5);
 }
 
 #[test]
 fn tanh_routes_gradient_through_its_output() {
-    let network = Network::new();
-    let input = network.leaf(0.5_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(0.5_f64);
     let output = input.tanh();
+    let (input, output) = (input.symbol(), output.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     let expected = 1.0 - 0.5_f64.tanh().powi(2);
     assert!((run.backward(output).of(input) - expected).abs() < 1e-12);
 }
 
 #[test]
 fn exp_reuses_its_output_in_backward() {
-    let network = Network::new();
-    let input = network.leaf(1.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(1.0_f64);
     let output = input.exp();
+    let (input, output) = (input.symbol(), output.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     let value = *run.of(output);
     assert!((value - std::f64::consts::E).abs() < 1e-12);
     assert!((run.backward(output).of(input) - value).abs() < 1e-12);
@@ -290,45 +329,61 @@ fn exp_reuses_its_output_in_backward() {
 
 #[test]
 fn ln_routes_gradient_through_its_operand() {
-    let network = Network::new();
-    let input = network.leaf(2.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(2.0_f64);
     let output = input.ln();
+    let (input, output) = (input.symbol(), output.symbol());
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(output);
+    let gradients = network.forward(&network.parameters(), []).backward(output);
     assert!((gradients.of(input) - 0.5).abs() < 1e-12);
 }
 
 #[test]
 fn sigmoid_composes_from_primitives() {
-    let network = Network::new();
-    let input = network.leaf(0.0_f64);
-    let one = network.leaf(1.0);
+    let tape = Tape::new();
+    let input = tape.leaf(0.0_f64);
+    let one = tape.leaf(1.0);
     let sigmoid = one / (one + (-input).exp());
+    let (input, sigmoid) = (input.symbol(), sigmoid.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert!((run.of(sigmoid) - 0.5).abs() < 1e-12);
     assert!((run.backward(sigmoid).of(input) - 0.25).abs() < 1e-12);
 }
 
 #[test]
 fn backward_survives_later_recordings() {
-    let network = Network::new();
-    let input = network.leaf(2.0_f64);
-    let run = network.forward();
-    network.leaf(3.0);
+    let tape = Tape::new();
+    let input = tape.leaf(2.0_f64).symbol();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
+
+    // Reopening the network and recording a later leaf must not disturb
+    // a run taken before the reopen.
+    let tape = network.into_tape();
+    let _late = tape.leaf(3.0).symbol();
 
     assert_eq!(*run.backward(input).of(input), 1.0);
 }
 
 #[test]
 fn backward_skips_disconnected_nodes() {
-    let network = Network::new();
-    let unrelated = network.leaf(0.0_f64);
+    let tape = Tape::new();
+    let unrelated = tape.leaf(0.0_f64);
     let quotient = unrelated / unrelated;
-    let input = network.leaf(2.0);
+    let input = tape.leaf(2.0);
     let target = input * input;
+    let (unrelated, quotient, input, target) = (
+        unrelated.symbol(),
+        quotient.symbol(),
+        input.symbol(),
+        target.symbol(),
+    );
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(target);
+    let gradients = network.forward(&network.parameters(), []).backward(target);
     assert_eq!(*gradients.of(input), 4.0);
     assert_eq!(*gradients.of(unrelated), 0.0);
     assert_eq!(*gradients.of(quotient), 0.0);
@@ -336,23 +391,33 @@ fn backward_skips_disconnected_nodes() {
 
 #[test]
 fn backward_ignores_singular_paths_through_shared_leaves() {
-    let network = Network::new();
-    let input = network.leaf(0.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(0.0_f64);
     let _quotient = input / input;
     let target = input * input;
+    let (input, target) = (input.symbol(), target.symbol());
+    let network = tape.into_network();
 
-    assert_eq!(*network.forward().backward(target).of(input), 0.0);
+    let gradients = network.forward(&network.parameters(), []).backward(target);
+    assert_eq!(*gradients.of(input), 0.0);
 }
 
 #[test]
 fn backward_skips_singular_producers_of_broadcast_references() {
-    let network = Network::new();
-    let input = network.leaf(0.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(0.0_f64);
     let singular_reference = input / input;
-    let source = network.leaf(2.0);
+    let source = tape.leaf(2.0);
     let output = source.broadcast_like(singular_reference);
+    let (input, singular_reference, source, output) = (
+        input.symbol(),
+        singular_reference.symbol(),
+        source.symbol(),
+        output.symbol(),
+    );
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(*run.of(output), 2.0);
 
     // The reference contributes only its shape, so the target has no
@@ -366,13 +431,20 @@ fn backward_skips_singular_producers_of_broadcast_references() {
 
 #[test]
 fn backward_skips_singular_producers_of_axis_references() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::new([2, 2], [0.0_f64, 1.0, 2.0, 3.0]));
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new([2, 2], [0.0_f64, 1.0, 2.0, 3.0]));
     let singular_reference = input / input;
-    let source = network.leaf(Tensor::new([2], [5.0_f64, 7.0]));
+    let source = tape.leaf(Tensor::new([2], [5.0_f64, 7.0]));
     let output = source.broadcast_along(0, singular_reference).sum();
+    let (input, singular_reference, source, output) = (
+        input.symbol(),
+        singular_reference.symbol(),
+        source.symbol(),
+        output.symbol(),
+    );
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(output);
+    let gradients = network.forward(&network.parameters(), []).backward(output);
     assert_eq!(gradients.of(input).to_vec(), [0.0; 4]);
     assert_eq!(gradients.of(singular_reference).to_vec(), [0.0; 4]);
     assert_eq!(gradients.of(source).to_vec(), [2.0, 2.0]);
@@ -380,13 +452,20 @@ fn backward_skips_singular_producers_of_axis_references() {
 
 #[test]
 fn backward_skips_nodes_recorded_after_the_target() {
-    let network = Network::new();
-    let input = network.leaf(2.0_f64);
+    let tape = Tape::new();
+    let input = tape.leaf(2.0_f64);
     let target = input * input;
-    let late = network.leaf(0.0);
+    let late = tape.leaf(0.0);
     let quotient = late / late;
+    let (input, target, late, quotient) = (
+        input.symbol(),
+        target.symbol(),
+        late.symbol(),
+        quotient.symbol(),
+    );
+    let network = tape.into_network();
 
-    let gradients = network.forward().backward(target);
+    let gradients = network.forward(&network.parameters(), []).backward(target);
     assert_eq!(*gradients.of(input), 4.0);
     assert_eq!(*gradients.of(late), 0.0);
     assert_eq!(*gradients.of(quotient), 0.0);
@@ -395,36 +474,44 @@ fn backward_skips_nodes_recorded_after_the_target() {
 #[test]
 #[should_panic(expected = "allocated after")]
 fn backward_rejects_later_targets() {
-    let network = Network::new();
-    let _ = network.leaf(2.0_f64);
-    let run = network.forward();
-    let late = network.leaf(3.0);
+    let tape = Tape::new();
+    let _ = tape.leaf(2.0_f64);
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
+
+    // A symbol minted after the run, across a reopen, is outside the
+    // run's coverage and must be rejected.
+    let tape = network.into_tape();
+    let late = tape.leaf(3.0).symbol();
     run.backward(late);
 }
 
 #[test]
 #[should_panic(expected = "different network")]
 fn backward_rejects_foreign_targets() {
-    let first = Network::new();
-    let second = Network::new();
+    let first = Tape::new();
+    let second = Tape::new();
     let _ = first.leaf(1.0_f64);
-    let foreign = second.leaf(2.0);
-    first.forward().backward(foreign);
+    let foreign = second.leaf(2.0).symbol();
+    let network = first.into_network();
+    network.forward(&network.parameters(), []).backward(foreign);
 }
 
 #[test]
 fn pad_places_the_window_and_narrows_the_gradient() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]));
     let padded = x.pad(1, 1, 4);
     // Distinct weights make the narrowed-back gradient unambiguous.
-    let weights = network.leaf(Tensor::new(
+    let weights = tape.leaf(Tensor::new(
         [2, 4],
         (1..=8).map(|v| v as f64).collect::<Vec<_>>(),
     ));
     let loss = (padded * weights).sum();
+    let (x, padded, loss) = (x.symbol(), padded.symbol(), loss.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(
         run.of(padded).to_vec(),
         &[0.0, 1.0, 2.0, 0.0, 0.0, 3.0, 4.0, 0.0]
@@ -437,15 +524,17 @@ fn pad_places_the_window_and_narrows_the_gradient() {
 
 #[test]
 fn unfold_slides_windows_and_folds_the_gradient() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new(
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new(
         [8],
         (1..=8).map(|v| v as f64).collect::<Vec<_>>(),
     ));
     let windows = x.unfold(0, 3, 2, 1);
     let loss = windows.sum();
+    let (x, windows, loss) = (x.symbol(), windows.symbol(), loss.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(
         run.of(windows).to_vec(),
         &[1.0, 2.0, 3.0, 3.0, 4.0, 5.0, 5.0, 6.0, 7.0]
@@ -462,12 +551,14 @@ fn unfold_slides_windows_and_folds_the_gradient() {
 
 #[test]
 fn narrow_of_pad_roundtrips_the_value() {
-    let network = Network::new();
-    let x = network.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
+    let tape = Tape::new();
+    let x = tape.leaf(Tensor::new([3], [1.0_f64, 2.0, 3.0]));
     let roundtrip = x.pad(0, 2, 7).narrow(0, 2, 3);
     let loss = roundtrip.sum();
+    let (x, roundtrip, loss) = (x.symbol(), roundtrip.symbol(), loss.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(roundtrip).to_vec(), &[1.0, 2.0, 3.0]);
 
     let gradients = run.backward(loss);
@@ -481,8 +572,9 @@ fn scalar_reshape_to_rank_one_is_rejected_at_forward() {
     // legitimately take shape [1]), so the scalar payload rejects the
     // capability mismatch when the rule runs, keeping the recorded and
     // payload views of every shape coherent.
-    let network = Network::new();
-    let x = network.leaf(2.0_f64);
+    let tape = Tape::new();
+    let x = tape.leaf(2.0_f64);
     let _reshaped = x.reshape([1]);
-    network.forward();
+    let network = tape.into_network();
+    network.forward(&network.parameters(), []);
 }

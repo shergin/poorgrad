@@ -4,28 +4,28 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Designation, Misbinding, ValueRef, Witness};
+use super::{Origin, Symbol};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Field<f64>: Send, Sync);
 
-/// A value-aligned buffer over the nodes captured by a graph snapshot.
+/// A value-aligned buffer over the nodes of one network's recording.
 ///
 /// The [`Gradients`] of a backward run are one kind of field. Other fields can
 /// hold optimizer state such as momentum or moments, or combine gradients from
-/// several runs; a [`Run`](super::Run) holds its forward payloads
-/// in one too. Fields carry graph lineage and branch information rather than
-/// borrowing one network generation, allowing a compatible field to be reused
-/// across parameter updates.
+/// several runs; a [`Run`](super::Run) holds its forward payloads in one too.
+/// Fields carry their network family's origin rather than borrowing anything,
+/// so a field outlives every phase and steps any number of
+/// [`Parameters`](crate::Parameters) states.
 ///
-/// Field operations require both operands to cover the same number of nodes in
-/// compatible branches of the same graph lineage. A field produced before the
-/// graph grows still covers its original prefix; accessing a newer node or
-/// using that field to update the larger graph is rejected.
+/// Field operations require both operands to cover the same number of nodes
+/// of the same network. A field produced before a reopen extends the
+/// recording still covers its original prefix; accessing a newer node or
+/// stepping parameters it does not cover is rejected.
 #[derive(Debug, Clone)]
 pub struct Field<Data> {
-    witness: Witness,
+    origin: Origin,
     payloads: Vec<Data>,
 }
 
@@ -43,71 +43,42 @@ pub struct Field<Data> {
 pub type Gradients<Data> = Field<Data>;
 
 impl<Data: Differentiable> Field<Data> {
-    pub(crate) fn new(witness: Witness, payloads: Vec<Data>) -> Self {
-        Self { witness, payloads }
+    pub(crate) fn new(origin: Origin, payloads: Vec<Data>) -> Self {
+        Self { origin, payloads }
     }
 
-    /// Locates `designation` within this field's coverage — the one
-    /// kinship probe behind every buffer read.
-    ///
-    /// A field borrows no tape, so the two forms present different
-    /// proofs: a bound proxy's tape must agree with the field's
-    /// branch chain over the covered prefix, while a symbol's own
-    /// lineage, branch, and position are checked against the chain
-    /// directly — the detachment fields were built for. Callers
-    /// format the returned [`Misbinding`] into their own panic
-    /// messages, so the probe stays diagnosis-only.
-    pub(crate) fn locate(&self, designation: Designation<'_, Data>) -> Result<usize, Misbinding> {
-        let coverage = self.payloads.len();
-        match designation {
-            Designation::Bound { tape, id } => {
-                if !tape.same_origin(&self.witness) {
-                    return Err(Misbinding::ForeignOrigin);
-                }
-                if !tape.agrees_with(&self.witness, coverage) {
-                    return Err(Misbinding::DivergentBranch);
-                }
-                if id.index() >= coverage {
-                    return Err(Misbinding::OutOfCoverage);
-                }
-                Ok(id.index())
-            }
-            Designation::Named(symbol) => self.witness.probe(symbol, coverage).map(|id| id.index()),
-        }
+    /// Returns the origin token of the network family this field
+    /// covers.
+    pub(crate) fn origin(&self) -> Origin {
+        self.origin
     }
 
-    /// Returns the value assigned to the node named by `value` — a
-    /// bound [`Value`](super::Value) or a detached
-    /// [`Symbol`](super::Symbol).
+    /// Returns the number of nodes this field covers.
+    pub(crate) fn len(&self) -> usize {
+        self.payloads.len()
+    }
+
+    /// Returns the value assigned to the node named by `symbol`.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different lineage or a divergent
-    /// fork, or was allocated after this field was produced.
-    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
-        let designation = value.designation();
-        let subject = match &designation {
-            Designation::Bound { .. } => "value",
-            Designation::Named(_) => "symbol",
-        };
-        let index = match self.locate(designation) {
-            Ok(index) => index,
-            Err(Misbinding::ForeignOrigin) => {
-                panic!("{subject} belongs to a different network lineage")
-            }
-            Err(Misbinding::DivergentBranch) => {
-                panic!("{subject} belongs to a divergent fork of the network")
-            }
-            Err(Misbinding::OutOfCoverage) => {
-                panic!("{subject} was allocated after this field was produced")
-            }
-        };
-        &self.payloads[index]
+    /// Panics if `symbol` belongs to a different network or was
+    /// allocated after this field was produced.
+    pub fn of(&self, symbol: Symbol) -> &Data {
+        assert!(
+            symbol.origin == self.origin,
+            "symbol belongs to a different network"
+        );
+        assert!(
+            symbol.id.index() < self.payloads.len(),
+            "symbol was allocated after this field was produced"
+        );
+        &self.payloads[symbol.id.index()]
     }
 
     /// Returns a field with every entry passed through `transform`.
     pub fn map(&self, transform: impl Fn(&Data) -> Data) -> Self {
         Self {
-            witness: self.witness.clone(),
+            origin: self.origin,
             payloads: self.payloads.iter().map(transform).collect(),
         }
     }
@@ -115,12 +86,12 @@ impl<Data: Differentiable> Field<Data> {
     /// Combines two fields entry by entry with `combine`.
     ///
     /// # Panics
-    /// Panics if the fields belong to different lineages or divergent
-    /// forks, or cover different numbers of nodes.
+    /// Panics if the fields belong to different networks or cover
+    /// different numbers of nodes.
     pub fn zip(&self, other: &Self, combine: impl Fn(&Data, &Data) -> Data) -> Self {
-        self.assert_compatible_witness(other);
+        self.assert_compatible(other);
         Self {
-            witness: self.witness.clone(),
+            origin: self.origin,
             payloads: self
                 .payloads
                 .iter()
@@ -137,25 +108,16 @@ impl<Data: Differentiable> Field<Data> {
         &self.payloads
     }
 
-    pub(crate) fn witness(&self) -> &Witness {
-        &self.witness
-    }
-
     /// Panics if `other` cannot combine with `self`.
-    fn assert_compatible_witness(&self, other: &Self) {
+    fn assert_compatible(&self, other: &Self) {
         assert!(
-            self.witness.same_origin(&other.witness),
-            "fields belong to different network lineages"
+            self.origin == other.origin,
+            "fields belong to different networks"
         );
         assert_eq!(
             self.payloads.len(),
             other.payloads.len(),
-            "fields cover different generations of the network"
-        );
-        assert!(
-            self.witness
-                .agrees_with(&other.witness, self.payloads.len()),
-            "fields belong to divergent forks of the network"
+            "fields cover different prefixes of the network"
         );
     }
 }

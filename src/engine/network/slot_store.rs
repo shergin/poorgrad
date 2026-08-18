@@ -12,8 +12,9 @@ use super::SlotId;
 /// node-indexed buffers via the `nodes` column.
 ///
 /// Structure is recorded once; these tables turn over independently
-/// (parameters per generation, input defaults when a new input is
-/// recorded or a run overlays feeds).
+/// (parameter payloads per training step in the caller's
+/// [`Parameters`](crate::Parameters), input defaults when a run
+/// overlays feeds).
 #[derive(Debug, Clone)]
 pub(crate) struct SlotStore<Data> {
     payloads: Vec<Data>,
@@ -73,9 +74,27 @@ impl<Data> SlotStore<Data> {
         self.payloads[slot.index()] = data;
     }
 
+    /// Returns the node behind the highest slot, or `None` for an
+    /// empty store.
+    pub(crate) fn last_node(&self) -> Option<ValueId> {
+        self.nodes.last().copied()
+    }
+
+    /// Returns the slot whose structure node is `node`, or `None` if
+    /// no slot links to it.
+    ///
+    /// Slots are installed in recording order, so the node column is
+    /// strictly increasing and the lookup is a binary search.
+    pub(crate) fn slot_of(&self, node: ValueId) -> Option<SlotId> {
+        self.nodes
+            .binary_search_by_key(&node.index(), |linked| linked.index())
+            .ok()
+            .map(SlotId::new)
+    }
+
     /// Returns a store with the same node links and `payloads` replaced.
     ///
-    /// The generation transition for parameters: structure and slot
+    /// The training-step transition for parameters: structure and slot
     /// identity stay fixed; only the tensors turn over.
     ///
     /// # Panics

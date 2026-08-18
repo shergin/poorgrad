@@ -55,7 +55,8 @@ implicitly.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is
-[`Network::update`](src/engine/network.rs) with an update closure; see
+[`Parameters::step`](src/engine/network/parameters.rs) with an update
+closure — a pure data transformation of the caller-owned state; see
 [`examples/gradient_descent.rs`](examples/gradient_descent.rs).
 
 ## Graph model
@@ -70,16 +71,22 @@ allocation order is a topological order.
 operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
-topos: [`Tape`](src/engine/network/tape/tape.rs), crate-internal, shared by a
-network and all of its proxies, and the engine's single synchronization
-point. Beside its immutable columns the tape carries the generation's
-parameter store: the one piece of state that changes across generations.
+topos: the public [`Tape`](src/engine/network/tape.rs), the construction
+phase of a network — expressions record onto it through [`Value`]
+proxies, shape-checked at the recording expression, behind the engine's
+single synchronization point (a mutex quarantined to this phase).
+`Tape::into_network` consumes the tape and seals the recording into an
+immutable [`Network`]; `Network::into_tape` consumes the network to
+reopen it. Both conversions are consuming, so one recording's history is
+linear by ownership — two divergent futures of a prefix cannot be
+constructed, which is what lets every detached carrier identify nodes by
+origin and position alone.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In topos a node is a
 [`Function<Data>`](src/engine/function/function.rs) (the operation and its
 parameters) stored on the tape beside its operand links (the
-[`Operands`](src/engine/network/tape/operands.rs) column) and its inferred `Shape`;
+[`Operands`](src/engine/network/operands.rs) column) and its inferred `Shape`;
 none of them change once recorded.
 
 **Shape.** The extent of a payload along every axis; a scalar is rank 0.
@@ -87,13 +94,14 @@ Shapes are inferred for every node when its expression is recorded — the
 shape-level mirror of `forward`, an abstract interpretation of the tape —
 so shape mismatches panic at the offending expression, before anything
 runs. In the record-once model this recovers most of the benefit of
-type-level shapes at no type-system cost. Shapes are lineage-invariant —
-`update` validates every replacement payload against the recorded
-shape — and stored as a separate cold column beside the hot function and
-operands columns inside [`Structure`](src/engine/network/tape/structure.rs)
-(data-oriented layout: runs replay functions and operand links, never
-shapes). The three columns always move together: fork, update, and
-snapshot share one `Structure`. Construction boundaries (`Tensor::new`,
+type-level shapes at no type-system cost. Shapes never change once
+recorded — `Parameters::step` and the checkpoint installs validate every
+replacement payload against the current shape — and are stored as a
+separate cold column beside the hot function and operands columns inside
+[`Structure`](src/engine/network/structure.rs) (data-oriented layout:
+runs replay functions and operand links, never shapes). The three
+columns always move together: seals, freezes, and reopens share one
+`Structure`. Construction boundaries (`Tensor::new`,
 `Tensor::filled`, `Value::reshape`) accept `impl Into<Shape>` — axis
 literals, vectors, slices, and shapes or their references all convert —
 so the nominal type is never decomposed at the rim; `Shape::new` remains
@@ -131,24 +139,26 @@ tensor-native ones raise the bound of running (not building) a graph to
 time. Gradients stop there and get read out; its `backward` is a no-op.
 Parameters and inputs are the other leaf kinds: trainable and fed
 per-run respectively. In topos: `Function::Leaf`, allocated with
-[`Network::leaf`](src/engine/network.rs); payload literals in expressions
+[`Tape::leaf`](src/engine/network/tape.rs); payload literals in expressions
 (`x * 2.0`) record leaves implicitly, one per appearance.
 
 **Parameter.** A trainable leaf: identical to `Leaf` during runs, but
 designated as updatable so a training step knows which leaves to replace.
 In topos: `Function::Parameter`, allocated with
-[`Network::parameter`](src/engine/network.rs) and replaced by
-`Network::update`. The node holds only its slot; the payload lives in the
-generation's parameter store.
+[`Tape::parameter`](src/engine/network/tape.rs) from its record-site
+initial. The node holds only its slot; live payloads are the caller's
+[`Parameters`](src/engine/network/parameters.rs) state, stepped by
+`Parameters::step` — training never touches the recorded node.
 
-**Input.** A declared per-run leaf: `Network::input` records it with a
-default payload, and `forward_with` binds a fed payload to it for one
-run, validated against the recorded shape at the feed site. Unfed
-inputs fall back to their defaults, so plain `forward` stays total.
-Feeds are run state, not graph state — feeding never touches the tape,
-which is what lets concurrent runs forward one shared network on
-different batches. In topos: `Function::Input`, fed via
-[`Network::forward_with`](src/engine/network.rs).
+**Input.** A declared per-run leaf: `Tape::input` records it with a
+default payload — part of the spec, so a network with its defaults is
+runnable standalone — and a `forward` feed binds a fed payload to it for
+one run, validated against the recorded shape at the feed site. Unfed
+inputs fall back to their defaults. Feeds are run state, not graph
+state — feeding never touches the spec, which is what lets concurrent
+runs forward one shared network on different batches. In topos:
+`Function::Input`, fed via the feed pairs of
+[`Network::forward`](src/engine/network/network.rs) and `Plan::forward`.
 
 **Topological (allocation) order.** Any ordering in which every operand
 precedes its consumers. Topos's recording enforces it by construction —
@@ -158,21 +168,47 @@ sorting.
 
 ## Engine mechanics
 
-**Network.** The single owner of the state of one computation graph: it owns
-the tape, hands out proxies, and is the boundary of type homogeneity (one
-`Data` type per network). Mutation happens only through state transitions
-that produce new generations. In topos: [`Network`](src/engine/network.rs).
+**Network.** The sealed phase of a recording: the immutable spec of one
+computation graph — structure, shapes, parameter initials, and input
+defaults, with no live state and no lock. Born only from
+`Tape::into_network`, shared for concurrent runs by `&Network` or
+`Arc<Network>`, reopened for further recording by the consuming
+`Network::into_tape`, and deliberately not `Clone`: a second sealed copy
+could be reopened into a divergent future, which the ownership rule
+exists to make unrepresentable. Runs and plans read parameter payloads
+from a caller-supplied [`Parameters`] per call. It is the boundary of
+type homogeneity (one `Data` type per network). In topos:
+[`Network`](src/engine/network/network.rs).
 
-**Value (proxy).** A `Copy` handle pairing a borrow of the network's tape
-with a node position. Proxies cannot outlive their network, are never
-consumed by operators (`let x = v1 + v2;` records a node and keeps `v1`,
-`v2` usable), and cross threads freely. In topos:
-[`Value`](src/engine/value.rs).
+**Parameters.** The live parameter payloads of one network, as a
+caller-owned value: the state half of the spec/state split. Born from
+the record-site initials (`Network::parameters`) or a checkpoint,
+passed by reference into every run and plan, stepped as pure data
+(`step`/`step_each`), read by symbol (`of`), carried across an
+`into_tape` round trip (`carried` — existing slots keep payloads, new
+slots take their initials), and installed into by name
+(`with_payloads`, the checkpoint route). `Clone` is honest and
+O(parameters), which is the whole cost of a what-if: one spec, any
+number of states. Optimizer state is `Field` algebra held beside a
+`Parameters` value; nothing hides in the graph. In topos:
+[`Parameters`](src/engine/network/parameters.rs).
+
+**Value (proxy).** The operand of recording: a `Copy` handle pairing a
+borrow of the tape with a node position, alive only inside the
+construction phase — the same meaning `llvm::Value` has as the
+payload-free node handle composed through `IRBuilder`. Proxies are
+never consumed by operators (`let x = v1 + v2;` records a node and
+keeps `v1`, `v2` usable) and cross threads freely, but they cannot
+cross `Tape::into_network`: the seal consumes the tape, so a proxy
+outliving the phase is a borrow error at the exact line, and
+`Value::symbol` is the documented bridge out. Payloads live in
+[`Parameters`] and [`Run`]s, read by [`Symbol`]. In topos:
+[`Value`](src/engine/network/value.rs).
 
 **Composite (operation).** A method that expands to several primitive
 nodes: a formula over opcodes whose gradient the chain rule pays with no
 dedicated backward rule. The operation surface has three tiers, marked by
-files rather than by types: [`value.rs`](src/engine/value.rs) holds the
+files rather than by types: [`value.rs`](src/engine/network/value.rs) holds the
 opcode mnemonics, each recording exactly one computed node (payload
 literals additionally record a leaf — data injection, not computation);
 [`composite.rs`](src/engine/composite.rs) holds the composites (`abs` as
@@ -191,7 +227,7 @@ only when floating point breaks the composed form, as it did for
 once finite logits differed by more than the representable range.
 
 **Differentiate (gradient recording).** Reverse-mode differentiation
-as a tape-to-tape transform: `Network::differentiate(loss, wrt)`
+as a tape-to-tape transform: `Tape::differentiate(loss, wrt)`
 appends the gradient computation as ordinary computed nodes and
 returns one symbol per `wrt` entry, so gradients are first-class
 values — compilable, emittable, readable, and differentiable again
@@ -203,54 +239,52 @@ payloads of one rule — derivative knowledge cannot fork). The
 recorded scan mirrors the engine's seed, ancestor masking, and
 accumulation order, so a compiled plan over `[loss, gradients...]`
 reproduces `Run::backward` bitwise; per-variant closure tests
-hold that contract. In topos: `Network::differentiate`, the
-`Trace` payload, and the closure suite in
-`engine/tests/differentiate_tests.rs`.
+hold that contract. Differentiation appends nodes, so it is a
+construction-phase operation and lives on the tape. In topos:
+`Tape::differentiate`, the `Trace` payload, and the closure suite in
+`engine/network/tests/differentiate_tests.rs`.
 
-**Symbol.** A detached, `Copy` name of a value: the identity that
-persists across time, while `Value` is that identity's state in one
-generation. Each generation acts as an environment;
-[`Network::resolve`](src/engine/network.rs) looks a symbol up in it and
-returns that generation's proxy; a failed resolution panics as a programmer
-error, while `try_resolve` probes and returns `None`. The symbol carries its
-lineage and its branch, so resolving into an unrelated network — or into a
-fork that diverged before the symbol was minted — panics rather than
-misbinding; within a branch, resolution is positional. In topos:
-[`Symbol`](src/engine/symbol.rs), obtained with `Value::symbol`.
+**Symbol.** A detached, `Copy` name of a value: an origin plus a node
+position, and the sole currency of every phase after recording. Access
+is phase-scoped, names are forever: a `Value` dies at the seal, while a
+symbol is `'static`, crosses threads, cells, and checkpoints, and stays
+valid across every `into_tape` round trip, because linear extension
+never moves a recorded node. Reads go through `Parameters::of`,
+`Run::of`, and `Field::of`; run-time naming (feeds, `backward` targets,
+compile roots and observes) speaks symbols; `Tape::resolve` turns one
+back into a proxy when a network reopens, with `try_resolve` as the
+probing form. Resolving a foreign symbol panics rather than misbinding:
+origin equality plus coverage are the two integer compares that remain
+of graph identity. In topos:
+[`Symbol`](src/engine/network/symbol.rs), obtained with `Value::symbol`.
 
-**Value reference.** Either handle to a recorded value, accepted
-interchangeably by the read and naming surfaces: a generation-bound
-`Value` proxy or a detached `Symbol` name. A proxy proves its
-provenance by carrying its tape; a name is validated with the same
-lineage, branch, and allocation checks `resolve` performs — a
-reference never weakens a check, it only chooses which proof to
-present. The trait is sealed (the two forms are the closed set) and
-dispatch is a monomorphized match, never a trait object. Reads
-(`Run::of`, `Run::backward`, `Field::of`), compile requests
-(`Compile::roots` and `Compile::observe`), `forward_for` targets,
-and `differentiate` accept it; feed pairs stay `Symbol`-typed so
-empty list literals keep inferring. In topos:
-[`ValueRef`](src/engine/reference.rs).
+**Seal / reopen.** The two phase transitions of one recording:
+`Tape::into_network` seals the construction phase into the immutable
+spec, and `Network::into_tape` reopens it for further recording. Both
+consume their operand and move the columns and stores without copying,
+so the history stays linear by ownership and neither is callable
+through `&` or `Arc` — sharing and extending exclude each other by the
+ownership rules alone. State survives the round trip through
+`Parameters::carried`. There are no generations: training steps the
+caller's `Parameters` and mints no new network, so the questions the
+old generation machinery answered (which generation does a symbol,
+field, or plan bind to; who may record next) can no longer be asked.
 
-**Generation.** A network state produced by a state transition: a fork
-(`Network::clone`) or a gradient step (`Network::update`). Generations
-share the recorded structure through the arena and differ only in their
-parameter store; positions stay stable (symbols keep resolving), and
-older generations remain fully usable — snapshot isolation.
-
-**Slot store.** A dense table of payloads keyed by [`SlotId`](src/engine/network/tape/slot.rs),
+**Slot store.** A dense table of payloads keyed by [`SlotId`](src/engine/network/slot.rs),
 each row also holding the tape [`ValueId`](src/engine/network/value.rs) of the
-node that names that slot. Parameters and inputs share this layout
-([`SlotStore`](src/engine/network/tape/slot_store.rs)): structure is
-recorded once; the parameter table turns over per generation (`update`
-rebuilds payloads in O(parameters) and reclaims the previous store), and
-the input table holds defaults (runs may overlay feeds without touching
-the graph). Forks share both stores in O(1).
+node that names that slot. Parameter initials and input defaults share
+this layout ([`SlotStore`](src/engine/network/slot_store.rs)): structure
+is recorded once; the caller's `Parameters` carries the live parameter
+table (`step` rebuilds payloads in O(parameters)), and the spec's input
+table holds defaults (runs may overlay feeds without touching the
+graph). Slots are installed in recording order and never move, which is
+what keeps symbols naming their parameters across steps and reopens.
 
 **Run.** One forward or backward execution over a network, and the type
 that reifies the forward one: [`Run`](src/engine/run.rs) is a payload
-per node, owning the structure freeze and a witness so `backward` needs
-no network borrow. Each run carries its *posture*, the
+per node, owning its structure freeze so `backward` needs no network
+borrow; kinship is the origin-and-coverage check every detached carrier
+makes. Each run carries its *posture*, the
 producer-specific state as one explicit sum: complete or target-sliced
 from the interpreter, observed from a forward-only plan (only the
 keep-set answers reads, `backward` refused), training from an
@@ -265,12 +299,13 @@ read-back accessor, `of(value)`.
 
 **Target-sliced run.** A forward run restricted to the ancestor
 closure of declared targets:
-[`Network::forward_for`](src/engine/network.rs) marks reachability
-over the operand links in one descending sweep and skips every node
-outside the closure, leaving an O(1), shape-correct zero placeholder
-(`counted(shape, 0)`) in each skipped slot. The placeholders keep
-`update` sound — a parameter outside the closure receives its true
-gradient, exactly zero — while reads stay loud: `Run::of` and
+[`Network::forward_for`](src/engine/network/network.rs) marks
+reachability over the operand links in one descending sweep and skips
+every node outside the closure, leaving an O(1), shape-correct zero
+placeholder (`counted(shape, 0)`) in each skipped slot. The
+placeholders keep `Parameters::step` sound — a parameter outside the
+closure receives its true gradient, exactly zero — while reads stay
+loud: `Run::of` and
 `Run::backward` panic on a skipped value rather than answer
 with a placeholder. Observability is declared, never inferred — the
 same contract the plan-lowering path generalizes into the keep-set.
@@ -291,10 +326,12 @@ request without it compiles forward liveness, whose runs refuse
 `backward`, and recorded gradient symbols enter as ordinary roots;
 run by `Plan::forward`, whose results
 are bit-identical to the interpreter's — a plan changes what is
-*stored*, never what is *computed*. Plans are graph-structural, so
-one plan survives every `update` generation and compile-once
-amortizes over a whole training run; later recordings simply grow the
-tape past the plan's prefix. `Plan::describe` renders the decisions —
+*stored*, never what is *computed*. Plans are graph-structural and
+self-contained: a plan freezes its own copy of the spec at compile
+time and takes the caller's `Parameters` per call, so a plan never
+held state, compile-once amortizes over a whole training run, and
+reopening the network simply records past the plan's prefix.
+`Plan::describe` renders the decisions —
 per-node liveness spans and the static live-volume story. The tape
 remains the specification and the plain interpreter the executable
 oracle every plan is differentially tested against.
@@ -346,52 +383,29 @@ exact for the reverse scan. `describe` prints the groups;
 recognition proposes, payloads and backends dispose — neither ever
 sees graph structure.
 
-**Field.** A value-aligned buffer: one payload per node, tied to a network
-*lineage* rather than to a single generation, so it can be combined across
-runs (averaging data-parallel gradients) and carried across generations
-(momentum velocity, Adam moments). Supports elementwise algebra — `+`,
-`scale`, `zip`, `map` — with kinship (same lineage, same length,
-agreeing branch chains) checked on every combination; `Network::update`
-takes any field as its update direction. In physics terms, a `Gradients` is
+**Field.** A value-aligned buffer: one payload per node, carrying its
+network family's origin rather than borrowing anything, so it can be
+combined across runs (averaging data-parallel gradients) and carried
+across training steps (momentum velocity, Adam moments). Supports
+elementwise algebra — `+`, `scale`, `zip`, `map` — with kinship (same
+origin, same covered length) checked on every combination;
+`Parameters::step` takes any field as its update direction. In physics terms, a `Gradients` is
 a discrete gradient field over the graph, which is why `Gradients` is an
 alias for `Field` rather than a wrapper around it: the buffer's invariant is
 alignment to a graph, not differentiation, and Adam's second moment or a
 run's forward payloads are fields that are not gradients at all. In
 topos: [`Field`](src/engine/field.rs).
 
-**Origin.** The family of networks descending from a common construction
-through forks and updates. Within an origin, positions are attributed to
-branches, and they are stable within a branch — which is what makes
-symbols resolve and fields combine across generations. Tracked by a
-`Copy` token minted from a process-global counter at network creation
-and carried through every transition; same-origin is equality. In
-topos: the crate-internal [`Origin`](src/engine/network/tape/identity.rs),
-embedded in every `Symbol` and in every
-[`Witness`](src/engine/network/tape/witness.rs).
-
-**Branch.** A contiguous run of recordings within an origin. A fork or an
-update hands both sides a shared one-shot claim on the current branch:
-the first side to record continues it, and every other sibling starts a
-fresh branch at its own length, so divergent forks stop sharing identity
-exactly where their recordings part ways. Symbols carry the branch that
-owned their position when they were minted, and resolution checks branch
-membership before the positional lookup, so a divergent sibling's symbol
-panics instead of misbinding. Linear histories never mint branches:
-chains stay as short as the program's real divergence. In topos: the
-crate-internal [`Branch`](src/engine/network/tape/identity.rs) and its segment chain.
-
-**Identity.** Live structural identity under the tape lock: origin, branch
-chain, and tip protocol together. Fork and update share the tip; record
-claims it. Detached carriers never hold an `Identity` — they take a
-[`Witness`](src/engine/network/tape/witness.rs). In topos: the crate-internal
-[`Identity`](src/engine/network/tape/identity.rs).
-
-**Witness.** A read-only proof of graph identity: origin plus branch chain,
-without the tip. Fields, plans, and tape snapshots hold one and answer
-same-origin and prefix agreement without borrowing the live tape. A
-failed symbol probe reports a misbinding reason without panicking;
-coverage discipline and panic messages stay at the call site. In
-topos: the crate-internal [`Witness`](src/engine/network/tape/witness.rs).
+**Origin.** The identity of one tape-network family: a `Copy` token
+minted from a process-global counter at `Tape::new` and carried through
+every `into_network`/`into_tape` round trip; same-origin is equality.
+Because both conversions consume their operand, at most one live tape
+or network carries an origin at a time, and positions within it are
+stable forever — which is why origin plus node position is the whole
+identity a detached carrier (`Symbol`, `Field`, `Parameters`, `Plan`,
+`Run`) needs, and the whole runtime price of detachment: two integer
+compares. In topos: the crate-internal
+[`Origin`](src/engine/network/origin.rs), embedded in every `Symbol`.
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
@@ -534,40 +548,21 @@ elements read from it — deterministic under any evaluation strategy.
 Two `unfold`s produce 2-D windows (torch semantics). In topos:
 [`Tensorial::unfold`/`fold`](src/payload/tensorial.rs) over
 [`Layout::unfold`](src/payload/layout.rs), recorded by
-[`Value::unfold`](src/engine/value.rs) (with `fold` as its gradient
+[`Value::unfold`](src/engine/network/value.rs) (with `fold` as its gradient
 rule, a payload method rather than an opcode until transposed
 convolution needs the forward direction); `Value::pad` records
 `narrow`'s adjoint the same way.
 
 **Arena.** Append-only storage in which every recorded node lives exactly
-once, shared by all generations of a network; allocations never move or
-drop while the arena lives, which is what makes forks cheap and references
-stable. Provided by the [`cow_vec`](https://crates.io/crates/cow_vec) crate
-inside `Tape`. Training never touches it: parameter payloads live in the
-parameter store, so the arena holds structure only. Nodes recorded on a
-sibling after a fork still land in the *shared* arena; they become
-unreachable from the parent but stay allocated until every sharer of that
-arena drops (or a side rebuilds private arenas — see Compaction).
-
-**Fork.** An O(1) copy of a network sharing the underlying arena but owning
-an independent node list; later recordings on either side never affect the
-other's *visible* graph. The two sides contend for the current branch on
-their first recording, and the loser diverges onto a fresh one, so their
-later symbols never misbind (see Branch). Train-only forks (`update`
-without further recording) are memory-clean: the parameter store turns
-over per generation and does not use the arena. Structure recorded on a
-sibling can keep arena memory alive for the lineage — that is the cost of
-O(1) sharing, reclaimed by dropping every sharer or by compaction. In
-topos: `Network::clone`, built on [`Tape::fork`](src/engine/network/tape/tape.rs).
-
-**Compaction.** Rebuilding a network's structure columns into private
-arenas that hold only its live nodes, so sibling-fork garbage no longer
-pins memory once the compacted form replaces the polluted parent (or the
-polluted side is dropped). Same lineage and generation state as a fork:
-symbols resolve, parameters are shared until the next `update`, tip
-contention is the same. Cost is O(live nodes), not O(1). Prefer a plain
-fork when no post-fork recording is involved. In topos:
-[`Network::compacted`](src/engine/network.rs).
+once; allocations never move or drop while the arena lives, which is
+what makes structure freezes cheap and references stable. Provided by
+the [`cow_vec`](https://crates.io/crates/cow_vec) crate inside the
+tape's columns: runs, plans, and `differentiate` clone the columns in
+O(1) and share the arena, and the seal moves them without copying.
+Training never touches it: parameter payloads live in the caller's
+`Parameters`, so the arena holds structure only. What-ifs need no
+arena story at all — one spec, any number of `Parameters` clones, and
+state was the only thing ever worth copying.
 
 ## Acceleration
 
@@ -635,14 +630,14 @@ build confines `unsafe` to the backend's module under a crate-wide
 ## Neural building blocks
 
 **Module.** A named, parameterized recording function — the unit of
-model composition: `express(&network, input)` records the module's
+model composition: `express(&tape, input)` records the module's
 formula through the public op surface and answers the output value,
 and `visit` walks its parameter tree for the serialization boundary.
-Modules hold parameter `Symbol`s, never payloads (the network owns
-state), so they are detached: `'static`, storable, and recording
-against whichever compatible generation they are given. Expression is
-record-time only — the cost never reaches a run, a plan, or a
-kernel — which is why composing through `dyn Module` (in
+Modules hold parameter `Symbol`s, never payloads (the caller's
+`Parameters` owns state), so they are detached: `'static`, storable,
+and recording against the family's tape whenever it is open.
+Expression is record-time only — the cost never reaches a run, a
+plan, or a kernel — which is why composing through `dyn Module` (in
 `Sequential`) sits inside the sanctioned dynamic-dispatch exceptions.
 Programmatic access (tying, freezing) goes through typed accessors
 (`weights()`, struct fields), never names; names exist only as the
@@ -662,16 +657,16 @@ restored in two identities: positional (`snapshot`/`restore`, visit
 order — sufficient for resuming the same code) and named
 (`named_snapshot`/`named_restore`, matched by structured path — what
 survives code evolution and what foreign name-to-tensor checkpoints
-require). Restoring builds a new network generation through
-`update_each`; nothing mutates. In topos:
-[`checkpoint`](src/neural/checkpoint.rs).
+require). A checkpoint is pure state, so both directions are plain
+`Parameters` transforms — no graph is touched, and nothing mutates. In
+topos: [`checkpoint`](src/neural/checkpoint.rs).
 
 **Neuron.** The smallest learnable unit: a weighted sum of inputs plus a
 bias, passed through an activation —
 `activation(weights . inputs + bias)`. Its parameters are allocated on a
-network at construction but held as symbols, so the neuron itself is
-detached: it survives generations, and `express` records its expression
-against whichever generation it is given. It is the scalar-granularity
+tape at construction but held as symbols, so the neuron itself is
+detached: it outlives the recording phase, and `express` records its
+expression whenever the family's tape is open. It is the scalar-granularity
 teaching block; `Linear` records at tensor granularity and does not
 build on it. In topos: [`Neuron`](src/neural/neuron.rs).
 
@@ -778,17 +773,17 @@ averages them as plain payloads, and feeds the estimates to the
 inference expression per run — the same division of labor as minibatch
 assembly.
 
-**Optimizer.** A training-step strategy: how one generation's
-gradients become the next generation's parameters. The loop-land
-analogue of what `Activation` is to a layer — a uniform slot — kept
-an open, object-safe trait so custom optimizers are ordinary
-implementations, with `Field` algebra as the designed state carrier
-(moments are fields, carried across generations). `Sgd` is the
+**Optimizer.** A training-step strategy: how gradients and the current
+`Parameters` state become the next state. The loop-land analogue of
+what `Activation` is to a layer — a uniform slot — kept an open,
+object-safe trait so custom optimizers are ordinary implementations,
+with `Field` algebra as the designed state carrier (moments are
+fields, carried across steps beside the parameters). `Sgd` is the
 stateless base case, `Adam` adds bias-corrected moments (powers
 carried as payloads, so steps are exact and deterministic), and
 `AdamW` adds decoupled weight decay under a structural policy: rank
 two and above decays, rank one is spared, decided through the
-identity-aware `Network::update_each`. The learning rate is a
+identity-aware `Parameters::step_each`. The learning rate is a
 per-step argument — schedules stay caller-owned loop arithmetic. In
 topos: the [`Optimizer`](src/neural/optimizer.rs) trait and
 [`Adam`/`AdamW`](src/neural/adam.rs).

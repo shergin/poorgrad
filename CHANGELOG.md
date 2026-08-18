@@ -7,6 +7,61 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- The spec and the state are now separate types, and the whole
+  identity protocol is gone. Recording happens on the new public
+  `Tape` (the construction phase: `leaf`, `parameter`, `input`,
+  `resolve`, `differentiate`, and the `Value` operators);
+  `tape.into_network()` consumes it and seals the recording into an
+  immutable `Network` (structure, shapes, parameter initials, input
+  defaults — no lock, no live state, shareable by `&`/`Arc`, not
+  `Clone`); `network.parameters()` materializes the record-site
+  initials into the caller-owned `Parameters` state. Training is pure
+  data — `parameters = parameters.step(&gradients, rule)` (with
+  `step_each` passing the parameter's `Symbol`) — replacing
+  `Network::update`/`update_each`, and mints no new network, so
+  generations no longer exist. Runs and plans take the state per
+  call: `network.forward(&parameters, feeds)` (replacing
+  `forward`/`forward_with`), `network.forward_for(&parameters,
+  targets, feeds)`, and `plan.forward(&parameters, feeds)`.
+  `network.into_tape()` consumes the network to reopen recording —
+  linear by ownership, so divergent histories are unrepresentable —
+  and `parameters.carried(&network)` moves state across the round
+  trip; `parameters.of(symbol)` reads a payload,
+  `parameters.with_payloads(...)` installs checkpoints. What-ifs are
+  `parameters.clone()`: one spec, any number of states.
+
+- Post-recording APIs speak `Symbol` only: `Run::of`,
+  `Run::backward`, `Field::of`, `forward_for` targets, and
+  `recorded_gradients` pairs take symbols, `Compile` is non-generic
+  with roots and observes converting through `Into<Symbol>`, and
+  `Tape::differentiate` (moved from `Network`) accepts values or
+  symbols. A `Value` is construction-phase only — the borrow checker
+  rejects one crossing the seal, and `.symbol()` is the bridge.
+
+- The facades record on the tape: `Module::express(&tape, input)`,
+  the constructors of `Linear`, `Mlp`, `Neuron`, `BatchNorm`,
+  `LayerNorm`, `RmsNorm`, `Conv2d`, and `Dropout` take `&Tape`,
+  `Optimizer::step(&parameters, &gradients, &rate) -> Parameters`
+  (with `AdamW::step_where`'s policy now `FnMut(Symbol, &Data) ->
+  bool`), and the checkpoint pairs are plain `Parameters` transforms
+  (`snapshot(&parameters, &module)`, `restore(..) -> Parameters`,
+  and the named twins) — the internal restore hack that forged a
+  generation through a zero-gradient update is gone.
+
+### Removed
+
+- The identity protocol and everything it existed to arbitrate:
+  branches, the tip claim, witnesses, chain agreement, `Misbinding`,
+  `Network::compacted`, generation vocabulary, `Network::clone`
+  forks, the `ValueRef` trait (no API accepts both a `Value` and a
+  `Symbol` anymore), and the notebook leak apparatus
+  (`Network::leaked`/`leak`) — owned `Tape`/`Network`/`Parameters`
+  values move cell to cell and symbols are the cross-cell currency.
+  What remains of graph identity at runtime is origin equality plus
+  coverage: two integer compares.
+
 ## [0.11.0] - 2026-08-17
 
 ### Changed

@@ -1,4 +1,4 @@
-use crate::{Differentiable, Network, Shape, Tensor, Tensorial};
+use crate::{Shape, Tape, Tensor, Tensorial};
 
 use super::super::{Module, init};
 use super::Dropout;
@@ -30,7 +30,7 @@ fn masks_hold_the_inverted_scale() {
 #[test]
 #[should_panic(expected = "the keep probability must lie within (0, 1], got 0")]
 fn a_zero_keep_probability_is_rejected() {
-    init::dropout::<f64>(1, 0.0);
+    let _ = init::dropout::<f64>(1, 0.0);
 }
 
 #[test]
@@ -38,26 +38,29 @@ fn an_unfed_run_is_the_identity() {
     // The mask input's default payload is all ones, so the masked
     // expression answers bitwise as the plain one — inference needs
     // no second expression and no mode flag.
-    let network = Network::new();
-    let x = network.parameter(Tensor::new(
+    let tape = Tape::new();
+    let x = tape.parameter(Tensor::new(
         [2, 3],
         vec![0.5_f64, -1.0, 2.0, 3.0, -0.25, 1.5],
     ));
-    let dropout = Dropout::new(&network, [2, 3]);
-    let masked = dropout.express(&network, x + x);
-    let plain = x + x;
-    let run = network.forward();
+    let dropout = Dropout::new(&tape, [2, 3]);
+    let masked = dropout.express(&tape, x + x).symbol();
+    let plain = (x + x).symbol();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(masked).to_vec(), run.of(plain).to_vec());
 }
 
 #[test]
 fn gradients_route_through_the_mask() {
-    let network = Network::new();
-    let x = network.parameter(Tensor::new([1, 4], [1.0_f64, 2.0, 3.0, 4.0]));
-    let dropout = Dropout::new(&network, [1, 4]);
-    let loss = dropout.express(&network, x).sum();
+    let tape = Tape::new();
+    let x = tape.parameter(Tensor::new([1, 4], [1.0_f64, 2.0, 3.0, 4.0]));
+    let dropout = Dropout::new(&tape, [1, 4]);
+    let loss = dropout.express(&tape, x).sum();
+    let (loss, x) = (loss.symbol(), x.symbol());
+    let network = tape.into_network();
     let mask = Tensor::new([1, 4], [2.0_f64, 0.0, 2.0, 0.0]);
-    let run = network.forward_with([(dropout.mask(), mask)]);
+    let run = network.forward(&network.parameters(), [(dropout.mask(), mask)]);
     assert_eq!(run.backward(loss).of(x).to_vec(), vec![2.0, 0.0, 2.0, 0.0]);
 }
 
@@ -66,28 +69,26 @@ fn training_replays_bitwise_under_matched_seeds() {
     // A tiny masked training loop, run twice from the same seeds:
     // the trajectories agree bit for bit, dropout masks included.
     fn final_loss() -> f64 {
-        let network = Network::new();
-        let w = network.parameter(Tensor::new([2, 2], [0.5_f64, -0.25, 0.75, 0.1]));
-        let x = network.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, -1.0, 0.5]));
-        let dropout = Dropout::new(&network, [2, 2]);
-        let product = dropout.express(&network, x.matmul(w));
-        let loss = (product * product).sum();
-        let loss_symbol = loss.symbol();
-        let w_symbol = w.symbol();
+        let tape = Tape::new();
+        let w = tape.parameter(Tensor::new([2, 2], [0.5_f64, -0.25, 0.75, 0.1]));
+        let x = tape.leaf(Tensor::new([2, 2], [1.0_f64, 2.0, -1.0, 0.5]));
+        let dropout = Dropout::new(&tape, [2, 2]);
+        let product = dropout.express(&tape, x.matmul(w));
+        let loss = (product * product).sum().symbol();
+        let network = tape.into_network();
 
         let mut masks = init::dropout::<f64>(21, 0.5);
         let rate = Tensor::new([], [0.05_f64]);
-        let mut network = network;
+        let mut parameters = network.parameters();
         let mut last = 0.0;
         for _ in 0..8 {
-            let run = network.forward_with([(dropout.mask(), masks(&Shape::new([2, 2])))]);
-            last = run.of(loss_symbol).to_vec()[0];
-            let gradients = run.backward(loss_symbol);
-            network = network.update(&gradients, |parameter, gradient| {
+            let run = network.forward(&parameters, [(dropout.mask(), masks(&Shape::new([2, 2])))]);
+            last = run.of(loss).to_vec()[0];
+            let gradients = run.backward(loss);
+            parameters = parameters.step(&gradients, |parameter, gradient| {
                 parameter.clone() - gradient.clone() * rate.broadcast_like(gradient)
             });
         }
-        let _ = w_symbol;
         last
     }
     assert_eq!(final_loss().to_bits(), final_loss().to_bits());
@@ -98,12 +99,13 @@ fn dropout_composes_as_a_module() {
     // The trait impl serves the record-time composition surface: an
     // object-safe module slot expresses identically to the inherent
     // method.
-    let network = Network::new();
-    let x = network.parameter(Tensor::new([2, 2], [1.0_f64, -2.0, 3.0, -4.0]));
-    let dropout = Dropout::new(&network, [2, 2]);
+    let tape = Tape::new();
+    let x = tape.parameter(Tensor::new([2, 2], [1.0_f64, -2.0, 3.0, -4.0]));
+    let dropout = Dropout::new(&tape, [2, 2]);
     let module: &dyn Module<Tensor<f64>> = &dropout;
-    let through_trait = module.express(&network, x);
+    let through_trait = module.express(&tape, x).symbol();
+    let network = tape.into_network();
     let mask = Tensor::new([2, 2], [2.0_f64, 0.0, 0.0, 2.0]);
-    let run = network.forward_with([(dropout.mask(), mask)]);
+    let run = network.forward(&network.parameters(), [(dropout.mask(), mask)]);
     assert_eq!(run.of(through_trait).to_vec(), vec![2.0, 0.0, 0.0, -8.0]);
 }

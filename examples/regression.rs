@@ -5,15 +5,15 @@
 //! The graph is recorded once over a `[SAMPLE_LEN, 1]` input whose
 //! default feed is the training set, so training is a plain `forward`
 //! per step; charting feeds an evenly spaced grid through the same
-//! expression with `forward_with`, so the fit line is the model itself,
-//! not an interpolation of its training outputs.
+//! expression, so the fit line is the model itself, not an
+//! interpolation of its training outputs.
 //!
 //! Run with: `cargo run --release --example regression`
 
 use std::time::Instant;
 
 use malevich::{Frame, Line, Plot, Points};
-use topos::{Mlp, Network, Shape, Tensor, Tensorial, init};
+use topos::{Mlp, Shape, Tape, Tensor, Tensorial, init};
 
 /// How many noisy samples the model trains on; the chart grid reuses
 /// the count so the recorded expression serves both.
@@ -43,33 +43,31 @@ fn main() {
         .map(|(&x, noise)| x.sin() + noise)
         .collect();
 
-    let network: Network<Tensor<f32>> = Network::new();
-    let mlp = Mlp::new(&network, &[1, HIDDEN_LEN, 1], init::xavier(7));
+    let tape: Tape<Tensor<f32>> = Tape::new();
+    let mlp = Mlp::new(&tape, &[1, HIDDEN_LEN, 1], init::xavier(7));
 
-    let input = network.input(features);
-    let expected = network.input(Tensor::new([SAMPLE_LEN, 1], target_values.clone()));
-    let predicted = mlp.express(&network, input);
+    let input = tape.input(features);
+    let expected = tape.input(Tensor::new([SAMPLE_LEN, 1], target_values.clone()));
+    let predicted = mlp.express(&tape, input);
     let error = predicted - expected;
     let loss = (error * error).sum();
 
-    let input_symbol = input.symbol();
-    let predicted_symbol = predicted.symbol();
-    let loss_symbol = loss.symbol();
+    let (input, predicted, loss) = (input.symbol(), predicted.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     let learning_rate = Tensor::new([], [0.001]);
-    let mut network = network;
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..STEP_COUNT {
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward();
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let run = network.forward(&parameters, []);
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step % (STEP_COUNT / 5) == 0 {
             println!("step {step:4}: loss = {batch_loss:.4}");
         }
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |parameter, gradient| {
+        let gradients = run.backward(loss);
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -95,8 +93,11 @@ fn main() {
     let grid: Vec<f32> = (0..SAMPLE_LEN)
         .map(|index| (((index as f64 / (SAMPLE_LEN - 1) as f64) * 2.0 - 1.0) * DOMAIN) as f32)
         .collect();
-    let run = network.forward_with([(input_symbol, Tensor::new([SAMPLE_LEN, 1], grid.clone()))]);
-    let fit = run.of(network.resolve(predicted_symbol)).to_vec();
+    let run = network.forward(
+        &parameters,
+        [(input, Tensor::new([SAMPLE_LEN, 1], grid.clone()))],
+    );
+    let fit = run.of(predicted).to_vec();
 
     println!(
         "{}",

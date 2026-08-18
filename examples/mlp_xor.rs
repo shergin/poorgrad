@@ -3,7 +3,7 @@
 //!
 //! A `[2, 4, 1]` perceptron records a handful of tensor nodes, the samples
 //! arrive as per-run feeds instead of graph state, and every training step
-//! binds a different minibatch with `forward_with` while the tape never grows.
+//! binds a different minibatch while the tape never grows.
 //! Recording once and running anywhere covers the data, not just the targets —
 //! the closing chart rasterizes the learned surface through the very same
 //! two-row expression the training fed.
@@ -13,7 +13,7 @@
 use std::time::Instant;
 
 use malevich::{Cells, Frame, Line, Plot};
-use topos::{Mlp, Network, Tensor, Tensorial, init};
+use topos::{Mlp, Tape, Tensor, Tensorial, init};
 
 /// The resolution of the decision-surface chart: how many grid cells
 /// span the unit square along each axis.
@@ -21,25 +21,24 @@ const SURFACE_COLUMNS: usize = 24;
 const SURFACE_ROWS: usize = 12;
 
 fn main() {
-    let network = Network::new();
+    let tape = Tape::new();
     // A deterministic seeded initializer keeps the run reproducible
     // while hidden-unit symmetry still breaks.
-    let mlp = Mlp::new(&network, &[2, 4, 1], init::uniform(7, 0.5));
+    let mlp = Mlp::new(&tape, &[2, 4, 1], init::uniform(7, 0.5));
 
     // Declared inputs: the minibatch arrives per run, so the defaults
     // only fix the shapes — two samples of two features, two targets.
-    let x = network.input(Tensor::filled([2, 2], 0.0_f32));
-    let y = network.input(Tensor::filled([2, 1], 0.0));
+    let x = tape.input(Tensor::filled([2, 2], 0.0_f32));
+    let y = tape.input(Tensor::filled([2, 1], 0.0));
 
-    let predicted = mlp.express(&network, x);
+    let predicted = mlp.express(&tape, x);
     let error = predicted - y;
     let loss = (error * error).sum();
 
-    let x_symbol = x.symbol();
-    let y_symbol = y.symbol();
-    let loss_symbol = loss.symbol();
-    let predicted_symbol = predicted.symbol();
-    let recorded_nodes = network.len();
+    let (x, y, loss, predicted) = (x.symbol(), y.symbol(), loss.symbol(), predicted.symbol());
+    let recorded_nodes = tape.len();
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     // The XOR truth table with targets in [-1, 1], split into two
     // minibatches that alternate across training steps.
@@ -55,20 +54,18 @@ fn main() {
     ];
 
     let learning_rate = Tensor::new([], [0.05]);
-    let mut network = network;
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..4000 {
         let (batch_x, batch_y) = &minibatches[step % minibatches.len()];
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let run = network.forward(&parameters, [(x, batch_x.clone()), (y, batch_y.clone())]);
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step % 800 == 0 {
             println!("step {step:4}: minibatch loss = {batch_loss:.6}");
         }
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |parameter, gradient| {
+        let gradients = run.backward(loss);
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -97,8 +94,8 @@ fn main() {
 
     println!("predictions (target in parentheses):");
     for (batch_x, batch_y) in &minibatches {
-        let run = network.forward_with([(x_symbol, batch_x.clone()), (y_symbol, batch_y.clone())]);
-        let outputs = run.of(network.resolve(predicted_symbol));
+        let run = network.forward(&parameters, [(x, batch_x.clone()), (y, batch_y.clone())]);
+        let outputs = run.of(predicted);
         for (sample, (prediction, target)) in outputs.iter().zip(batch_y.iter()).enumerate() {
             let features = batch_x.as_slice().expect("a fed minibatch is contiguous");
             let features = &features[sample * 2..sample * 2 + 2];
@@ -127,8 +124,8 @@ fn main() {
         let &[(x0, y0), (x1, y1)] = pair else {
             unreachable!("the even grid splits into exact pairs");
         };
-        let run = network.forward_with([(x_symbol, Tensor::new([2, 2], [x0, y0, x1, y1]))]);
-        surface.extend(run.of(network.resolve(predicted_symbol)).to_vec());
+        let run = network.forward(&parameters, [(x, Tensor::new([2, 2], [x0, y0, x1, y1]))]);
+        surface.extend(run.of(predicted).to_vec());
     }
     println!(
         "{}",

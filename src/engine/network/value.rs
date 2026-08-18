@@ -13,10 +13,10 @@ use super::{Symbol, Tape};
 // rationale is documented in `network.rs`.
 assert_impl_all!(Value<'static, f64>: Send, Sync, Copy);
 
-/// A lightweight, `Copy` handle to a value allocated in a `Network`.
+/// A lightweight, `Copy` handle to a value recorded on a `Tape`.
 ///
-/// It is an index into the network's tape rather than a pointer, so handles
-/// are cheap to copy and carry no ownership of network memory.
+/// It is an index into the tape's columns rather than a pointer, so handles
+/// are cheap to copy and carry no ownership of tape memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ValueId(pub(crate) usize);
 
@@ -27,15 +27,18 @@ impl ValueId {
     }
 }
 
-/// A `Copy` proxy to a value allocated in a `Network`.
+/// A `Copy` proxy to a value recorded on a [`Tape`]: the operand of
+/// recording.
 ///
-/// A value stores its node position together with a borrow of the network, so
-/// it cannot outlive the graph it refers to. Arithmetic and tensor operations
-/// append computed nodes to that graph without consuming their operands.
-/// Payload literals can be mixed directly into expressions, in either operand
-/// order; every literal occurrence records a new leaf.
+/// A value stores its node position together with a borrow of the tape, so
+/// it cannot outlive the construction phase — [`Tape::into_network`]
+/// consumes the tape, and the borrow checker rejects a proxy that would
+/// cross the seal; take [`Value::symbol`] first. Arithmetic and tensor
+/// operations append computed nodes to the tape without consuming their
+/// operands. Payload literals can be mixed directly into expressions, in
+/// either operand order; every literal occurrence records a new leaf.
 ///
-/// Operations validate network identity and shape compatibility when they are
+/// Operations validate tape identity and shape compatibility when they are
 /// recorded, so invalid expressions panic before a forward run begins.
 ///
 /// The methods in this file are opcode mnemonics: each records exactly one
@@ -45,16 +48,18 @@ impl ValueId {
 /// composition tier of `composite.rs`.
 ///
 /// [`Value::shape`] returns the shape inferred when the node was recorded.
-/// [`Value::payload`] clones the stored payload of a leaf, parameter, or input;
-/// computed values are read from a [`Run`](super::Run).
-pub struct Value<'network, Data> {
-    tape: &'network Tape<Data>,
+/// [`Value::payload`] clones the stored payload of a leaf, parameter, or
+/// input; computed values are read from a [`Run`](crate::Run), live
+/// parameter payloads from [`Parameters`](crate::Parameters) — both by
+/// [`Symbol`].
+pub struct Value<'tape, Data> {
+    tape: &'tape Tape<Data>,
     id: ValueId,
 }
 
-impl<'network, Data: Differentiable> Value<'network, Data> {
+impl<'tape, Data: Differentiable> Value<'tape, Data> {
     /// Binds a proxy to the node `id` recorded on `tape`.
-    pub(crate) fn bind(tape: &'network Tape<Data>, id: ValueId) -> Self {
+    pub(crate) fn bind(tape: &'tape Tape<Data>, id: ValueId) -> Self {
         Self { tape, id }
     }
 
@@ -63,18 +68,12 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         self.id
     }
 
-    /// Returns the tape this proxy points into.
-    pub(crate) fn tape(&self) -> &'network Tape<Data> {
-        self.tape
-    }
-
-    /// Returns the detached name of this value: its identity across compatible
-    /// network generations, resolved back into a proxy by
-    /// [`Network::resolve`](crate::Network::resolve).
+    /// Returns the detached name of this value: the currency of every
+    /// phase after recording, and the documented bridge across
+    /// [`Tape::into_network`].
     pub fn symbol(&self) -> Symbol {
         Symbol {
             origin: self.tape.origin(),
-            branch: self.tape.branch_of(self.id),
             id: self.id,
         }
     }
@@ -88,7 +87,7 @@ impl<Data: Differentiable> From<Value<'_, Data>> for Symbol {
     }
 }
 
-impl<'network, Data: Differentiable> Value<'network, Data> {
+impl<'tape, Data: Differentiable> Value<'tape, Data> {
     /// Returns a clone of the `Function` that produced this value.
     #[cfg(test)]
     pub(crate) fn function(&self) -> Function<Data> {
@@ -109,22 +108,22 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
     /// Returns a clone of this node's stored payload, or `None` for a computed
     /// value.
     ///
-    /// Leaves return their recorded payload, parameters return the current
-    /// generation's payload, and inputs return their recorded default rather
-    /// than a run-local feed. Use [`Run::of`](super::Run::of) to
-    /// read the result of a particular forward run.
+    /// Leaves return their recorded payload, parameters their record-site
+    /// initial, and inputs their recorded default. Live parameter payloads
+    /// are read from [`Parameters::of`](crate::Parameters::of), run results
+    /// from [`Run::of`](crate::Run::of).
     pub fn payload(&self) -> Option<Data> {
         self.tape.payload_of(self.id)
     }
 
     /// Records a computed node produced by `function` over the positional
-    /// `operands` on the same network and returns a proxy to it.
+    /// `operands` on the same tape and returns a proxy to it.
     fn apply(&self, function: Function<Data>, operands: &[ValueId]) -> Self {
         let id = self.tape.record(function, operands);
         Self::bind(self.tape, id)
     }
 
-    /// Records `data` as a fresh leaf on the same network and returns a
+    /// Records `data` as a fresh leaf on the same tape and returns a
     /// proxy to it.
     ///
     /// It backs the payload-literal operator sugar: every literal
@@ -133,51 +132,55 @@ impl<'network, Data: Differentiable> Value<'network, Data> {
         Self::bind(self.tape, self.tape.record(Function::leaf(data), &[]))
     }
 
-    /// Panics if `other` belongs to a different network.
-    fn assert_same_network(&self, other: &Self) {
+    /// Panics if `other` belongs to a different tape.
+    ///
+    /// The one runtime check the proxy keeps: coexisting tapes cannot
+    /// be told apart by lifetimes alone, so mixing their proxies in
+    /// one operator panics at the recording expression.
+    fn assert_same_tape(&self, other: &Self) {
         assert!(
             ptr::eq(self.tape, other.tape),
-            "values belong to different networks"
+            "values belong to different tapes"
         );
     }
 }
 
-impl<'network, Data: Elementary> Value<'network, Data> {
-    /// Records the hyperbolic tangent of this value on the same network
+impl<'tape, Data: Elementary> Value<'tape, Data> {
+    /// Records the hyperbolic tangent of this value on the same tape
     /// and returns a proxy to it.
     pub fn tanh(self) -> Self {
         self.apply(Function::tanh(), &[self.id])
     }
 
-    /// Records the exponential of this value on the same network and
+    /// Records the exponential of this value on the same tape and
     /// returns a proxy to it.
     pub fn exp(self) -> Self {
         self.apply(Function::exp(), &[self.id])
     }
 
-    /// Records the natural logarithm of this value on the same network
+    /// Records the natural logarithm of this value on the same tape
     /// and returns a proxy to it.
     pub fn ln(self) -> Self {
         self.apply(Function::ln(), &[self.id])
     }
 
-    /// Records the square root of this value on the same network and
+    /// Records the square root of this value on the same tape and
     /// returns a proxy to it.
     pub fn sqrt(self) -> Self {
         self.apply(Function::sqrt(), &[self.id])
     }
 
     /// Records this value raised elementwise to the power of `exponent`
-    /// on the same network and returns a proxy to it.
+    /// on the same tape and returns a proxy to it.
     ///
     /// The exponent-side gradient involves the logarithm of this value,
     /// so it is a number only where this value is positive.
     ///
     /// # Panics
-    /// Panics if the operands belong to different networks or their
+    /// Panics if the operands belong to different tapes or their
     /// shapes differ.
     pub fn powf(self, exponent: Self) -> Self {
-        self.assert_same_network(&exponent);
+        self.assert_same_tape(&exponent);
         self.apply(Function::powf(), &[self.id, exponent.id])
     }
 
@@ -186,15 +189,15 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     /// to this value, not `rhs`.
     ///
     /// # Panics
-    /// Panics if the operands belong to different networks or their
+    /// Panics if the operands belong to different tapes or their
     /// shapes differ.
     pub fn maximum(self, rhs: Self) -> Self {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::maximum(), &[self.id, rhs.id])
     }
 
     /// Records the rectified linear unit of this value — its elementwise
-    /// maximum with zero — on the same network and returns a proxy to it;
+    /// maximum with zero — on the same tape and returns a proxy to it;
     /// the subgradient at zero is one.
     pub fn relu(self) -> Self {
         self.apply(Function::relu(), &[self.id])
@@ -212,27 +215,27 @@ impl<'network, Data: Elementary> Value<'network, Data> {
     /// dependencies.
     ///
     /// # Panics
-    /// Panics if the values belong to different networks or their
+    /// Panics if the values belong to different tapes or their
     /// shapes differ.
     pub fn step(self, threshold: Self) -> Self {
-        self.assert_same_network(&threshold);
+        self.assert_same_tape(&threshold);
         self.apply(Function::step(), &[self.id, threshold.id])
     }
 }
 
-impl<'network, Data: Tensorial> Value<'network, Data> {
+impl<'tape, Data: Tensorial> Value<'tape, Data> {
     /// Records the matrix product of this value and `rhs` on the same
     /// network and returns a proxy to it.
     ///
     /// # Panics
-    /// Panics if the operands belong to different networks, either operand is
+    /// Panics if the operands belong to different tapes, either operand is
     /// not rank 2, or their inner dimensions differ.
     pub fn matmul(self, rhs: Self) -> Self {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::matmul(), &[self.id, rhs.id])
     }
 
-    /// Records the transposition of this value on the same network and
+    /// Records the transposition of this value on the same tape and
     /// returns a proxy to it.
     ///
     /// # Panics
@@ -241,13 +244,13 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
         self.apply(Function::transpose(), &[self.id])
     }
 
-    /// Records the sum of every value in this payload on the same network
+    /// Records the sum of every value in this payload on the same tape
     /// and returns a proxy to it.
     pub fn sum(self) -> Self {
         self.apply(Function::sum(), &[self.id])
     }
 
-    /// Records the sum of this value along `axis` on the same network
+    /// Records the sum of this value along `axis` on the same tape
     /// and returns a proxy to it.
     ///
     /// # Panics
@@ -257,7 +260,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     }
 
     /// Records the explicit broadcast of this single-value payload across
-    /// `reference`'s shape on the same network and returns a proxy to it.
+    /// `reference`'s shape on the same tape and returns a proxy to it.
     ///
     /// This is the narrowest expansion opcode: the operand must hold
     /// exactly one element, and the target shape always comes from a
@@ -268,15 +271,15 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// [`broadcast_along`](Self::broadcast_along).
     ///
     /// # Panics
-    /// Panics if the values belong to different networks or this value's
+    /// Panics if the values belong to different tapes or this value's
     /// shape does not contain exactly one element.
     pub fn broadcast_like(self, reference: Self) -> Self {
-        self.assert_same_network(&reference);
+        self.assert_same_tape(&reference);
         self.apply(Function::broadcast(), &[self.id, reference.id])
     }
 
     /// Records the explicit repetition of this value along `axis` of
-    /// `reference`'s shape on the same network and returns a proxy to
+    /// `reference`'s shape on the same tape and returns a proxy to
     /// it; this value's shape must equal `reference`'s with that axis
     /// removed.
     ///
@@ -286,14 +289,14 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// [`broadcast_to`](Self::broadcast_to).
     ///
     /// # Panics
-    /// Panics if the values belong to different networks, `axis` is out of
+    /// Panics if the values belong to different tapes, `axis` is out of
     /// `reference`'s rank, or the remaining shapes differ.
     pub fn broadcast_along(self, axis: usize, reference: Self) -> Self {
-        self.assert_same_network(&reference);
+        self.assert_same_tape(&reference);
         self.apply(Function::broadcast_along(axis), &[self.id, reference.id])
     }
 
-    /// Records a reshape of this value to `shape` on the same network and
+    /// Records a reshape of this value to `shape` on the same tape and
     /// returns a proxy to it; the elements keep their logical row-major
     /// order.
     ///
@@ -351,7 +354,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     }
 
     /// Records this value placed at `start ..` along `axis` inside zeros
-    /// whose `axis` has extent `full_extent`, on the same network, and
+    /// whose `axis` has extent `full_extent`, on the same tape, and
     /// returns a proxy to it: the adjoint of [`Value::narrow`], with
     /// `narrow` as its own gradient rule.
     ///
@@ -378,7 +381,7 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     }
 
     /// Records the `(count, size)` window pair at `axis`, `axis + 1`
-    /// folded back onto an axis of `extent` on the same network and
+    /// folded back onto an axis of `extent` on the same tape and
     /// returns a proxy to it: [`unfold`](Value::unfold)'s adjoint, each
     /// source position summing the window elements read from it,
     /// accumulated output-centrically so the result is deterministic
@@ -413,25 +416,25 @@ impl<'network, Data: Tensorial> Value<'network, Data> {
     /// serves any batch of indices.
     ///
     /// # Panics
-    /// Panics if the values belong to different networks, `selection` is not
+    /// Panics if the values belong to different tapes, `selection` is not
     /// rank 2, or its vocabulary does not match this value's first axis.
     pub fn gather(self, selection: Self) -> Self {
-        self.assert_same_network(&selection);
+        self.assert_same_tape(&selection);
         self.apply(Function::gather(), &[self.id, selection.id])
     }
 
     /// Records the rows of this value scatter-added into `rows` rows by
-    /// `selection`'s one-hot indices on the same network and returns a
+    /// `selection`'s one-hot indices on the same tape and returns a
     /// proxy to it: [`gather`](Value::gather)'s adjoint, accumulating
     /// rows selected more than once. The selection is data and receives
     /// no gradient.
     ///
     /// # Panics
-    /// Panics if the values belong to different networks, this value is
+    /// Panics if the values belong to different tapes, this value is
     /// rank 0, `selection` is not rank 2 with one row per leading entry
     /// of this value, or its vocabulary differs from `rows`.
     pub fn scatter(self, selection: Self, rows: usize) -> Self {
-        self.assert_same_network(&selection);
+        self.assert_same_tape(&selection);
         self.apply(Function::scatter(rows), &[self.id, selection.id])
     }
 
@@ -488,52 +491,52 @@ impl<Data> fmt::Debug for Value<'_, Data> {
     }
 }
 
-impl<'network, Data: Differentiable> Add for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Add for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn add(self, rhs: Self) -> Self::Output {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::add(), &[self.id, rhs.id])
     }
 }
 
-impl<'network, Data: Differentiable> Sub for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Sub for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::sub(), &[self.id, rhs.id])
     }
 }
 
-impl<'network, Data: Differentiable> Mul for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Mul for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::mul(), &[self.id, rhs.id])
     }
 }
 
-impl<'network, Data: Differentiable> Div for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Div for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self.assert_same_network(&rhs);
+        self.assert_same_tape(&rhs);
         self.apply(Function::div(), &[self.id, rhs.id])
     }
 }
 
-impl<'network, Data: Differentiable> Neg for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Neg for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn neg(self) -> Self::Output {
         self.apply(Function::neg(), &[self.id])
     }
 }
 
-impl<'network, Data: Differentiable> Add<Data> for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Add<Data> for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn add(self, rhs: Data) -> Self::Output {
         let literal = self.literal(rhs);
@@ -541,8 +544,8 @@ impl<'network, Data: Differentiable> Add<Data> for Value<'network, Data> {
     }
 }
 
-impl<'network, Data: Differentiable> Sub<Data> for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Sub<Data> for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn sub(self, rhs: Data) -> Self::Output {
         let literal = self.literal(rhs);
@@ -550,8 +553,8 @@ impl<'network, Data: Differentiable> Sub<Data> for Value<'network, Data> {
     }
 }
 
-impl<'network, Data: Differentiable> Mul<Data> for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Mul<Data> for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn mul(self, rhs: Data) -> Self::Output {
         let literal = self.literal(rhs);
@@ -559,8 +562,8 @@ impl<'network, Data: Differentiable> Mul<Data> for Value<'network, Data> {
     }
 }
 
-impl<'network, Data: Differentiable> Div<Data> for Value<'network, Data> {
-    type Output = Value<'network, Data>;
+impl<'tape, Data: Differentiable> Div<Data> for Value<'tape, Data> {
+    type Output = Value<'tape, Data>;
 
     fn div(self, rhs: Data) -> Self::Output {
         let literal = self.literal(rhs);

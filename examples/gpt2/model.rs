@@ -17,8 +17,8 @@
 
 use topos::checkpoint::named_restore;
 use topos::{
-    Elementary, LayerNorm, Linear, Module, Network, Path, Segment, Sequential, Symbol, Tensor,
-    Value, Visitor, concat, named_parameters,
+    Elementary, LayerNorm, Linear, Module, Parameters, Path, Segment, Sequential, Symbol, Tape,
+    Tensor, Value, Visitor, concat, named_parameters,
 };
 
 use crate::weights::Weights;
@@ -57,8 +57,8 @@ struct Gelu {
 }
 
 impl Gelu {
-    fn new<E: Elementary + From<f32>>(network: &Network<Tensor<E>>) -> Self {
-        let scalar = |value: f32| network.leaf(Tensor::filled([], E::from(value))).symbol();
+    fn new<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> Self {
+        let scalar = |value: f32| tape.leaf(Tensor::filled([], E::from(value))).symbol();
         Self {
             half: scalar(0.5),
             one: scalar(1.0),
@@ -75,15 +75,15 @@ impl<E: Elementary> Module<Tensor<E>> for Gelu {
     ///
     /// The constants are leaves, not parameters, so the default no-op
     /// `visit` is right: the checkpoint has nothing to restore here.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<E>>,
-        input: Value<'network, Tensor<E>>,
-    ) -> Value<'network, Tensor<E>> {
-        let half = network.resolve(self.half);
-        let one = network.resolve(self.one);
-        let root = network.resolve(self.root);
-        let coefficient = network.resolve(self.coefficient);
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+    ) -> Value<'tape, Tensor<E>> {
+        let half = tape.resolve(self.half);
+        let one = tape.resolve(self.one);
+        let root = tape.resolve(self.root);
+        let coefficient = tape.resolve(self.coefficient);
         let cubic = input * input * input * coefficient.broadcast_like(input);
         let inner = ((input + cubic) * root.broadcast_like(input)).tanh();
         input * (inner + one.broadcast_like(inner)) * half.broadcast_like(input)
@@ -104,16 +104,12 @@ struct Attention<E> {
 impl<E: Elementary + From<f32>> Attention<E> {
     /// Allocates the projections with placeholder payloads; `mask` and
     /// `scale` are leaves shared by every block.
-    fn new(network: &Network<Tensor<E>>, mask: Symbol, scale: Symbol) -> Self {
+    fn new(tape: &Tape<Tensor<E>>, mask: Symbol, scale: Symbol) -> Self {
         let zeros = |shape: [usize; 2]| Tensor::filled(shape, E::from(0.0));
         let bias = |extent: usize| Tensor::filled([extent], E::from(0.0));
         Self {
-            fused: Linear::new(
-                network,
-                zeros([EMBED_DIM, 3 * EMBED_DIM]),
-                bias(3 * EMBED_DIM),
-            ),
-            projection: Linear::new(network, zeros([EMBED_DIM, EMBED_DIM]), bias(EMBED_DIM)),
+            fused: Linear::new(tape, zeros([EMBED_DIM, 3 * EMBED_DIM]), bias(3 * EMBED_DIM)),
+            projection: Linear::new(tape, zeros([EMBED_DIM, EMBED_DIM]), bias(EMBED_DIM)),
             mask,
             scale,
         }
@@ -121,15 +117,15 @@ impl<E: Elementary + From<f32>> Attention<E> {
 }
 
 impl<E: Elementary> Module<Tensor<E>> for Attention<E> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<E>>,
-        input: Value<'network, Tensor<E>>,
-    ) -> Value<'network, Tensor<E>> {
-        let mask = network.resolve(self.mask);
-        let scale = network.resolve(self.scale);
-        let fused = self.fused.express(network, input);
-        let heads: Vec<Value<'network, Tensor<E>>> = (0..HEAD_COUNT)
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+    ) -> Value<'tape, Tensor<E>> {
+        let mask = tape.resolve(self.mask);
+        let scale = tape.resolve(self.scale);
+        let fused = self.fused.express(tape, input);
+        let heads: Vec<Value<'tape, Tensor<E>>> = (0..HEAD_COUNT)
             .map(|head| {
                 let query = fused.narrow(1, head * HEAD_DIM, HEAD_DIM);
                 let key = fused.narrow(1, EMBED_DIM + head * HEAD_DIM, HEAD_DIM);
@@ -139,7 +135,7 @@ impl<E: Elementary> Module<Tensor<E>> for Attention<E> {
                 weights.matmul(value)
             })
             .collect();
-        self.projection.express(network, concat(&heads, 1))
+        self.projection.express(tape, concat(&heads, 1))
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {
@@ -160,30 +156,26 @@ struct FeedForward<E> {
 }
 
 impl<E: Elementary + From<f32>> FeedForward<E> {
-    fn new(network: &Network<Tensor<E>>, activation: Gelu) -> Self {
+    fn new(tape: &Tape<Tensor<E>>, activation: Gelu) -> Self {
         let zeros = |shape: [usize; 2]| Tensor::filled(shape, E::from(0.0));
         let bias = |extent: usize| Tensor::filled([extent], E::from(0.0));
         Self {
-            up: Linear::new(
-                network,
-                zeros([EMBED_DIM, 4 * EMBED_DIM]),
-                bias(4 * EMBED_DIM),
-            ),
+            up: Linear::new(tape, zeros([EMBED_DIM, 4 * EMBED_DIM]), bias(4 * EMBED_DIM)),
             activation,
-            down: Linear::new(network, zeros([4 * EMBED_DIM, EMBED_DIM]), bias(EMBED_DIM)),
+            down: Linear::new(tape, zeros([4 * EMBED_DIM, EMBED_DIM]), bias(EMBED_DIM)),
         }
     }
 }
 
 impl<E: Elementary> Module<Tensor<E>> for FeedForward<E> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<E>>,
-        input: Value<'network, Tensor<E>>,
-    ) -> Value<'network, Tensor<E>> {
-        let lifted = self.up.express(network, input);
-        let hidden = self.activation.express(network, lifted);
-        self.down.express(network, hidden)
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+    ) -> Value<'tape, Tensor<E>> {
+        let lifted = self.up.express(tape, input);
+        let hidden = self.activation.express(tape, lifted);
+        self.down.express(tape, hidden)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {
@@ -206,29 +198,29 @@ struct Block<E> {
 }
 
 impl<E: Elementary + From<f32>> Block<E> {
-    fn new(network: &Network<Tensor<E>>, mask: Symbol, scale: Symbol, activation: Gelu) -> Self {
+    fn new(tape: &Tape<Tensor<E>>, mask: Symbol, scale: Symbol, activation: Gelu) -> Self {
         Self {
-            attention_norm: layer_norm(network),
-            attention: Attention::new(network, mask, scale),
-            hidden_norm: layer_norm(network),
-            feed_forward: FeedForward::new(network, activation),
+            attention_norm: layer_norm(tape),
+            attention: Attention::new(tape, mask, scale),
+            hidden_norm: layer_norm(tape),
+            feed_forward: FeedForward::new(tape, activation),
         }
     }
 }
 
 impl<E: Elementary> Module<Tensor<E>> for Block<E> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<E>>,
-        input: Value<'network, Tensor<E>>,
-    ) -> Value<'network, Tensor<E>> {
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+    ) -> Value<'tape, Tensor<E>> {
         let attended = self
             .attention
-            .express(network, self.attention_norm.express(network, input));
+            .express(tape, self.attention_norm.express(tape, input));
         let stream = input + attended;
         let lifted = self
             .feed_forward
-            .express(network, self.hidden_norm.express(network, stream));
+            .express(tape, self.hidden_norm.express(tape, stream));
         stream + lifted
     }
 
@@ -250,9 +242,9 @@ impl<E: Elementary> Module<Tensor<E>> for Block<E> {
 
 /// Builds a layer norm with the conventional placeholder payloads and
 /// the epsilon the checkpoint was trained with.
-fn layer_norm<E: Elementary + From<f32>>(network: &Network<Tensor<E>>) -> LayerNorm<Tensor<E>> {
+fn layer_norm<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> LayerNorm<Tensor<E>> {
     LayerNorm::new(
-        network,
+        tape,
         Tensor::filled([EMBED_DIM], E::from(1.0)),
         Tensor::filled([EMBED_DIM], E::from(0.0)),
         Tensor::filled([], E::from(1e-5)),
@@ -278,11 +270,11 @@ impl<E: Elementary + From<f32> + 'static> Gpt2<E> {
     /// arguments are the parameters in recording order, so recording
     /// them in visit order makes the positional snapshot exactly the
     /// emitted argument list.
-    pub fn new(network: &Network<Tensor<E>>) -> Self {
-        let embeddings = network
+    pub fn new(tape: &Tape<Tensor<E>>) -> Self {
+        let embeddings = tape
             .parameter(Tensor::filled([VOCABULARY_LEN, EMBED_DIM], E::from(0.0)))
             .symbol();
-        let positions = network
+        let positions = tape
             .parameter(Tensor::filled([POSITION_COUNT, EMBED_DIM], E::from(0.0)))
             .symbol();
 
@@ -298,23 +290,23 @@ impl<E: Elementary + From<f32> + 'static> Gpt2<E> {
                 }
             })
             .collect();
-        let mask = network
+        let mask = tape
             .leaf(Tensor::new([CONTEXT_LEN, CONTEXT_LEN], mask_elements))
             .symbol();
-        let scale = network
+        let scale = tape
             .leaf(Tensor::filled([], E::from(1.0 / (HEAD_DIM as f32).sqrt())))
             .symbol();
-        let activation = Gelu::new(network);
+        let activation = Gelu::new(tape);
 
         let mut blocks = Sequential::new();
         for _ in 0..LAYER_COUNT {
-            blocks = blocks.then(Block::new(network, mask, scale, activation.clone()));
+            blocks = blocks.then(Block::new(tape, mask, scale, activation.clone()));
         }
         Self {
             embeddings,
             positions,
             blocks,
-            final_norm: layer_norm(network),
+            final_norm: layer_norm(tape),
         }
     }
 
@@ -328,16 +320,16 @@ impl<E: Elementary + From<f32> + 'static> Gpt2<E> {
 impl<E: Elementary> Module<Tensor<E>> for Gpt2<E> {
     /// Records the model over the embedded `[context, embed]` window:
     /// positions in, the block stack, the final norm.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<E>>,
-        input: Value<'network, Tensor<E>>,
-    ) -> Value<'network, Tensor<E>> {
-        let positions = network.resolve(self.positions);
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+    ) -> Value<'tape, Tensor<E>> {
+        let positions = tape.resolve(self.positions);
         let context = input.shape().axes()[0];
         let stream = input + positions.narrow(0, 0, context);
         self.final_norm
-            .express(network, self.blocks.express(network, stream))
+            .express(tape, self.blocks.express(tape, stream))
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {
@@ -381,7 +373,7 @@ fn foreign_name(path: &Path) -> String {
     name
 }
 
-/// Returns the generation carrying the checkpoint: every parameter of
+/// Returns the state carrying the checkpoint: every parameter of
 /// `model`'s tree restored by name, converted into the tree's element
 /// type at the precision boundary.
 ///
@@ -391,10 +383,10 @@ fn foreign_name(path: &Path) -> String {
 /// missing tensors and shape mismatches fail loudly through the
 /// restore's existing validation.
 pub fn load<E: Elementary + From<f32>>(
-    network: &Network<Tensor<E>>,
+    parameters: &Parameters<Tensor<E>>,
     model: &Gpt2<E>,
     weights: &Weights,
-) -> Network<Tensor<E>> {
+) -> Parameters<Tensor<E>> {
     let entries: Vec<(Path, Tensor<E>)> = named_parameters(model)
         .into_iter()
         .map(|(path, _)| {
@@ -402,5 +394,5 @@ pub fn load<E: Elementary + From<f32>>(
             (path, payload)
         })
         .collect();
-    named_restore(network, model, entries)
+    named_restore(parameters, model, entries)
 }

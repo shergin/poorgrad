@@ -14,14 +14,13 @@ use crate::{Run, Symbol, Value};
 // keeps `cargo check` warning-free, which Evcxr requires.
 #[allow(private_bounds)]
 impl<Data: Renderable> Value<'_, Data> {
-    /// Renders the proxy's current payload as a self-contained HTML
+    /// Renders the proxy's stored payload as a self-contained HTML
     /// card.
     ///
-    /// The payload shown is the one this proxy's own generation holds.
-    /// A proxy recorded before a training run keeps reporting that
-    /// generation's value, which is the contract rather than a
-    /// staleness bug; resolve the [`Symbol`] against a newer network to
-    /// read the newer payload.
+    /// The payload shown is the recorded one: a leaf's constant, a
+    /// parameter's record-site initial, or an input's default. Live
+    /// parameter payloads belong to the caller's
+    /// [`Parameters`](crate::Parameters) and are read by [`Symbol`].
     pub fn to_html(&self, theme: Theme) -> String {
         let Some(payload) = self.payload() else {
             let header = format!(
@@ -61,8 +60,9 @@ impl Symbol {
         html::card(
             theme,
             "symbol",
-            "<div>a detached name; <code>network.resolve(symbol)</code> \
-             reads it in any compatible generation</div>",
+            "<div>a detached name; <code>parameters.of(symbol)</code> and \
+             <code>run.of(symbol)</code> read through it, and \
+             <code>tape.resolve(symbol)</code> reenters recording</div>",
         )
     }
 
@@ -71,7 +71,7 @@ impl Symbol {
     pub fn evcxr_display(&self) {
         html::show(
             &self.to_html(Theme::detect()),
-            "symbol  \u{b7}  resolve it against a network to read a payload",
+            "symbol  \u{b7}  a detached name; read through parameters, runs, and fields",
         );
     }
 }

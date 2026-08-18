@@ -1,14 +1,16 @@
-use crate::Network;
+use crate::Tape;
 
 #[test]
 fn algebra_combines_elementwise() {
-    let network = Network::new();
-    let a = network.leaf(2.0_f64);
-    let b = network.leaf(3.0);
+    let tape = Tape::new();
+    let a = tape.leaf(2.0_f64);
+    let b = tape.leaf(3.0);
     let product = a * b;
     let sum = a + b;
+    let (a, b, product, sum) = (a.symbol(), b.symbol(), product.symbol(), sum.symbol());
+    let network = tape.into_network();
 
-    let run = network.forward();
+    let run = network.forward(&network.parameters(), []);
     let d_product = run.backward(product);
     let d_sum = run.backward(sum);
 
@@ -27,52 +29,36 @@ fn algebra_combines_elementwise() {
 }
 
 #[test]
-#[should_panic(expected = "lineage")]
-fn combination_rejects_foreign_lineages() {
-    let first = Network::new();
-    let second = Network::new();
-    let a = first.leaf(1.0_f64);
-    let b = second.leaf(1.0);
+#[should_panic(expected = "fields belong to different networks")]
+fn combination_rejects_foreign_networks() {
+    let first = Tape::new();
+    let second = Tape::new();
+    let a = first.leaf(1.0_f64).symbol();
+    let b = second.leaf(1.0).symbol();
 
-    let run_first = first.forward();
-    let run_second = second.forward();
-    let field_first = run_first.backward(a);
-    let field_second = run_second.backward(b);
+    let first = first.into_network();
+    let second = second.into_network();
+    let field_first = first.forward(&first.parameters(), []).backward(a);
+    let field_second = second.forward(&second.parameters(), []).backward(b);
 
     let _ = &field_first + &field_second;
 }
 
 #[test]
-#[should_panic(expected = "divergent forks")]
-fn combination_rejects_divergent_forks() {
-    let network = Network::new();
-    let _anchor = network.leaf(1.0_f64);
-    let fork = network.clone();
+fn fields_step_later_parameter_states() {
+    let tape = Tape::new();
+    let w = tape.parameter(1.0_f64).symbol();
+    let network = tape.into_network();
+    let parameters = network.parameters();
 
-    // Equal lengths, divergent branches: the fields describe different
-    // nodes at the same positions and must not combine.
-    let mine = network.leaf(2.0);
-    let theirs = fork.leaf(3.0);
-
-    let field_mine = network.forward().backward(mine);
-    let field_theirs = fork.forward().backward(theirs);
-
-    let _ = &field_mine + &field_theirs;
-}
-
-#[test]
-fn fields_survive_generations_within_a_lineage() {
-    let network = Network::new();
-    let w = network.parameter(1.0_f64);
-    let w_symbol = w.symbol();
-
-    let run = network.forward();
+    let run = network.forward(&parameters, []);
     let gradients = run.backward(w);
-
-    // The next generation is kin to the previous one, so the field still
-    // resolves against its values and can drive its update.
-    let next = network.update(&gradients, |parameter, direction| parameter - direction);
-    let w = next.resolve(w_symbol);
     assert_eq!(*gradients.of(w), 1.0);
-    assert_eq!(w.payload(), Some(0.0));
+
+    // A field is detached state: it still steps parameter states minted
+    // after the run it came from.
+    let stepped = parameters.step(&gradients, |parameter, direction| parameter - direction);
+    assert_eq!(*stepped.of(w), 0.0);
+    let again = stepped.step(&gradients, |parameter, direction| parameter - direction);
+    assert_eq!(*again.of(w), -1.0);
 }

@@ -41,10 +41,10 @@ use crate::{Tensorial, Value};
 /// # Panics
 /// Panics if the values belong to different networks, `logits` is not
 /// rank 2, or the shapes differ.
-pub fn cross_entropy<'network, Data: Tensorial>(
-    logits: Value<'network, Data>,
-    targets: Value<'network, Data>,
-) -> Value<'network, Data> {
+pub fn cross_entropy<'tape, Data: Tensorial>(
+    logits: Value<'tape, Data>,
+    targets: Value<'tape, Data>,
+) -> Value<'tape, Data> {
     let logits_shape = logits.shape();
     assert_eq!(
         logits_shape.rank(),

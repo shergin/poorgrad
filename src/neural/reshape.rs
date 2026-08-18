@@ -1,4 +1,4 @@
-use crate::{Network, Shape, Tensorial, Value};
+use crate::{Shape, Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -22,11 +22,11 @@ impl Reshape {
 }
 
 impl<Data: Tensorial> Module<Data> for Reshape {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        _network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        _tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         input.reshape(self.shape.clone())
     }
 
@@ -42,11 +42,11 @@ pub struct Flatten;
 impl<Data: Tensorial> Module<Data> for Flatten {
     /// # Panics
     /// Panics if the input is rank 0: there is no batch axis to keep.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        _network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        _tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         let shape = input.shape();
         let axes = shape.axes();
         assert!(

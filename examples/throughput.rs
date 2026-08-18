@@ -18,7 +18,7 @@
 
 use std::time::Instant;
 
-use topos::{Backend, Network, Shape, Tensor, Tensorial, init};
+use topos::{Backend, Shape, Tape, Tensor, Tensorial, init};
 
 fn main() {
     let mut accelerated = false;
@@ -43,20 +43,21 @@ fn main() {
         + 2 * batch_len * hidden_len * class_len) as f64
         * 3.0;
 
-    let network: Network<Tensor<f32>> = Network::new();
+    let tape: Tape<Tensor<f32>> = Tape::new();
     let mut initializer = init::kaiming(7);
-    let hidden_weights = network.parameter(initializer(&Shape::new([feature_len, hidden_len])));
-    let output_weights = network.parameter(initializer(&Shape::new([hidden_len, class_len])));
-    let features = network.input(Tensor::filled([batch_len, feature_len], 0.0));
-    let targets = network.input(Tensor::filled([batch_len, class_len], 0.0));
+    let hidden_weights = tape.parameter(initializer(&Shape::new([feature_len, hidden_len])));
+    let output_weights = tape.parameter(initializer(&Shape::new([hidden_len, class_len])));
+    let features = tape.input(Tensor::filled([batch_len, feature_len], 0.0));
+    let targets = tape.input(Tensor::filled([batch_len, class_len], 0.0));
 
     let hidden = features.matmul(hidden_weights).tanh();
     let prediction = hidden.matmul(output_weights);
     let error = prediction - targets;
     let loss = (error * error).sum();
 
-    let features_symbol = features.symbol();
-    let loss_symbol = loss.symbol();
+    let (features, loss) = (features.symbol(), loss.symbol());
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
     let learning_rate = Tensor::new([], [0.0001_f32]);
 
     let mut batch = init::normal(11, 1.0);
@@ -83,7 +84,6 @@ fn main() {
     // Once the products are accelerated, the elementwise operations
     // (2M scalar `tanh` calls above all) own the step time; that gap
     // is the roadmap's next tier, not the backends'.
-    let mut network = network;
     let warmup = 2;
     let steps = 8;
     let mut started = Instant::now();
@@ -91,10 +91,9 @@ fn main() {
         if step == warmup {
             started = Instant::now();
         }
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward_with([(features_symbol, batch.clone())]);
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |parameter, gradient| {
+        let run = network.forward(&parameters, [(features, batch.clone())]);
+        let gradients = run.backward(loss);
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }

@@ -1,16 +1,16 @@
 use super::*;
-use crate::{Compile, Network};
+use crate::{Compile, Network, Tape};
 
 /// A network whose plan has enough scheduled nodes to draw a curve.
 fn chain() -> (Network<f64>, crate::Symbol) {
-    let network: Network<f64> = Network::new();
-    let w = network.parameter(2.0);
-    let x = network.parameter(3.0);
+    let tape: Tape<f64> = Tape::new();
+    let w = tape.parameter(2.0);
+    let x = tape.parameter(3.0);
     let sum = w + x;
     let scaled = sum * w;
     let target = scaled + x;
     let symbol = target.symbol();
-    (network, symbol)
+    (tape.into_network(), symbol)
 }
 
 #[test]

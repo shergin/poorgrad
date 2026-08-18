@@ -2,7 +2,7 @@
 //! the chain rule as tape instead of engine procedure. The model, the
 //! seeds, and the batch schedule are identical to `makemore_mlp`, so
 //! the two examples train bit-identically; what changes is where the
-//! gradients come from: `Network::differentiate` appends them to the
+//! gradients come from: `Tape::differentiate` appends them to the
 //! tape once, one forward-only plan compiles `[loss, gradients...]`
 //! together, and every training step is a single plan run — no
 //! backward pass executes at all.
@@ -20,7 +20,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use topos::{Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
+use topos::{Compile, Shape, Tape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -40,36 +40,36 @@ const BATCH_LEN: usize = 64;
 
 /// The model's parameters as recorded proxies, laid out exactly as in
 /// `makemore_mlp` so the two examples share their seeds.
-struct Model<'network> {
-    embeddings: Value<'network, Tensor<f32>>,
-    hidden_weights: Value<'network, Tensor<f32>>,
-    hidden_bias: Value<'network, Tensor<f32>>,
-    output_weights: Value<'network, Tensor<f32>>,
-    output_bias: Value<'network, Tensor<f32>>,
+struct Model<'tape> {
+    embeddings: Value<'tape, Tensor<f32>>,
+    hidden_weights: Value<'tape, Tensor<f32>>,
+    hidden_bias: Value<'tape, Tensor<f32>>,
+    output_weights: Value<'tape, Tensor<f32>>,
+    output_bias: Value<'tape, Tensor<f32>>,
 }
 
-impl<'network> Model<'network> {
-    /// Allocates the parameters on `network`: an embedding table, one
+impl<'tape> Model<'tape> {
+    /// Allocates the parameters on `tape`: an embedding table, one
     /// tanh hidden layer, and an affine output layer, Xavier-scaled
     /// with zero biases.
-    fn new(network: &'network Network<Tensor<f32>>) -> Self {
+    fn new(tape: &'tape Tape<Tensor<f32>>) -> Self {
         let mut weights = init::xavier(7);
         Self {
-            embeddings: network.parameter(init::normal(8, 1.0)(&Shape::new([
+            embeddings: tape.parameter(init::normal(8, 1.0)(&Shape::new([
                 VOCABULARY_LEN,
                 EMBED_DIM,
             ]))),
-            hidden_weights: network
+            hidden_weights: tape
                 .parameter(weights(&Shape::new([CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN]))),
-            hidden_bias: network.parameter(weights(&Shape::new([HIDDEN_LEN]))),
-            output_weights: network.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
-            output_bias: network.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
+            hidden_bias: tape.parameter(weights(&Shape::new([HIDDEN_LEN]))),
+            output_weights: tape.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
+            output_bias: tape.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
         }
     }
 
     /// Returns the parameters in a fixed order, for pairing with their
     /// recorded gradients.
-    fn parameters(&self) -> [Value<'network, Tensor<f32>>; 5] {
+    fn parameters(&self) -> [Value<'tape, Tensor<f32>>; 5] {
         [
             self.embeddings,
             self.hidden_weights,
@@ -85,9 +85,9 @@ impl<'network> Model<'network> {
     /// squash, and score.
     fn express(
         &self,
-        contexts: Value<'network, Tensor<f32>>,
+        contexts: Value<'tape, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f32>> {
+    ) -> Value<'tape, Tensor<f32>> {
         let embedded = self
             .embeddings
             .gather(contexts)
@@ -106,46 +106,49 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
-    let model = Model::new(&network);
+    let tape = Tape::new();
+    let model = Model::new(&tape);
 
     // The training expression, batch-shaped: contexts and targets are
     // one-hot selections fed per run, the defaults only fix the shapes.
-    let contexts = network.input(Tensor::selection(
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let loss = cross_entropy(model.express(contexts, BATCH_LEN), targets);
 
     // The sampling twin: the same parameters expressed over a single
     // context row, with the composite softmax on top.
-    let sample_context =
-        network.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
+    let sample_context = tape.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
     let sample_probabilities = model.express(sample_context, 1).softmax(1);
 
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
-    let sample_context_symbol = sample_context.symbol();
-    let sample_probabilities_symbol = sample_probabilities.symbol();
+    let (contexts, targets, loss, sample_context, sample_probabilities) = (
+        contexts.symbol(),
+        targets.symbol(),
+        loss.symbol(),
+        sample_context.symbol(),
+        sample_probabilities.symbol(),
+    );
 
     // The whole difference from `makemore_mlp` is these lines: the
     // chain rule is appended to the tape once, and one forward-only
-    // plan serves loss and gradients together for every generation.
+    // plan serves loss and gradients together for every step.
     // The sampling twin is not among the targets, so the plan's
     // dead-node elimination drops it from every training step.
-    let forward_nodes = network.len();
+    let forward_nodes = tape.len();
     let parameter_symbols = model.parameters().map(|parameter| parameter.symbol());
-    let gradient_symbols = network.differentiate(loss_symbol, parameter_symbols);
+    let gradient_symbols = tape.differentiate(loss, parameter_symbols);
     println!(
         "recorded the chain rule: {} forward nodes + {} gradient nodes",
         forward_nodes,
-        network.len() - forward_nodes
+        tape.len() - forward_nodes
     );
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
     let plan = network.compile(Compile::roots(
-        std::iter::once(loss_symbol).chain(gradient_symbols.iter().copied()),
+        std::iter::once(loss).chain(gradient_symbols.iter().copied()),
     ));
 
     // A fresh model is roughly uniform over the vocabulary, so the
@@ -153,7 +156,6 @@ fn main() {
     // seeds make every printed number equal `makemore_mlp`'s.
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -167,19 +169,19 @@ fn main() {
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
         let run = plan.forward(
-            &network,
+            &parameters,
             [
                 (
-                    contexts_symbol,
+                    contexts,
                     Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
                 ),
                 (
-                    targets_symbol,
+                    targets,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
             ],
         );
-        let batch_loss = run.of(network.resolve(loss_symbol)).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -199,12 +201,14 @@ fn main() {
         // The gradients were computed by the same plan run that
         // computed the loss; assembling the update direction is a
         // read, not a backward pass.
-        let gradients =
-            run.recorded_gradients(parameter_symbols.iter().zip(&gradient_symbols).map(
-                |(&parameter, &gradient)| (network.resolve(parameter), network.resolve(gradient)),
-            ));
+        let gradients = run.recorded_gradients(
+            parameter_symbols
+                .iter()
+                .copied()
+                .zip(gradient_symbols.iter().copied()),
+        );
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -223,15 +227,14 @@ fn main() {
         let mut name = String::new();
         loop {
             let run = network.forward_for(
-                [sample_probabilities_symbol],
+                &parameters,
+                [sample_probabilities],
                 [(
-                    sample_context_symbol,
+                    sample_context,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = run
-                .of(network.resolve(sample_probabilities_symbol))
-                .to_vec();
+            let row = run.of(sample_probabilities).to_vec();
             let token = draw(&row, &mut state);
             if token == 0 {
                 break;

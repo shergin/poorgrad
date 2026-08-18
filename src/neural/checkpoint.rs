@@ -1,5 +1,5 @@
 //! Module checkpoints: capturing a module tree's parameter payloads
-//! and restoring them into a network generation.
+//! and restoring them into a [`Parameters`] state.
 //!
 //! Two identities, two tiers. The positional pair
 //! ([`snapshot`]/[`restore`]) uses the module tree's stable visit
@@ -9,15 +9,15 @@
 //! evolution and what foreign checkpoints (name-to-tensor maps)
 //! require; missing and unexpected paths are loud errors.
 //!
-//! Restoring never mutates: it builds a new network generation
-//! through [`Network::update_each`], so shape mismatches panic
-//! through the update's existing validation, and the old generation
-//! stays fully usable. The library stops at the name-to-payload map;
-//! file formats stay at the edge.
+//! A checkpoint is pure state, so both directions are plain
+//! [`Parameters`] transforms: no graph is touched, and shape
+//! mismatches panic through
+//! [`Parameters::with_payloads`]'s validation. The library stops at
+//! the name-to-payload map; file formats stay at the edge.
 
 use std::collections::HashMap;
 
-use crate::{Network, Symbol, Tensorial, Value};
+use crate::{Parameters, Symbol, Tensorial};
 
 use super::module::{Module, Path, named_parameters, parameters};
 
@@ -25,36 +25,30 @@ use super::module::{Module, Path, named_parameters, parameters};
 /// visit order: the positional checkpoint.
 ///
 /// # Panics
-/// Panics if a visited symbol does not resolve in this generation or
-/// does not name a parameter, leaf, or input.
+/// Panics if a visited symbol does not name a parameter `state`
+/// carries.
 pub fn snapshot<Data: Tensorial, M: Module<Data> + ?Sized>(
-    network: &Network<Data>,
+    state: &Parameters<Data>,
     module: &M,
 ) -> Vec<Data> {
     parameters(module)
         .into_iter()
-        .map(|symbol| {
-            network
-                .resolve(symbol)
-                .payload()
-                .expect("a module parameter stores a payload")
-        })
+        .map(|symbol| state.of(symbol).clone())
         .collect()
 }
 
-/// Returns a new network generation with `module`'s parameters
-/// replaced by `payloads`, matched in visit order: the positional
-/// restore. Parameters outside the module keep their payloads.
+/// Returns a new state with `module`'s parameters replaced by
+/// `payloads`, matched in visit order: the positional restore.
+/// Parameters outside the module keep their payloads.
 ///
 /// # Panics
 /// Panics if the payload count differs from the module's parameter
-/// count, or if a payload's shape differs from its parameter's
-/// recorded shape.
+/// count, or if a payload's shape differs from its parameter's.
 pub fn restore<Data: Tensorial, M: Module<Data> + ?Sized>(
-    network: &Network<Data>,
+    state: &Parameters<Data>,
     module: &M,
     payloads: Vec<Data>,
-) -> Network<Data> {
+) -> Parameters<Data> {
     let symbols = parameters(module);
     assert_eq!(
         payloads.len(),
@@ -63,8 +57,7 @@ pub fn restore<Data: Tensorial, M: Module<Data> + ?Sized>(
         payloads.len(),
         symbols.len(),
     );
-    let replacements: HashMap<Symbol, Data> = symbols.into_iter().zip(payloads).collect();
-    next_generation(network, replacements)
+    state.with_payloads(symbols.into_iter().zip(payloads))
 }
 
 /// Returns every parameter payload in `module`'s tree with its
@@ -74,23 +67,17 @@ pub fn restore<Data: Tensorial, M: Module<Data> + ?Sized>(
 /// # Panics
 /// Panics as [`snapshot`] panics.
 pub fn named_snapshot<Data: Tensorial, M: Module<Data> + ?Sized>(
-    network: &Network<Data>,
+    state: &Parameters<Data>,
     module: &M,
 ) -> Vec<(Path, Data)> {
     named_parameters(module)
         .into_iter()
-        .map(|(path, symbol)| {
-            let payload = network
-                .resolve(symbol)
-                .payload()
-                .expect("a module parameter stores a payload");
-            (path, payload)
-        })
+        .map(|(path, symbol)| (path, state.of(symbol).clone()))
         .collect()
 }
 
-/// Returns a new network generation with `module`'s parameters
-/// replaced by `entries`, matched by path: the named restore.
+/// Returns a new state with `module`'s parameters replaced by
+/// `entries`, matched by path: the named restore.
 ///
 /// Tied parameters (one symbol under several paths) take the last
 /// matching entry in visit order. Parameters outside the module keep
@@ -98,21 +85,18 @@ pub fn named_snapshot<Data: Tensorial, M: Module<Data> + ?Sized>(
 ///
 /// # Panics
 /// Panics if a module parameter has no entry, an entry matches no
-/// parameter, or a payload's shape differs from its parameter's
-/// recorded shape.
+/// parameter, or a payload's shape differs from its parameter's.
 pub fn named_restore<Data: Tensorial, M: Module<Data> + ?Sized>(
-    network: &Network<Data>,
+    state: &Parameters<Data>,
     module: &M,
     entries: impl IntoIterator<Item = (Path, Data)>,
-) -> Network<Data> {
+) -> Parameters<Data> {
     let mut entries: HashMap<Path, Data> = entries.into_iter().collect();
-    let mut replacements: HashMap<Symbol, Data> = HashMap::new();
+    let mut replacements: Vec<(Symbol, Data)> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
     for (path, symbol) in named_parameters(module) {
         match entries.remove(&path) {
-            Some(payload) => {
-                replacements.insert(symbol, payload);
-            }
+            Some(payload) => replacements.push((symbol, payload)),
             None => missing.push(path.to_string()),
         }
     }
@@ -130,28 +114,7 @@ pub fn named_restore<Data: Tensorial, M: Module<Data> + ?Sized>(
             .collect::<Vec<_>>()
             .join(", "),
     );
-    next_generation(network, replacements)
-}
-
-/// Builds the generation carrying `replacements`, leaving every other
-/// parameter's payload unchanged.
-///
-/// The update needs a direction field; an empty `recorded_gradients`
-/// over a parameter-sliced run supplies the all-zeros one without any
-/// engine addition, and the rule ignores it.
-fn next_generation<Data: Tensorial>(
-    network: &Network<Data>,
-    mut replacements: HashMap<Symbol, Data>,
-) -> Network<Data> {
-    let targets: Vec<Symbol> = replacements.keys().copied().collect();
-    let run = network.forward_for(targets, []);
-    let none: [(Value<'_, Data>, Value<'_, Data>); 0] = [];
-    let zeros = run.recorded_gradients(none);
-    network.update_each(&zeros, |value, current, _direction| {
-        replacements
-            .remove(&value.symbol())
-            .unwrap_or_else(|| current.clone())
-    })
+    state.with_payloads(replacements)
 }
 
 #[cfg(test)]

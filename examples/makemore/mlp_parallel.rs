@@ -3,10 +3,10 @@
 //! one forward and backward pass per shard concurrently on the shared
 //! network, and averages the shard gradients into a single update.
 //!
-//! This leans on the engine's concurrency contract: runs never mutate
-//! the network, feeds are run state rather than graph state, and
-//! `Gradients` is a `Field`, so gradients from concurrent runs on one
-//! generation combine with the field algebra. Because `cross_entropy`
+//! This leans on the engine's concurrency contract: the sealed network
+//! is immutable, feeds are run state rather than graph state, and
+//! `Gradients` is a `Field`, so gradients from concurrent runs over one
+//! parameter state combine with the field algebra. Because `cross_entropy`
 //! normalizes each shard by its own mass, the average of equal-sized
 //! shard gradients equals the full-batch gradient exactly, and summing
 //! the shards in a fixed pairwise tree keeps the run deterministic
@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 
-use topos::{Gradients, Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Gradients, Mlp, Shape, Tape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -77,53 +77,53 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network: Network<Tensor<f32>> = Network::new();
+    let tape: Tape<Tensor<f32>> = Tape::new();
 
     // The same model as the serial examples, recorded at shard shape:
     // the batch size is baked into the graph, so the parallel plan is
     // one shard-shaped expression run once per shard, not a wider one.
-    let embeddings = network.parameter(init::normal(8, 1.0)(&Shape::new([
+    let embeddings = tape.parameter(init::normal(8, 1.0)(&Shape::new([
         VOCABULARY_LEN,
         EMBED_DIM,
     ])));
     let mlp = Mlp::new(
-        &network,
+        &tape,
         &[CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN, VOCABULARY_LEN],
         init::xavier(7),
     );
 
-    let contexts = network.input(Tensor::selection(
+    let contexts = tape.input(Tensor::selection(
         vec![0; SHARD_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; SHARD_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; SHARD_LEN], VOCABULARY_LEN, 1.0));
     let embedded = embeddings
         .gather(contexts)
         .reshape([SHARD_LEN, CONTEXT_LEN * EMBED_DIM]);
-    let loss = cross_entropy(mlp.express(&network, embedded), targets);
+    let loss = cross_entropy(mlp.express(&tape, embedded), targets);
 
     // The sampling twin: the same parameters expressed over a single
     // context row, with the composite softmax on top.
-    let sample_context =
-        network.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
+    let sample_context = tape.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
     let sample_embedded = embeddings
         .gather(sample_context)
         .reshape([1, CONTEXT_LEN * EMBED_DIM]);
-    let sample_probabilities = mlp.express(&network, sample_embedded).softmax(1);
+    let sample_probabilities = mlp.express(&tape, sample_embedded).softmax(1);
 
     let contexts_symbol = contexts.symbol();
     let targets_symbol = targets.symbol();
     let loss_symbol = loss.symbol();
     let sample_context_symbol = sample_context.symbol();
     let sample_probabilities_symbol = sample_probabilities.symbol();
+    let network = tape.into_network();
     let recorded_nodes = network.len();
 
     let batch_len = SHARD_COUNT * SHARD_LEN;
     let shard_inverse = Tensor::new([], [1.0 / SHARD_COUNT as f32]);
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
+    let mut parameters = network.parameters();
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -132,7 +132,7 @@ fn main() {
         let batch = &samples[start..start + batch_len];
 
         // Fan out: one immutable forward and backward run per shard,
-        // all reading the same generation.
+        // all reading the same network and parameter state.
         let shard_results: Vec<(f32, Gradients<Tensor<f32>>)> = (0..SHARD_COUNT)
             .into_par_iter()
             .map(|shard| {
@@ -143,10 +143,10 @@ fn main() {
                     .collect();
                 let shard_targets: Vec<usize> = rows.iter().map(|&(_, next)| next).collect();
 
-                let loss_value = network.resolve(loss_symbol);
                 // Slice the run to the loss: the sampling twin on the
                 // same tape is skipped during training.
                 let run = network.forward_for(
+                    &parameters,
                     [loss_symbol],
                     [
                         (
@@ -159,8 +159,8 @@ fn main() {
                         ),
                     ],
                 );
-                let shard_loss = run.of(loss_value).to_vec()[0];
-                (shard_loss, run.backward(loss_value))
+                let shard_loss = run.of(loss_symbol).to_vec()[0];
+                (shard_loss, run.backward(loss_symbol))
             })
             .collect();
 
@@ -187,7 +187,7 @@ fn main() {
             window_loss = 0.0;
         }
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -208,15 +208,14 @@ fn main() {
         let mut name = String::new();
         loop {
             let run = network.forward_for(
+                &parameters,
                 [sample_probabilities_symbol],
                 [(
                     sample_context_symbol,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = run
-                .of(network.resolve(sample_probabilities_symbol))
-                .to_vec();
+            let row = run.of(sample_probabilities_symbol).to_vec();
             let token = draw(&row, &mut state);
             if token == 0 {
                 break;

@@ -2,8 +2,8 @@
 
 topos runs in [Evcxr](https://github.com/evcxr/evcxr), the Rust
 Jupyter kernel and REPL, with no wrapper API and no separate build. The
-`evcxr` feature adds rich cell output and two leaking constructors;
-everything else in a notebook is the ordinary crate.
+`evcxr` feature adds rich cell output; everything else in a notebook is
+the ordinary crate.
 
 ```sh
 cargo install --locked evcxr_jupyter
@@ -32,23 +32,23 @@ Evcxr compiles every cell as its own crate and carries the variables
 between them. Two consequences shape everything else.
 
 **A persisted variable cannot borrow another one.** A `Value` proxy
-borrows the network that recorded it, so this is rejected the moment
-the cell ends:
+borrows the tape that recorded it, so it lives and dies inside one
+cell; the detached `Symbol` is the cross-cell currency. End a
+recording cell with `.symbol()` bindings and reenter through
+`Tape::resolve`:
 
 ```rust
-let network = Network::new();
-let w = network.parameter(0.0);   // error: `w` borrows `network`
+let tape: Tape<f64> = Tape::new();
+let w: Symbol = tape.parameter(0.0).symbol();
+let x: Symbol = tape.input(0.0).symbol();
+let y: Symbol = tape.input(0.0).symbol();
 ```
 
-Leak the network instead. A `&'static Network` borrows from nothing, so
-its proxies are `Value<'static, _>` and persist like any other value:
-
 ```rust
-let mut network: &'static Network<f64> = Network::leaked();
-let w: Value<'static, f64> = network.parameter(0.0);
-let x: Value<'static, f64> = network.input(0.0);
-let y: Value<'static, f64> = network.input(0.0);
-let loss: Value<'static, f64> = (w * x - y) * (w * x - y);
+let loss: Symbol = {
+    let (w, x, y) = (tape.resolve(w), tape.resolve(x), tape.resolve(y));
+    ((w * x - y) * (w * x - y)).symbol()
+};
 ```
 
 **A persisted variable needs an explicit type.** Evcxr works out a
@@ -69,52 +69,53 @@ rather than from the annotation, and it cannot name a type that came
 from a dependency — so `let (w, x): (Symbol, Symbol) = …;` binds
 nothing that survives the cell, however it is annotated.
 
-## Training across cells
+## Sealing and training
 
-`Network::update` returns the next generation, and a proxy stays bound
-to the generation that recorded it. Keep one owned generation for the
-loop and leak once at the end, so re-running the cell costs one
-parameter store rather than one per step:
+`Tape::into_network` consumes the persisted tape — Evcxr tracks the
+move, so the `tape` variable simply ends where the `network` one
+begins. The network is the immutable spec; the parameters are yours,
+and training is a pure data loop:
+
+```rust
+let network: Network<f64> = tape.into_network();
+let mut parameters: Parameters<f64> = network.parameters();
+```
 
 ```rust
 let samples: Vec<(f64, f64)> = vec![(1.0, 2.0), (2.0, 4.0), (3.0, 6.0)];
-
-{
-    let first = network.forward_with([(x.symbol(), 1.0), (y.symbol(), 2.0)]).backward(loss);
-    let mut current = network.update(&first, |p, g| p - 0.02 * g);
-    for step in 1..300 {
-        let (sx, sy) = samples[step % 3];
-        let target = current.resolve(loss.symbol());
-        let gradients = current.forward_with([(x.symbol(), sx), (y.symbol(), sy)]).backward(target);
-        current = current.update(&gradients, |p, g| p - 0.02 * g);
-    }
-    network = current.leak();
+for step in 0..300 {
+    let (sx, sy) = samples[step % 3];
+    let gradients = network.forward(&parameters, [(x, sx), (y, sy)]).backward(loss);
+    parameters = parameters.step(&gradients, |p, g| p - 0.02 * g);
 }
 ```
 
-Afterwards both generations are still in scope, and the difference is
-the point:
+Afterwards the trained payload reads by name, and a fresh
+materialization still answers the record-site initial:
 
 ```rust
-w.payload()                              // 0.0  — the generation that recorded it
-network.resolve(w.symbol()).payload()    // 2.0  — the generation that trained
+parameters.of(w)             // 2.0  — the trained state
+network.parameters().of(w)   // 0.0  — the initials, materialized fresh
 ```
 
-A proxy is generation-bound and a `Symbol` is not. That is not a
-notebook quirk to work around; it is the contract the generation
-machinery was built for, and a notebook is the first place it becomes
-something you can see rather than something you read about.
+Access is phase-scoped and names are forever: a `Value` dies at the
+seal, a `Symbol` resolves through every phase. A notebook is the first
+place that contract becomes something you can see rather than
+something you read about.
 
-## What leaking costs
+## Recording more later
 
-`Network::leaked` and `Network::leak` never free. The recorded graph is
-shared between generations rather than copied, so one leaked generation
-costs its parameter store and nothing else. A session that leaks once
-per cell run stays negligible, and the process reclaims all of it when
-the notebook shuts down.
+`Network::into_tape` consumes the network and reopens recording —
+another tracked move. Symbols keep resolving (linear extension never
+moves a node), and `Parameters::carried` moves the trained state
+across, seeding any new slots from their record-site initials:
 
-The one mistake worth naming: leaking *inside* a training loop rather
-than after it leaks a parameter store per step.
+```rust
+let tape: Tape<f64> = network.into_tape();
+let cube: Symbol = { let w = tape.resolve(w); (w * w * w).symbol() };
+let network: Network<f64> = tape.into_network();
+let parameters: Parameters<f64> = parameters.carried(&network);
+```
 
 ## Cell output
 
@@ -125,11 +126,13 @@ it instead of dumping `Debug`:
 | --- | --- |
 | a `Value` | its shape, extremes, and payload — a table when small, a chart when large |
 | a `Tensor` payload | the same, straight from the payload |
-| a `Network` | how much graph is recorded |
+| a `Tape` | how much graph is recorded so far |
+| a `Network` | the sealed spec's node count |
+| `Parameters` | how many slots the state carries |
 | a `Plan` | the whole schedule, and the live volume plotted along it |
 | a `Field` of gradients | one Euclidean norm per node, plotted along the tape |
 | a `Run` | the same profile for a completed forward pass |
-| a `Symbol` | what it is, and that resolving is how you read through it |
+| a `Symbol` | what it is, and how to read through it |
 
 Every card is a pure `to_html(Theme)` string with an `evcxr_display`
 that emits it, so cell output is covered by ordinary `cargo test` and
@@ -151,6 +154,6 @@ to a second compile with `Debug` formatting when that fails.
   a small cell and one to two seconds when generics instantiate. The
   compilation cache above helps; nothing makes it Python-snappy, and
   that is the honest trade for the rest of the stack.
-- **`Run` is owned.** Like a `Field`, it carries structure and a
-  witness rather than borrowing the network, so a run can outlive the
-  cell that produced it (or the generation that ran).
+- **`Run` is owned.** Like a `Field`, it carries its own structure
+  freeze rather than borrowing the network, so a run can outlive the
+  cell that produced it.

@@ -7,9 +7,10 @@
 //! `cross_entropy` scores them against the next characters. The
 //! gather's scatter-add gradient touches exactly the rows a batch
 //! visits — the differentiable mirror of bigram counting. Minibatches
-//! arrive as per-run feeds, so the tape never grows during training,
-//! and sampling reads the trained table through the composite
-//! `softmax`. The run charts its loss curve against the bigram limit
+//! arrive as per-run feeds and training steps the caller-owned
+//! parameter state, so the graph never changes during training;
+//! sampling reopens the sealed network to record the composite
+//! `softmax` over the trained table. The run charts its loss curve against the bigram limit
 //! and the learned transition matrix as a heatmap.
 //!
 //! Run with: `cargo run --release --example makemore_bigram`
@@ -20,7 +21,7 @@ mod corpus;
 use std::time::Instant;
 
 use malevich::{Cells, Frame, Plot, Scale};
-use topos::{Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Shape, Tape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -39,16 +40,16 @@ fn main() {
         samples.len()
     );
 
-    let network: Network<Tensor<f32>> = Network::new();
-    let table = network.parameter(init::normal(7, 0.01)(&Shape::new([
+    let tape: Tape<Tensor<f32>> = Tape::new();
+    let table = tape.parameter(init::normal(7, 0.01)(&Shape::new([
         VOCABULARY_LEN,
         VOCABULARY_LEN,
     ])));
 
     // Contexts and targets are one-hot selections fed per run; the
     // defaults only fix the batch shape.
-    let contexts = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let contexts = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
 
     let logits = table.gather(contexts);
     let loss = cross_entropy(logits, targets);
@@ -57,13 +58,14 @@ fn main() {
     let contexts_symbol = contexts.symbol();
     let targets_symbol = targets.symbol();
     let loss_symbol = loss.symbol();
+    let network = tape.into_network();
     let recorded_nodes = network.len();
 
     // A fresh model is roughly uniform over the vocabulary, so the
     // first printed loss should sit near `ln(27) ~ 3.30`; the bigram
     // limit on this corpus is about `2.45`.
     let learning_rate = Tensor::new([], [10.0]);
-    let mut network = network;
+    let mut parameters = network.parameters();
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..1000 {
@@ -72,9 +74,9 @@ fn main() {
         let batch_contexts: Vec<usize> = batch.iter().map(|&(context, _)| context[0]).collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let loss_value = network.resolve(loss_symbol);
         // Slice the run to the loss it reads.
         let run = network.forward_for(
+            &parameters,
             [loss_symbol],
             [
                 (
@@ -87,13 +89,13 @@ fn main() {
                 ),
             ],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss_symbol).to_vec()[0];
         losses.push(batch_loss);
         if step % 100 == 0 {
             println!("step {step:4}: minibatch loss = {batch_loss:.4}");
         }
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |parameter, gradient| {
+        let gradients = run.backward(loss_symbol);
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -109,11 +111,15 @@ fn main() {
     println!("{}", loss_chart("bigram training", &losses));
 
     // The trained logits exponentiate into transition probabilities
-    // through the composite softmax: one more recorded expression.
-    let probabilities = network.resolve(table_symbol).softmax(1);
+    // through the composite softmax: reopen the sealed network, record
+    // one more expression, and carry the trained state across.
+    let tape = network.into_tape();
+    let probabilities = tape.resolve(table_symbol).softmax(1).symbol();
+    let network = tape.into_network();
+    let parameters = parameters.carried(&network);
     // Slice to the freshly recorded softmax: the training expression
     // does not re-run just to render the table.
-    let run = network.forward_for([probabilities.symbol()], std::iter::empty());
+    let run = network.forward_for(&parameters, [probabilities], std::iter::empty());
     let probabilities = run
         .of(probabilities)
         .as_slice()

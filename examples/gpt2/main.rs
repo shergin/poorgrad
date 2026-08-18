@@ -49,7 +49,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Bf16, Compile, Differentiable, Elementary, Emittable, Module, Network, Plan, Symbol, Tensor,
+    Bf16, Compile, Differentiable, Elementary, Emittable, Module, Plan, Symbol, Tape, Tensor,
     checkpoint,
 };
 
@@ -68,27 +68,22 @@ enum Engine {
     Xla,
 }
 
-/// The compiled model: the sampling plan and its feed symbols.
-struct Compiled<E> {
-    plan: Plan<Tensor<E>>,
+/// The recorded sampling expression's feed and read symbols.
+struct Sampler {
     stream: Symbol,
     extraction: Symbol,
     logits: Symbol,
 }
 
-/// Records the sampling expression over `model` and compiles it: the
-/// embedded window and the extraction row are per-run inputs, and the
-/// logits are the tied head — the embedding table transposed.
-fn record<E: Elementary + From<f32> + 'static>(
-    network: &Network<Tensor<E>>,
-    model: &Gpt2<E>,
-) -> Compiled<E> {
-    let embedded = network.input(Tensor::filled([CONTEXT_LEN, EMBED_DIM], E::from(0.0)));
-    let extraction = network.input(Tensor::selection(vec![0], CONTEXT_LEN, E::from(1.0)));
-    let last = model.express(network, embedded).gather(extraction);
-    let logits = last.matmul(network.resolve(model.embeddings()).transpose());
-    Compiled {
-        plan: network.compile(Compile::roots([logits])),
+/// Records the sampling expression over `model`: the embedded window
+/// and the extraction row are per-run inputs, and the logits are the
+/// tied head — the embedding table transposed.
+fn record<E: Elementary + From<f32> + 'static>(tape: &Tape<Tensor<E>>, model: &Gpt2<E>) -> Sampler {
+    let embedded = tape.input(Tensor::filled([CONTEXT_LEN, EMBED_DIM], E::from(0.0)));
+    let extraction = tape.input(Tensor::selection(vec![0], CONTEXT_LEN, E::from(1.0)));
+    let last = model.express(tape, embedded).gather(extraction);
+    let logits = last.matmul(tape.resolve(model.embeddings()).transpose());
+    Sampler {
         stream: embedded.symbol(),
         extraction: extraction.symbol(),
         logits: logits.symbol(),
@@ -227,12 +222,15 @@ where
     let tokenizer = Tokenizer::new(&cached_text("vocab.json"), &cached_text("merges.txt"));
     let weights = Weights::load();
 
-    // The module tree allocates with placeholder payloads on a builder
-    // generation; the named restore builds the generation that carries
-    // the checkpoint, converting elements at the precision boundary.
-    let builder = Network::new();
-    let gpt2 = Gpt2::<E>::new(&builder);
-    let network = load(&builder, &gpt2, &weights);
+    // The module tree and the sampling expression record on one tape;
+    // sealing yields the immutable spec, and the named restore builds
+    // the parameter state that carries the checkpoint, converting
+    // elements at the precision boundary.
+    let tape = Tape::new();
+    let gpt2 = Gpt2::<E>::new(&tape);
+    let sampler = record(&tape, &gpt2);
+    let network = tape.into_network();
+    let parameters = load(&network.parameters(), &gpt2, &weights);
     drop(weights);
     println!(
         "loaded the checkpoint in {:.1}s",
@@ -251,21 +249,17 @@ where
         "the tokenizer round-trips the prompt"
     );
 
-    let recording = Instant::now();
-    let compiled = record(&network, &gpt2);
+    let compiling = Instant::now();
+    let plan: Plan<Tensor<E>> = network.compile(Compile::roots([sampler.logits]));
     println!(
         "recorded {} nodes and compiled the plan in {:.1}s",
         network.len(),
-        recording.elapsed().as_secs_f64()
+        compiling.elapsed().as_secs_f64()
     );
 
     // The vocabulary lookup is data preparation: the window embeds by
     // row copies from the table, and the plan adds the positions.
-    let table = network
-        .resolve(gpt2.embeddings())
-        .payload()
-        .expect("the token table stores a payload")
-        .to_vec();
+    let table = parameters.of(gpt2.embeddings()).to_vec();
     let embedded = |window: &[usize]| {
         let mut stream = vec![E::from(0.0); CONTEXT_LEN * EMBED_DIM];
         for (row, &token) in window.iter().enumerate() {
@@ -286,8 +280,8 @@ where
             // parameters in recording order; the tree records them in
             // visit order, so the positional snapshot is exactly the
             // argument list.
-            let arguments = checkpoint::snapshot(&network, &gpt2);
-            let mut server = XlaServer::new(&compiled.plan, &arguments);
+            let arguments = checkpoint::snapshot(&parameters, &gpt2);
+            let mut server = XlaServer::new(&plan, &arguments);
             // One warmup step absorbs the server's compile, keeping
             // the per-token figure the steady state.
             let extraction = Tensor::selection(vec![0], CONTEXT_LEN, 1.0_f32);
@@ -305,17 +299,17 @@ where
         let logits = match &mut server {
             Some(server) => server.step(&widened(&stream), &widened(&extraction.to_vec())),
             None => {
-                let run = compiled.plan.forward(
-                    &network,
+                let run = plan.forward(
+                    &parameters,
                     [
                         (
-                            compiled.stream,
+                            sampler.stream,
                             Tensor::new([CONTEXT_LEN, EMBED_DIM], stream),
                         ),
-                        (compiled.extraction, extraction),
+                        (sampler.extraction, extraction),
                     ],
                 );
-                widened(&run.of(compiled.logits).to_vec())
+                widened(&run.of(sampler.logits).to_vec())
             }
         };
         let token = draw(&logits, 0.9, 40, &mut state);

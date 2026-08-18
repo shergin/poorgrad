@@ -1,11 +1,11 @@
-use crate::{Network, Shape, Tensor};
+use crate::{Shape, Tape, Tensor};
 
 use super::{average_pool, max_pool};
 
 #[test]
 fn max_pool_takes_window_maxima() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::new(
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
         [1, 1, 4, 4],
         (1..=16).map(|v| v as f64).collect::<Vec<_>>(),
     ));
@@ -13,14 +13,16 @@ fn max_pool_takes_window_maxima() {
     let pooled = max_pool(input, 2, 2);
     assert_eq!(pooled.shape(), Shape::new([1, 1, 2, 2]));
 
-    let run = network.forward();
+    let pooled = pooled.symbol();
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(pooled).to_vec(), &[6.0, 8.0, 14.0, 16.0]);
 }
 
 #[test]
 fn max_pool_routes_the_gradient_to_the_maximum() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::new(
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
         [1, 1, 4, 4],
         (1..=16).map(|v| v as f64).collect::<Vec<_>>(),
     ));
@@ -28,7 +30,9 @@ fn max_pool_routes_the_gradient_to_the_maximum() {
     let pooled = max_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let run = network.forward();
+    let (loss, input) = (loss.symbol(), input.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     let gradients = run.backward(loss);
     let mut expected = vec![0.0; 16];
     for position in [5, 7, 13, 15] {
@@ -39,13 +43,15 @@ fn max_pool_routes_the_gradient_to_the_maximum() {
 
 #[test]
 fn max_pool_ties_route_to_the_earliest_lane() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::filled([1, 1, 2, 2], 5.0_f64));
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::filled([1, 1, 2, 2], 5.0_f64));
 
     let pooled = max_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let run = network.forward();
+    let (pooled, loss, input) = (pooled.symbol(), loss.symbol(), input.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(pooled).to_vec(), &[5.0]);
 
     // All four window elements tie; the left-biased `maximum` fold
@@ -56,8 +62,8 @@ fn max_pool_ties_route_to_the_earliest_lane() {
 
 #[test]
 fn average_pool_takes_window_means() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::new(
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
         [1, 1, 4, 4],
         (1..=16).map(|v| v as f64).collect::<Vec<_>>(),
     ));
@@ -65,7 +71,9 @@ fn average_pool_takes_window_means() {
     let pooled = average_pool(input, 2, 2);
     let loss = pooled.sum();
 
-    let run = network.forward();
+    let (pooled, loss, input) = (pooled.symbol(), loss.symbol(), input.symbol());
+    let network = tape.into_network();
+    let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(pooled).to_vec(), &[3.5, 5.5, 11.5, 13.5]);
 
     // Every window element contributes `1 / (size * size)`.
@@ -76,7 +84,7 @@ fn average_pool_takes_window_means() {
 #[test]
 #[should_panic(expected = "must be rank 4")]
 fn pooling_rejects_non_image_input() {
-    let network = Network::new();
-    let input = network.leaf(Tensor::filled([1, 4, 4], 0.0_f64));
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::filled([1, 4, 4], 0.0_f64));
     max_pool(input, 2, 2);
 }

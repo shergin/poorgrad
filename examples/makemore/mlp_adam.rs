@@ -7,7 +7,7 @@
 //! part is which instrument the loop hands the gradients to.
 //!
 //! Optimizers are caller-owned instruments: the loop owns the
-//! learning-rate arithmetic and the generation hand-off, and any
+//! learning-rate arithmetic and the parameter state it steps, and any
 //! `Optimizer` implementation slots into the same line — the
 //! comparison below iterates strategies through `&mut dyn Optimizer`,
 //! the sanctioned example-side use of dynamic dispatch.
@@ -33,7 +33,7 @@ use std::time::Instant;
 use malevich::stat::Window;
 use malevich::{Frame, Line, Plot, Rule};
 use topos::{
-    Adam, Compile, Network, Optimizer, Sgd, Shape, Symbol, Tensor, Value, cross_entropy, init,
+    Adam, Compile, Optimizer, Sgd, Shape, Symbol, Tape, Tensor, Value, cross_entropy, init,
 };
 
 use corpus::{VOCABULARY_LEN, load_names, shuffle, training_samples};
@@ -59,36 +59,36 @@ const BIGRAM_LIMIT: f64 = 2.45;
 
 /// The model's parameters as recorded proxies, laid out exactly as in
 /// `makemore_mlp_compiled` so the runs share their seeds.
-struct Model<'network> {
-    embeddings: Value<'network, Tensor<f32>>,
-    hidden_weights: Value<'network, Tensor<f32>>,
-    hidden_bias: Value<'network, Tensor<f32>>,
-    output_weights: Value<'network, Tensor<f32>>,
-    output_bias: Value<'network, Tensor<f32>>,
+struct Model<'tape> {
+    embeddings: Value<'tape, Tensor<f32>>,
+    hidden_weights: Value<'tape, Tensor<f32>>,
+    hidden_bias: Value<'tape, Tensor<f32>>,
+    output_weights: Value<'tape, Tensor<f32>>,
+    output_bias: Value<'tape, Tensor<f32>>,
 }
 
-impl<'network> Model<'network> {
-    /// Allocates the parameters on `network`: an embedding table, one
+impl<'tape> Model<'tape> {
+    /// Allocates the parameters on `tape`: an embedding table, one
     /// tanh hidden layer, and an affine output layer, Xavier-scaled
     /// with zero biases.
-    fn new(network: &'network Network<Tensor<f32>>) -> Self {
+    fn new(tape: &'tape Tape<Tensor<f32>>) -> Self {
         let mut weights = init::xavier(7);
         Self {
-            embeddings: network.parameter(init::normal(8, 1.0)(&Shape::new([
+            embeddings: tape.parameter(init::normal(8, 1.0)(&Shape::new([
                 VOCABULARY_LEN,
                 EMBED_DIM,
             ]))),
-            hidden_weights: network
+            hidden_weights: tape
                 .parameter(weights(&Shape::new([CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN]))),
-            hidden_bias: network.parameter(weights(&Shape::new([HIDDEN_LEN]))),
-            output_weights: network.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
-            output_bias: network.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
+            hidden_bias: tape.parameter(weights(&Shape::new([HIDDEN_LEN]))),
+            output_weights: tape.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
+            output_bias: tape.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
         }
     }
 
     /// Returns the parameters in a fixed order, for pairing with their
     /// recorded gradients.
-    fn parameters(&self) -> [Value<'network, Tensor<f32>>; 5] {
+    fn parameters(&self) -> [Value<'tape, Tensor<f32>>; 5] {
         [
             self.embeddings,
             self.hidden_weights,
@@ -104,9 +104,9 @@ impl<'network> Model<'network> {
     /// squash, and score.
     fn express(
         &self,
-        contexts: Value<'network, Tensor<f32>>,
+        contexts: Value<'tape, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f32>> {
+    ) -> Value<'tape, Tensor<f32>> {
         let embedded = self
             .embeddings
             .gather(contexts)
@@ -128,19 +128,17 @@ fn train(
     optimizer: &mut dyn Optimizer<Tensor<f32>>,
     learning_rate: impl Fn(usize) -> Tensor<f32>,
 ) -> (Vec<f32>, f64) {
-    let network = Network::new();
-    let model = Model::new(&network);
-    let contexts = network.input(Tensor::selection(
+    let tape = Tape::new();
+    let model = Model::new(&tape);
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let loss = cross_entropy(model.express(contexts, BATCH_LEN), targets);
 
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
+    let (contexts, targets, loss) = (contexts.symbol(), targets.symbol(), loss.symbol());
     let parameter_symbols = model.parameters().map(|parameter| parameter.symbol());
 
     // The recorded route: the chain rule on the tape, one forward-only
@@ -148,17 +146,19 @@ fn train(
     // each interpreter run procedurally — bit-identical losses, but
     // dense gradient fields where the recorded route carries
     // O(1)-constant non-parameter slots into the optimizer's moments.
-    let (plan, gradient_symbols): (Option<_>, Vec<Symbol>) = if recorded {
-        let gradient_symbols = network.differentiate(loss_symbol, parameter_symbols);
-        let plan = network.compile(Compile::roots(
-            std::iter::once(loss_symbol).chain(gradient_symbols.iter().copied()),
-        ));
-        (Some(plan), gradient_symbols)
+    let gradient_symbols: Vec<Symbol> = if recorded {
+        tape.differentiate(loss, parameter_symbols)
     } else {
-        (None, Vec::new())
+        Vec::new()
     };
+    let network = tape.into_network();
+    let plan = recorded.then(|| {
+        network.compile(Compile::roots(
+            std::iter::once(loss).chain(gradient_symbols.iter().copied()),
+        ))
+    });
 
-    let mut network = network;
+    let mut parameters = network.parameters();
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..STEPS {
@@ -171,31 +171,31 @@ fn train(
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
         let feeds = [
             (
-                contexts_symbol,
+                contexts,
                 Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
             ),
             (
-                targets_symbol,
+                targets,
                 Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
             ),
         ];
 
         let (batch_loss, gradients) = if let Some(plan) = &plan {
-            let run = plan.forward(&network, feeds);
-            let gradients =
-                run.recorded_gradients(parameter_symbols.iter().zip(&gradient_symbols).map(
-                    |(&parameter, &gradient)| {
-                        (network.resolve(parameter), network.resolve(gradient))
-                    },
-                ));
-            (run.of(loss_symbol).to_vec()[0], gradients)
+            let run = plan.forward(&parameters, feeds);
+            let gradients = run.recorded_gradients(
+                parameter_symbols
+                    .iter()
+                    .copied()
+                    .zip(gradient_symbols.iter().copied()),
+            );
+            (run.of(loss).to_vec()[0], gradients)
         } else {
-            let run = network.forward_with(feeds);
-            (run.of(loss_symbol).to_vec()[0], run.backward(loss_symbol))
+            let run = network.forward(&parameters, feeds);
+            (run.of(loss).to_vec()[0], run.backward(loss))
         };
         losses.push(batch_loss);
 
-        network = optimizer.step(&network, &gradients, &learning_rate(step));
+        parameters = optimizer.step(&parameters, &gradients, &learning_rate(step));
     }
     (losses, training.elapsed().as_secs_f64())
 }

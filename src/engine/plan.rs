@@ -6,7 +6,10 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Compile, Function, Network, Operands, Posture, Run, Structure, Symbol, Witness};
+use super::{
+    Compile, Function, Network, Operands, Origin, Parameters, Posture, Run, SlotStore, Structure,
+    Symbol,
+};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -44,18 +47,23 @@ pub(crate) struct WindowProduct {
 /// The tape stays the specification; the plan is a derived execution
 /// schedule, and [`Plan::describe`] renders its decisions.
 ///
-/// Plans are graph-structural: [`Network::update`] replaces parameter
-/// payloads, never nodes, so one plan compiled once serves every
-/// generation of a training run. [`Plan::forward`] validates witness
-/// the way `update` validates a [`Field`](crate::Field), then executes
-/// the plan's own column snapshot with the network's current parameter
-/// and input payloads. Recording after compilation does not disturb a
-/// plan; it simply keeps serving its prefix.
+/// Plans are graph-structural: a plan freezes its own copy of the
+/// spec — columns and input defaults — at compile time, and
+/// [`Plan::forward`] takes the caller's [`Parameters`] per call, so a
+/// plan never held state and there is nothing for a training step to
+/// invalidate. Reopening the network and recording more does not
+/// disturb a plan; it simply keeps serving its prefix.
 #[derive(Debug, Clone)]
 pub struct Plan<Data> {
-    witness: Witness,
+    origin: Origin,
     /// Frozen node columns for the plan's graph prefix.
     structure: Structure<Data>,
+    /// The spec's input defaults, frozen at compile time; feeds
+    /// overlay them per run.
+    inputs: Arc<SlotStore<Data>>,
+    /// How many parameter slots the plan's prefix draws on: the
+    /// coverage a [`Parameters`] value must reach.
+    parameter_slots: usize,
     /// The ancestor closure of the targets and keeps: what a run must
     /// evaluate.
     wanted: Vec<bool>,
@@ -233,15 +241,13 @@ impl<Data: Differentiable> Plan<Data> {
         engine_backward: bool,
     ) -> Self {
         let training = engine_backward;
-        let tape = network.tape();
-        let snapshot = tape.snapshot();
-        let structure = snapshot.structure;
+        let structure = network.structure().clone();
         let length = structure.len();
 
         let mut wanted = vec![false; length];
         let mut readable = vec![false; length];
         for symbol in roots.iter().chain(observe) {
-            let index = network.resolve(*symbol).id().index();
+            let index = network.locate(*symbol).index();
             wanted[index] = true;
             readable[index] = true;
         }
@@ -351,8 +357,10 @@ impl<Data: Differentiable> Plan<Data> {
         }
 
         Self {
-            witness: snapshot.witness,
+            origin: network.origin(),
             structure,
+            inputs: Arc::clone(network.inputs()),
+            parameter_slots: network.parameters_len(),
             wanted,
             readable: Arc::new(readable),
             releases,
@@ -576,9 +584,14 @@ impl<Data: Differentiable> Plan<Data> {
 }
 
 impl<Data: Tensorial> Plan<Data> {
-    /// Runs the plan over `network`'s current generation with `feeds`
-    /// bound to declared inputs for this run only, returning a
-    /// run carrying the readable values.
+    /// Runs the plan with parameter payloads read from `parameters`
+    /// and `feeds` bound to declared inputs for this run only,
+    /// returning a run carrying the readable values.
+    ///
+    /// The plan is self-contained: it executes its own frozen columns
+    /// and input defaults, so no network is borrowed — the state walks
+    /// in per call, which is why one plan compiled once serves every
+    /// training step and every what-if.
     ///
     /// Skipped and freed slots hold O(1) zero placeholders;
     /// [`Run::of`] answers only the plan's targets and keeps,
@@ -587,48 +600,51 @@ impl<Data: Tensorial> Plan<Data> {
     /// the plan changes what is stored, never what is computed.
     ///
     /// # Panics
-    /// Panics if `network` belongs to a different lineage or a
-    /// divergent fork, does not contain the plan's whole graph prefix,
-    /// or as `forward_with` panics for `feeds`.
+    /// Panics if `parameters` belongs to a different network or does
+    /// not cover the plan's parameter slots, if a fed symbol does not
+    /// name an input inside the plan's prefix, or if a fed payload's
+    /// shape differs from the input's recorded shape.
     pub fn forward(
         &self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         feeds: impl IntoIterator<Item = (Symbol, Data)>,
     ) -> Run<Data> {
-        let tape = network.tape();
         assert!(
-            tape.same_origin(&self.witness),
-            "plan belongs to a different network lineage"
-        );
-        // One snapshot serves validation and the run, so both observe
-        // the same atomic tape state; chain agreement alone is not
-        // containment, since a shorter sibling attributes `[0, len)`
-        // to the same branches without carrying the nodes.
-        let snapshot = tape.snapshot();
-        assert!(
-            snapshot.structure.len() >= self.len(),
-            "plan covers a graph prefix this network does not contain"
+            parameters.origin() == self.origin,
+            "parameters belong to a different network"
         );
         assert!(
-            self.witness.agrees_with(&snapshot.witness, self.len()),
-            "plan belongs to a divergent fork of this network"
+            parameters.len() >= self.parameter_slots,
+            "parameters do not cover the plan's parameter slots; \
+             carry them across a reopen with `Parameters::carried`"
         );
 
         let mut bindings = Vec::new();
         for (symbol, payload) in feeds {
-            let value = network.resolve(symbol);
-            let slot = tape.input_slot(value.id()).expect("only inputs can be fed");
+            assert!(
+                symbol.origin == self.origin,
+                "symbol belongs to a different network"
+            );
+            let index = symbol.id.index();
+            assert!(
+                index < self.len(),
+                "symbol is not allocated in the plan's graph prefix"
+            );
+            let slot = match self.structure.functions.get(index) {
+                Some(Function::Input(input)) => input.0,
+                _ => panic!("only inputs can be fed"),
+            };
             assert_eq!(
                 payload.shape(),
-                value.shape(),
+                self.structure.shapes[index],
                 "fed payload must match the input's recorded shape"
             );
             bindings.push((slot, payload));
         }
         let inputs = if bindings.is_empty() {
-            snapshot.inputs
+            Arc::clone(&self.inputs)
         } else {
-            let mut overlaid = snapshot.inputs.as_ref().clone();
+            let mut overlaid = self.inputs.as_ref().clone();
             for (slot, payload) in bindings {
                 overlaid.set(slot, payload);
             }
@@ -665,8 +681,7 @@ impl<Data: Tensorial> Plan<Data> {
                     .iter()
                     .map(|link| &values[link.index()])
                     .collect();
-                let value =
-                    function.forward(&operands, snapshot.parameters.payloads(), inputs.payloads());
+                let value = function.forward(&operands, parameters.payloads(), inputs.payloads());
                 // The same producing-node contract check the interpreter
                 // run makes: the rule's output must carry the plan's
                 // recorded shape for this slot.
@@ -698,12 +713,7 @@ impl<Data: Tensorial> Plan<Data> {
                 readable: Arc::clone(&self.readable),
             }
         };
-        Run::new(
-            self.structure.clone(),
-            self.witness.clone(),
-            values,
-            posture,
-        )
+        Run::new(self.structure.clone(), self.origin, values, posture)
     }
 }
 
@@ -718,9 +728,8 @@ impl<Data: Differentiable> Network<Data> {
     /// recorded gradient symbols compile as ordinary roots.
     ///
     /// # Panics
-    /// Panics if a root or observe does not resolve in this
-    /// generation.
-    pub fn compile(&self, request: Compile<Data>) -> Plan<Data> {
+    /// Panics if a root or observe does not resolve in this network.
+    pub fn compile(&self, request: Compile) -> Plan<Data> {
         Plan::new(
             self,
             &request.roots,

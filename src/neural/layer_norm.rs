@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Symbol, Tensorial, Value};
+use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -31,7 +31,7 @@ assert_impl_all!(LayerNorm<f64>: Send, Sync);
 /// expression serves both.
 ///
 /// Parameters are stored as [`Symbol`]s and resolved when the expression
-/// is recorded in a compatible [`Network`] generation, like
+/// is recorded on the family's [`Tape`], like
 /// [`Layer`](super::Layer).
 #[derive(Debug, Clone)]
 pub struct LayerNorm<Data> {
@@ -42,7 +42,7 @@ pub struct LayerNorm<Data> {
 }
 
 impl<Data: Differentiable> LayerNorm<Data> {
-    /// Allocates the layer's parameters on `network` from their initial
+    /// Allocates the layer's parameters on `tape` from their initial
     /// payloads and returns the layer.
     ///
     /// `scale` and `shift` are rank-1 `[features]` parameters (the
@@ -55,7 +55,7 @@ impl<Data: Differentiable> LayerNorm<Data> {
     /// # Panics
     /// Panics if `scale` is not rank 1, `shift` is not shaped like
     /// `scale`, or `epsilon` holds more than one value.
-    pub fn new(network: &Network<Data>, scale: Data, shift: Data, epsilon: Data) -> Self {
+    pub fn new(tape: &Tape<Data>, scale: Data, shift: Data, epsilon: Data) -> Self {
         let scale_shape = scale.shape();
         let shift_shape = shift.shape();
         let epsilon_shape = epsilon.shape();
@@ -74,9 +74,9 @@ impl<Data: Differentiable> LayerNorm<Data> {
             "layer-norm epsilon must hold a single value, got {epsilon_shape}"
         );
         Self {
-            scale: network.parameter(scale).symbol(),
-            shift: network.parameter(shift).symbol(),
-            epsilon: network.leaf(epsilon).symbol(),
+            scale: tape.parameter(scale).symbol(),
+            shift: tape.parameter(shift).symbol(),
+            epsilon: tape.leaf(epsilon).symbol(),
             _marker: PhantomData,
         }
     }
@@ -90,21 +90,21 @@ impl<Data: Differentiable> LayerNorm<Data> {
 
 impl<Data: Tensorial> LayerNorm<Data> {
     /// Records the layer's expression over the `[batch, features]`
-    /// value `input` on `network` and returns the `[batch, features]`
+    /// value `input` on `tape` and returns the `[batch, features]`
     /// output value.
     ///
     /// # Panics
     /// Panics if the layer's parameters or `input` are not allocated on
-    /// `network`, or if `input` is not a rank-2 `[batch, features]`
+    /// `tape`, or if `input` is not a rank-2 `[batch, features]`
     /// value agreeing with the parameters on the feature count.
-    pub fn express<'network>(
+    pub fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        let scale = network.resolve(self.scale);
-        let shift = network.resolve(self.shift);
-        let epsilon = network.resolve(self.epsilon);
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        let scale = tape.resolve(self.scale);
+        let shift = tape.resolve(self.shift);
+        let epsilon = tape.resolve(self.epsilon);
         let input_shape = input.shape();
         let scale_shape = scale.shape();
         assert_eq!(
@@ -137,12 +137,12 @@ impl<Data: Tensorial> LayerNorm<Data> {
 mod tests;
 
 impl<Data: Tensorial> Module<Data> for LayerNorm<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        LayerNorm::express(self, network, input)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        LayerNorm::express(self, tape, input)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {

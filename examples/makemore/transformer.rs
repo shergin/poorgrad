@@ -27,8 +27,7 @@ mod corpus;
 use std::time::Instant;
 
 use topos::{
-    Compile, Dropout, Network, RmsNorm, Shape, Tensor, Tensorial, Value, concat, cross_entropy,
-    init,
+    Compile, Dropout, RmsNorm, Shape, Tape, Tensor, Tensorial, Value, concat, cross_entropy, init,
 };
 
 use chart::loss_chart;
@@ -62,62 +61,61 @@ const PACKED_LEN: usize = BATCH_LEN * CONTEXT_LEN;
 const KEEP: f64 = 0.9;
 
 /// One attention head's projections, each `[EMBED_DIM, HEAD_DIM]`.
-struct Head<'network> {
-    query: Value<'network, Tensor<f32>>,
-    key: Value<'network, Tensor<f32>>,
-    value: Value<'network, Tensor<f32>>,
+struct Head<'tape> {
+    query: Value<'tape, Tensor<f32>>,
+    key: Value<'tape, Tensor<f32>>,
+    value: Value<'tape, Tensor<f32>>,
 }
 
 /// The model's parameters as recorded proxies: embeddings, one
 /// pre-norm attention block, and the language-model head.
-struct Model<'network> {
-    embeddings: Value<'network, Tensor<f32>>,
-    positions: Value<'network, Tensor<f32>>,
-    heads: Vec<Head<'network>>,
-    projection: Value<'network, Tensor<f32>>,
+struct Model<'tape> {
+    embeddings: Value<'tape, Tensor<f32>>,
+    positions: Value<'tape, Tensor<f32>>,
+    heads: Vec<Head<'tape>>,
+    projection: Value<'tape, Tensor<f32>>,
     attention_norm: RmsNorm<Tensor<f32>>,
-    hidden_weights: Value<'network, Tensor<f32>>,
-    output_weights: Value<'network, Tensor<f32>>,
+    hidden_weights: Value<'tape, Tensor<f32>>,
+    output_weights: Value<'tape, Tensor<f32>>,
     hidden_norm: RmsNorm<Tensor<f32>>,
     final_norm: RmsNorm<Tensor<f32>>,
-    logit_weights: Value<'network, Tensor<f32>>,
-    logit_bias: Value<'network, Tensor<f32>>,
-    scale: Value<'network, Tensor<f32>>,
+    logit_weights: Value<'tape, Tensor<f32>>,
+    logit_bias: Value<'tape, Tensor<f32>>,
+    scale: Value<'tape, Tensor<f32>>,
 }
 
-impl<'network> Model<'network> {
-    /// Allocates the parameters on `network`: embedding tables for
+impl<'tape> Model<'tape> {
+    /// Allocates the parameters on `tape`: embedding tables for
     /// characters and positions, the heads' projections, the block's
     /// two norms and feed-forward, the final norm, and the affine
     /// logit head. The attention scale `1 / sqrt(HEAD_DIM)` rides
     /// along as a single-value leaf.
-    fn new(network: &'network Network<Tensor<f32>>) -> Self {
+    fn new(tape: &'tape Tape<Tensor<f32>>) -> Self {
         let mut weights = init::xavier(7);
         let ones = Tensor::filled([EMBED_DIM], 1.0);
         let epsilon = Tensor::filled([], 1e-5);
         Self {
-            embeddings: network.parameter(init::normal(8, 1.0)(&Shape::new([
+            embeddings: tape.parameter(init::normal(8, 1.0)(&Shape::new([
                 VOCABULARY_LEN,
                 EMBED_DIM,
             ]))),
-            positions: network
-                .parameter(init::normal(9, 1.0)(&Shape::new([CONTEXT_LEN, EMBED_DIM]))),
+            positions: tape.parameter(init::normal(9, 1.0)(&Shape::new([CONTEXT_LEN, EMBED_DIM]))),
             heads: (0..HEAD_COUNT)
                 .map(|_| Head {
-                    query: network.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
-                    key: network.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
-                    value: network.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
+                    query: tape.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
+                    key: tape.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
+                    value: tape.parameter(weights(&Shape::new([EMBED_DIM, HEAD_DIM]))),
                 })
                 .collect(),
-            projection: network.parameter(weights(&Shape::new([EMBED_DIM, EMBED_DIM]))),
-            attention_norm: RmsNorm::new(network, ones.clone(), epsilon.clone()),
-            hidden_weights: network.parameter(weights(&Shape::new([EMBED_DIM, HIDDEN_LEN]))),
-            output_weights: network.parameter(weights(&Shape::new([HIDDEN_LEN, EMBED_DIM]))),
-            hidden_norm: RmsNorm::new(network, ones.clone(), epsilon.clone()),
-            final_norm: RmsNorm::new(network, ones, epsilon),
-            logit_weights: network.parameter(weights(&Shape::new([EMBED_DIM, VOCABULARY_LEN]))),
-            logit_bias: network.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
-            scale: network.leaf(Tensor::filled([], 1.0 / (HEAD_DIM as f32).sqrt())),
+            projection: tape.parameter(weights(&Shape::new([EMBED_DIM, EMBED_DIM]))),
+            attention_norm: RmsNorm::new(tape, ones.clone(), epsilon.clone()),
+            hidden_weights: tape.parameter(weights(&Shape::new([EMBED_DIM, HIDDEN_LEN]))),
+            output_weights: tape.parameter(weights(&Shape::new([HIDDEN_LEN, EMBED_DIM]))),
+            hidden_norm: RmsNorm::new(tape, ones.clone(), epsilon.clone()),
+            final_norm: RmsNorm::new(tape, ones, epsilon),
+            logit_weights: tape.parameter(weights(&Shape::new([EMBED_DIM, VOCABULARY_LEN]))),
+            logit_bias: tape.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
+            scale: tape.leaf(Tensor::filled([], 1.0 / (HEAD_DIM as f32).sqrt())),
         }
     }
 
@@ -130,19 +128,19 @@ impl<'network> Model<'network> {
     /// `[rows, rows]`.
     fn states(
         &self,
-        network: &'network Network<Tensor<f32>>,
-        tokens: Value<'network, Tensor<f32>>,
-        positions: Value<'network, Tensor<f32>>,
-        mask: Value<'network, Tensor<f32>>,
+        tape: &'tape Tape<Tensor<f32>>,
+        tokens: Value<'tape, Tensor<f32>>,
+        positions: Value<'tape, Tensor<f32>>,
+        mask: Value<'tape, Tensor<f32>>,
         dropouts: &[Dropout<Tensor<f32>>; 2],
-    ) -> Value<'network, Tensor<f32>> {
+    ) -> Value<'tape, Tensor<f32>> {
         let stream = self.embeddings.gather(tokens) + self.positions.gather(positions);
 
         // Pre-norm attention: every head attends over the same
         // normalized stream, and `concat` joins the head outputs along
         // the feature axis.
-        let normalized = self.attention_norm.express(network, stream);
-        let heads: Vec<Value<'network, Tensor<f32>>> = self
+        let normalized = self.attention_norm.express(tape, stream);
+        let heads: Vec<Value<'tape, Tensor<f32>>> = self
             .heads
             .iter()
             .map(|head| {
@@ -154,30 +152,29 @@ impl<'network> Model<'network> {
                 weights.matmul(normalized.matmul(head.value))
             })
             .collect();
-        let stream =
-            stream + dropouts[0].express(network, concat(&heads, 1).matmul(self.projection));
+        let stream = stream + dropouts[0].express(tape, concat(&heads, 1).matmul(self.projection));
 
         // Pre-norm feed-forward onto the residual stream.
-        let normalized = self.hidden_norm.express(network, stream);
+        let normalized = self.hidden_norm.express(tape, stream);
         let stream = stream
             + dropouts[1].express(
-                network,
+                tape,
                 normalized
                     .matmul(self.hidden_weights)
                     .relu()
                     .matmul(self.output_weights),
             );
 
-        self.final_norm.express(network, stream)
+        self.final_norm.express(tape, stream)
     }
 
     /// Records the logits of the rows picked by the one-hot
     /// `extraction` — the last context position of each packed sample.
     fn logits(
         &self,
-        states: Value<'network, Tensor<f32>>,
-        extraction: Value<'network, Tensor<f32>>,
-    ) -> Value<'network, Tensor<f32>> {
+        states: Value<'tape, Tensor<f32>>,
+        extraction: Value<'tape, Tensor<f32>>,
+    ) -> Value<'tape, Tensor<f32>> {
         let product = states.gather(extraction).matmul(self.logit_weights);
         product + self.logit_bias.broadcast_along(0, product)
     }
@@ -210,55 +207,54 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
-    let model = Model::new(&network);
+    let tape = Tape::new();
+    let model = Model::new(&tape);
 
     // The training expression over the packed batch: per-sample
     // prediction rows come back through the fixed one-hot extraction.
-    let tokens = network.input(Tensor::selection(vec![0; PACKED_LEN], VOCABULARY_LEN, 1.0));
-    let positions = network.leaf(Tensor::selection(
+    let tokens = tape.input(Tensor::selection(vec![0; PACKED_LEN], VOCABULARY_LEN, 1.0));
+    let positions = tape.leaf(Tensor::selection(
         (0..PACKED_LEN)
             .map(|row| row % CONTEXT_LEN)
             .collect::<Vec<_>>(),
         CONTEXT_LEN,
         1.0,
     ));
-    let mask = network.leaf(block_causal_mask(BATCH_LEN));
-    let extraction = network.leaf(Tensor::selection(
+    let mask = tape.leaf(block_causal_mask(BATCH_LEN));
+    let extraction = tape.leaf(Tensor::selection(
         (0..BATCH_LEN)
             .map(|sample| sample * CONTEXT_LEN + CONTEXT_LEN - 1)
             .collect::<Vec<_>>(),
         PACKED_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     // Dropout on both residual writes; the mask inputs default to
     // ones, so only the fed training steps ever drop anything.
     let dropouts = [
-        Dropout::new(&network, [PACKED_LEN, EMBED_DIM]),
-        Dropout::new(&network, [PACKED_LEN, EMBED_DIM]),
+        Dropout::new(&tape, [PACKED_LEN, EMBED_DIM]),
+        Dropout::new(&tape, [PACKED_LEN, EMBED_DIM]),
     ];
-    let states = model.states(&network, tokens, positions, mask, &dropouts);
+    let states = model.states(&tape, tokens, positions, mask, &dropouts);
     let loss = cross_entropy(model.logits(states, extraction), targets);
 
     // The sampling twin is the same expression over one window.
-    let sample_tokens = network.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
-    let sample_positions = network.leaf(Tensor::selection(
+    let sample_tokens = tape.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
+    let sample_positions = tape.leaf(Tensor::selection(
         (0..CONTEXT_LEN).collect::<Vec<_>>(),
         CONTEXT_LEN,
         1.0,
     ));
-    let sample_mask = network.leaf(block_causal_mask(1));
-    let sample_extraction =
-        network.leaf(Tensor::selection(vec![CONTEXT_LEN - 1], CONTEXT_LEN, 1.0));
+    let sample_mask = tape.leaf(block_causal_mask(1));
+    let sample_extraction = tape.leaf(Tensor::selection(vec![CONTEXT_LEN - 1], CONTEXT_LEN, 1.0));
     // The twin's dropouts are never fed: the identity default is the
     // inference mode, with no flag and no second formula.
     let sample_dropouts = [
-        Dropout::new(&network, [CONTEXT_LEN, EMBED_DIM]),
-        Dropout::new(&network, [CONTEXT_LEN, EMBED_DIM]),
+        Dropout::new(&tape, [CONTEXT_LEN, EMBED_DIM]),
+        Dropout::new(&tape, [CONTEXT_LEN, EMBED_DIM]),
     ];
     let sample_states = model.states(
-        &network,
+        &tape,
         sample_tokens,
         sample_positions,
         sample_mask,
@@ -266,17 +262,21 @@ fn main() {
     );
     let sample_probabilities = model.logits(sample_states, sample_extraction).softmax(1);
 
-    let tokens_symbol = tokens.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
-    let sample_tokens_symbol = sample_tokens.symbol();
-    let sample_probabilities_symbol = sample_probabilities.symbol();
-    let recorded_nodes = network.len();
+    let (tokens, targets, loss, sample_tokens, sample_probabilities) = (
+        tokens.symbol(),
+        targets.symbol(),
+        loss.symbol(),
+        sample_tokens.symbol(),
+        sample_probabilities.symbol(),
+    );
+    let recorded_nodes = tape.len();
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     // Compile once: training keeps only the loss, sampling is
     // forward-only.
-    let training_plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
-    let sampling_plan = network.compile(Compile::roots([sample_probabilities_symbol]));
+    let training_plan = network.compile(Compile::roots([loss]).engine_backward());
+    let sampling_plan = network.compile(Compile::roots([sample_probabilities]));
 
     // The seeded mask factory: two draws per step, one per residual
     // write, deterministic in `(seed, step)` so runs replay bitwise.
@@ -285,7 +285,6 @@ fn main() {
 
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -298,23 +297,19 @@ fn main() {
             .collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let loss_value = network.resolve(loss_symbol);
         let run = training_plan.forward(
-            &network,
+            &parameters,
             [
+                (tokens, Tensor::selection(batch_tokens, VOCABULARY_LEN, 1.0)),
                 (
-                    tokens_symbol,
-                    Tensor::selection(batch_tokens, VOCABULARY_LEN, 1.0),
-                ),
-                (
-                    targets_symbol,
+                    targets,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
                 (dropouts[0].mask(), dropout_masks(&mask_shape)),
                 (dropouts[1].mask(), dropout_masks(&mask_shape)),
             ],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -332,9 +327,9 @@ fn main() {
             window_loss = 0.0;
         }
 
-        let gradients = run.backward(loss_value);
+        let gradients = run.backward(loss);
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -356,15 +351,13 @@ fn main() {
         let mut name = String::new();
         loop {
             let run = sampling_plan.forward(
-                &network,
+                &parameters,
                 [(
-                    sample_tokens_symbol,
+                    sample_tokens,
                     Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                 )],
             );
-            let row = run
-                .of(network.resolve(sample_probabilities_symbol))
-                .to_vec();
+            let row = run.of(sample_probabilities).to_vec();
             let token = draw(&row, &mut state);
             if token == 0 {
                 break;

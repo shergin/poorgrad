@@ -13,7 +13,7 @@ use super::Value;
 /// by appending the corresponding node to the tape and answering with
 /// a handle, so running a rule with `Data = Trace` emits the rule's
 /// computation as recorded graph — which is all
-/// [`Network::differentiate`](super::Network::differentiate) does. The
+/// [`Tape::differentiate`](super::Tape::differentiate) does. The
 /// rules cannot tell the difference, and that indistinguishability is
 /// the design: derivative knowledge lives in exactly one place, and a
 /// rule change reaches the engine's backward and the recorded gradient
@@ -23,18 +23,18 @@ use super::Value;
 /// panic with a named message; the per-variant closure tests run every
 /// rule under `Trace`, so a future rule widening the vocabulary fails
 /// its own test at introduction instead of hiding a latent trap.
-pub(crate) struct Trace<'network, Data> {
-    value: Value<'network, Data>,
+pub(crate) struct Trace<'tape, Data> {
+    value: Value<'tape, Data>,
 }
 
-impl<'network, Data: Differentiable> Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Trace<'tape, Data> {
     /// Wraps a recorded value as a rule operand.
-    pub(crate) fn of(value: Value<'network, Data>) -> Self {
+    pub(crate) fn of(value: Value<'tape, Data>) -> Self {
         Self { value }
     }
 
     /// Returns the recorded value this trace stands for.
-    pub(crate) fn value(&self) -> Value<'network, Data> {
+    pub(crate) fn value(&self) -> Value<'tape, Data> {
         self.value
     }
 
@@ -61,42 +61,42 @@ impl<Data> fmt::Debug for Trace<'_, Data> {
     }
 }
 
-impl<'network, Data: Differentiable> Add for Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Add for Trace<'tape, Data> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         Self::of(self.value + rhs.value)
     }
 }
 
-impl<'network, Data: Differentiable> Sub for Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Sub for Trace<'tape, Data> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         Self::of(self.value - rhs.value)
     }
 }
 
-impl<'network, Data: Differentiable> Mul for Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Mul for Trace<'tape, Data> {
     type Output = Self;
     fn mul(self, rhs: Self) -> Self {
         Self::of(self.value * rhs.value)
     }
 }
 
-impl<'network, Data: Differentiable> Div for Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Div for Trace<'tape, Data> {
     type Output = Self;
     fn div(self, rhs: Self) -> Self {
         Self::of(self.value / rhs.value)
     }
 }
 
-impl<'network, Data: Differentiable> Neg for Trace<'network, Data> {
+impl<'tape, Data: Differentiable> Neg for Trace<'tape, Data> {
     type Output = Self;
     fn neg(self) -> Self {
         Self::of(-self.value)
     }
 }
 
-impl<'network, Data: Tensorial> Differentiable for Trace<'network, Data> {
+impl<'tape, Data: Tensorial> Differentiable for Trace<'tape, Data> {
     /// A trace accumulates in itself: promotion would hide recorded
     /// arithmetic, and the underlying payload's accumulator already
     /// acts inside each recorded operation.
@@ -130,7 +130,7 @@ impl<'network, Data: Tensorial> Differentiable for Trace<'network, Data> {
     }
 }
 
-impl<'network, Data: Tensorial> Elementary for Trace<'network, Data> {
+impl<'tape, Data: Tensorial> Elementary for Trace<'tape, Data> {
     fn exp(&self) -> Self {
         Self::of(self.value.exp())
     }
@@ -160,7 +160,7 @@ impl<'network, Data: Tensorial> Elementary for Trace<'network, Data> {
     }
 }
 
-impl<'network, Data: Tensorial> Tensorial for Trace<'network, Data> {
+impl<'tape, Data: Tensorial> Tensorial for Trace<'tape, Data> {
     fn matmul(&self, rhs: &Self) -> Self {
         Self::of(self.value.matmul(rhs.value))
     }

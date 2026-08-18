@@ -18,7 +18,7 @@ mod corpus;
 use std::time::Instant;
 
 use malevich::{Color, Frame, Plot, Text};
-use topos::{Mlp, Network, Shape, Tensor, Tensorial, cross_entropy, init};
+use topos::{Mlp, Shape, Tape, Tensor, Tensorial, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, from_token, load_names, shuffle, training_samples};
@@ -152,32 +152,27 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network: Network<Tensor<f32>> = Network::new();
-    let embeddings = network.parameter(init::normal(8, 1.0)(&Shape::new([
+    let tape: Tape<Tensor<f32>> = Tape::new();
+    let embeddings = tape.parameter(init::normal(8, 1.0)(&Shape::new([
         VOCABULARY_LEN,
         EMBED_DIM,
     ])));
     let mlp = Mlp::new(
-        &network,
+        &tape,
         &[CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN, VOCABULARY_LEN],
         init::xavier(7),
     );
 
-    let contexts = network.input(Tensor::selection(
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let embedded = embeddings
         .gather(contexts)
         .reshape([BATCH_LEN, CONTEXT_LEN * EMBED_DIM]);
-    let loss = cross_entropy(mlp.express(&network, embedded), targets);
-
-    let embeddings_symbol = embeddings.symbol();
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
+    let loss = cross_entropy(mlp.express(&tape, embedded), targets);
 
     println!(
         "{}",
@@ -187,11 +182,19 @@ fn main() {
         )
     );
 
+    let (embeddings, contexts, targets, loss) = (
+        embeddings.symbol(),
+        contexts.symbol(),
+        targets.symbol(),
+        loss.symbol(),
+    );
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
+
     // The two-dimensional bottleneck lands near 2.4 where ten
     // dimensions reach 2.25: the price of a plottable space.
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -204,22 +207,22 @@ fn main() {
             .collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let loss_value = network.resolve(loss_symbol);
         // Slice the run to the loss it reads.
         let run = network.forward_for(
-            [loss_symbol],
+            &parameters,
+            [loss],
             [
                 (
-                    contexts_symbol,
+                    contexts,
                     Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
                 ),
                 (
-                    targets_symbol,
+                    targets,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
             ],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         window_loss += batch_loss;
         if (step + 1) % 1000 == 0 {
@@ -231,9 +234,9 @@ fn main() {
             );
             window_loss = 0.0;
         }
-        let gradients = run.backward(loss_value);
+        let gradients = run.backward(loss);
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -245,12 +248,9 @@ fn main() {
     );
     println!("{}", loss_chart("embedding map training", &losses));
 
-    let table = network.resolve(embeddings_symbol).payload().unwrap();
+    let table = parameters.of(embeddings);
     println!(
         "{}",
-        embedding_chart(
-            "embedding space after training (vowels highlighted)",
-            &table
-        )
+        embedding_chart("embedding space after training (vowels highlighted)", table)
     );
 }

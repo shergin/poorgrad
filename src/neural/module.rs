@@ -1,13 +1,14 @@
 use std::fmt::{self, Display};
 
-use crate::{Network, Symbol, Tensorial, Value};
+use crate::{Symbol, Tape, Tensorial, Value};
 
 /// A named, parameterized recording function: the unit of model
 /// composition.
 ///
 /// A module holds its parameters as detached [`Symbol`]s and records
 /// its formula through the public operation surface — it never owns
-/// payloads (the [`Network`] does) and never touches the engine.
+/// payloads (the caller's [`Parameters`](crate::Parameters) do) and
+/// never touches the engine.
 /// Expression happens at record time, once per topology; the cost
 /// never reaches a run, a plan, or a kernel, which is why composing
 /// through `dyn Module` (see [`Sequential`](super::Sequential)) sits
@@ -19,13 +20,13 @@ use crate::{Network, Symbol, Tensorial, Value};
 /// the serialization boundary alone, where checkpoints need stable
 /// structured paths.
 pub trait Module<Data: Tensorial>: Send + Sync {
-    /// Records this module's formula over `input` on `network` and
+    /// Records this module's formula over `input` on `tape` and
     /// returns the output value.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data>;
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data>;
 
     /// Walks this module's parameters and children in a stable order,
     /// announcing each parameter under its local name and each child

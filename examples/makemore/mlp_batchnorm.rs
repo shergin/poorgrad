@@ -22,7 +22,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use topos::{BatchNorm, Compile, Network, Shape, Tensor, Tensorial, Value, cross_entropy, init};
+use topos::{BatchNorm, Compile, Shape, Tape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -47,35 +47,35 @@ const MOMENTUM: f32 = 0.01;
 
 /// The model's parameters as recorded proxies: the part-2 layout with
 /// the hidden bias replaced by a batch-normalization stage.
-struct Model<'network> {
-    embeddings: Value<'network, Tensor<f32>>,
-    hidden_weights: Value<'network, Tensor<f32>>,
+struct Model<'tape> {
+    embeddings: Value<'tape, Tensor<f32>>,
+    hidden_weights: Value<'tape, Tensor<f32>>,
     norm: BatchNorm<Tensor<f32>>,
-    output_weights: Value<'network, Tensor<f32>>,
-    output_bias: Value<'network, Tensor<f32>>,
+    output_weights: Value<'tape, Tensor<f32>>,
+    output_bias: Value<'tape, Tensor<f32>>,
 }
 
-impl<'network> Model<'network> {
-    /// Allocates the parameters on `network`: the embedding table, the
+impl<'tape> Model<'tape> {
+    /// Allocates the parameters on `tape`: the embedding table, the
     /// bias-free hidden layer, the norm's scale and shift (ones and
     /// zeros, the standard start), and the affine output.
-    fn new(network: &'network Network<Tensor<f32>>) -> Self {
+    fn new(tape: &'tape Tape<Tensor<f32>>) -> Self {
         let mut weights = init::xavier(7);
         Self {
-            embeddings: network.parameter(init::normal(8, 1.0)(&Shape::new([
+            embeddings: tape.parameter(init::normal(8, 1.0)(&Shape::new([
                 VOCABULARY_LEN,
                 EMBED_DIM,
             ]))),
-            hidden_weights: network
+            hidden_weights: tape
                 .parameter(weights(&Shape::new([CONTEXT_LEN * EMBED_DIM, HIDDEN_LEN]))),
             norm: BatchNorm::new(
-                network,
+                tape,
                 Tensor::filled([HIDDEN_LEN], 1.0),
                 Tensor::filled([HIDDEN_LEN], 0.0),
                 Tensor::filled([], 1e-5),
             ),
-            output_weights: network.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
-            output_bias: network.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
+            output_weights: tape.parameter(weights(&Shape::new([HIDDEN_LEN, VOCABULARY_LEN]))),
+            output_bias: tape.parameter(weights(&Shape::new([VOCABULARY_LEN]))),
         }
     }
 
@@ -83,9 +83,9 @@ impl<'network> Model<'network> {
     /// and the bias-free hidden preactivation.
     fn preactivation(
         &self,
-        contexts: Value<'network, Tensor<f32>>,
+        contexts: Value<'tape, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f32>> {
+    ) -> Value<'tape, Tensor<f32>> {
         self.embeddings
             .gather(contexts)
             .reshape([rows, CONTEXT_LEN * EMBED_DIM])
@@ -94,7 +94,7 @@ impl<'network> Model<'network> {
 
     /// Records the shared tail: squash the normalized preactivation
     /// and score.
-    fn logits(&self, normalized: Value<'network, Tensor<f32>>) -> Value<'network, Tensor<f32>> {
+    fn logits(&self, normalized: Value<'tape, Tensor<f32>>) -> Value<'tape, Tensor<f32>> {
         let hidden = normalized.tanh();
         let product = hidden.matmul(self.output_weights);
         product + self.output_bias.broadcast_along(0, product)
@@ -108,58 +108,58 @@ fn main() {
     shuffle(&mut samples, &mut shuffle_state);
     println!("loaded {} names, {} samples", names.len(), samples.len());
 
-    let network = Network::new();
-    let model = Model::new(&network);
+    let tape = Tape::new();
+    let model = Model::new(&tape);
 
     // The training expression: the norm standardizes each feature by
     // the minibatch's own statistics, and hands them back for the
     // running estimates.
-    let contexts = network.input(Tensor::selection(
+    let contexts = tape.input(Tensor::selection(
         vec![0; BATCH_LEN * CONTEXT_LEN],
         VOCABULARY_LEN,
         1.0,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], VOCABULARY_LEN, 1.0));
     let normalization = model
         .norm
-        .express(&network, model.preactivation(contexts, BATCH_LEN));
+        .express(&tape, model.preactivation(contexts, BATCH_LEN));
     let loss = cross_entropy(model.logits(normalization.output), targets);
 
     // The sampling twin normalizes by running estimates fed per run:
     // the norm's inference mode, one recorded expression for every
-    // generation of the estimates.
-    let sample_context =
-        network.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
-    let running_mean = network.input(Tensor::filled([HIDDEN_LEN], 0.0));
-    let running_variance = network.input(Tensor::filled([HIDDEN_LEN], 1.0));
+    // state of the estimates.
+    let sample_context = tape.input(Tensor::selection(vec![0; CONTEXT_LEN], VOCABULARY_LEN, 1.0));
+    let running_mean = tape.input(Tensor::filled([HIDDEN_LEN], 0.0));
+    let running_variance = tape.input(Tensor::filled([HIDDEN_LEN], 1.0));
     let sample_normalized = model.norm.express_with(
-        &network,
+        &tape,
         model.preactivation(sample_context, 1),
         running_mean,
         running_variance,
     );
     let sample_probabilities = model.logits(sample_normalized).softmax(1);
 
-    let contexts_symbol = contexts.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
-    let mean_symbol = normalization.mean.symbol();
-    let variance_symbol = normalization.variance.symbol();
-    let sample_context_symbol = sample_context.symbol();
-    let running_mean_symbol = running_mean.symbol();
-    let running_variance_symbol = running_variance.symbol();
-    let sample_probabilities_symbol = sample_probabilities.symbol();
-    let recorded_nodes = network.len();
+    let (contexts, targets, loss) = (contexts.symbol(), targets.symbol(), loss.symbol());
+    let (mean, variance) = (normalization.mean.symbol(), normalization.variance.symbol());
+    let (sample_context, running_mean, running_variance, sample_probabilities) = (
+        sample_context.symbol(),
+        running_mean.symbol(),
+        running_variance.symbol(),
+        sample_probabilities.symbol(),
+    );
+    let recorded_nodes = tape.len();
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     // Compile once: the training plan keeps the batch statistics
     // readable — the keep-set naming exactly what the loop reads —
     // and the sampling plan is forward-only.
     let training_plan = network.compile(
-        Compile::roots([loss_symbol])
-            .observe([mean_symbol, variance_symbol])
+        Compile::roots([loss])
+            .observe([mean, variance])
             .engine_backward(),
     );
-    let sampling_plan = network.compile(Compile::roots([sample_probabilities_symbol]));
+    let sampling_plan = network.compile(Compile::roots([sample_probabilities]));
 
     // The running estimates: loop-owned payloads, never engine state.
     let mut mean_estimate = Tensor::filled([HIDDEN_LEN], 0.0_f32);
@@ -169,7 +169,6 @@ fn main() {
 
     let fast = Tensor::new([], [0.1]);
     let slow = Tensor::new([], [0.01]);
-    let mut network = network;
     let mut window_loss = 0.0;
     let mut losses = Vec::new();
     let training = Instant::now();
@@ -182,21 +181,20 @@ fn main() {
             .collect();
         let batch_targets: Vec<usize> = batch.iter().map(|&(_, next)| next).collect();
 
-        let loss_value = network.resolve(loss_symbol);
         let run = training_plan.forward(
-            &network,
+            &parameters,
             [
                 (
-                    contexts_symbol,
+                    contexts,
                     Tensor::selection(batch_contexts, VOCABULARY_LEN, 1.0),
                 ),
                 (
-                    targets_symbol,
+                    targets,
                     Tensor::selection(batch_targets, VOCABULARY_LEN, 1.0),
                 ),
             ],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
@@ -216,14 +214,14 @@ fn main() {
 
         // The running estimates fold in this batch's statistics, read
         // through the keep-set: payload arithmetic in loop land.
-        let batch_mean = run.of(network.resolve(mean_symbol)).clone();
-        let batch_variance = run.of(network.resolve(variance_symbol)).clone();
+        let batch_mean = run.of(mean).clone();
+        let batch_variance = run.of(variance).clone();
         mean_estimate = mean_estimate * keep.clone() + batch_mean * take.clone();
         variance_estimate = variance_estimate * keep.clone() + batch_variance * take.clone();
 
-        let gradients = run.backward(loss_value);
+        let gradients = run.backward(loss);
         let learning_rate = if step < 4000 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -245,19 +243,17 @@ fn main() {
         let mut name = String::new();
         loop {
             let run = sampling_plan.forward(
-                &network,
+                &parameters,
                 [
                     (
-                        sample_context_symbol,
+                        sample_context,
                         Tensor::selection(window.to_vec(), VOCABULARY_LEN, 1.0),
                     ),
-                    (running_mean_symbol, mean_estimate.clone()),
-                    (running_variance_symbol, variance_estimate.clone()),
+                    (running_mean, mean_estimate.clone()),
+                    (running_variance, variance_estimate.clone()),
                 ],
             );
-            let row = run
-                .of(network.resolve(sample_probabilities_symbol))
-                .to_vec();
+            let row = run.of(sample_probabilities).to_vec();
             let token = draw(&row, &mut state);
             if token == 0 {
                 break;

@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Symbol, Tensorial, Value};
+use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -24,8 +24,8 @@ assert_impl_all!(BatchNorm<f64>: Send, Sync);
 ///                * scale[j] + shift[j]
 /// ```
 ///
-/// The layer records two expressions, mirroring the
-/// `forward`/`forward_with` split. [`BatchNorm::express`] normalizes by
+/// The layer records two expressions, mirroring the unfed/fed run
+/// split. [`BatchNorm::express`] normalizes by
 /// the batch's own statistics — the training mode — and returns them
 /// alongside the output, because the statistics are part of the layer's
 /// contract: gradients flow through them into the input, and the caller
@@ -37,7 +37,7 @@ assert_impl_all!(BatchNorm<f64>: Send, Sync);
 /// the tape stays a pure record of the computation.
 ///
 /// Parameters are stored as [`Symbol`]s and resolved when an expression
-/// is recorded in a compatible [`Network`] generation, like
+/// is recorded on the family's [`Tape`], like
 /// [`Layer`](super::Layer).
 #[derive(Debug, Clone)]
 pub struct BatchNorm<Data> {
@@ -48,7 +48,7 @@ pub struct BatchNorm<Data> {
 }
 
 impl<Data: Differentiable> BatchNorm<Data> {
-    /// Allocates the layer's parameters on `network` from their initial
+    /// Allocates the layer's parameters on `tape` from their initial
     /// payloads and returns the layer.
     ///
     /// `scale` and `shift` are rank-1 `[features]` parameters (the
@@ -60,7 +60,7 @@ impl<Data: Differentiable> BatchNorm<Data> {
     /// # Panics
     /// Panics if `scale` is not rank 1, `shift` is not shaped like
     /// `scale`, or `epsilon` holds more than one value.
-    pub fn new(network: &Network<Data>, scale: Data, shift: Data, epsilon: Data) -> Self {
+    pub fn new(tape: &Tape<Data>, scale: Data, shift: Data, epsilon: Data) -> Self {
         let scale_shape = scale.shape();
         let shift_shape = shift.shape();
         let epsilon_shape = epsilon.shape();
@@ -79,9 +79,9 @@ impl<Data: Differentiable> BatchNorm<Data> {
             "batch-norm epsilon must hold a single value, got {epsilon_shape}"
         );
         Self {
-            scale: network.parameter(scale).symbol(),
-            shift: network.parameter(shift).symbol(),
-            epsilon: network.leaf(epsilon).symbol(),
+            scale: tape.parameter(scale).symbol(),
+            shift: tape.parameter(shift).symbol(),
+            epsilon: tape.leaf(epsilon).symbol(),
             _marker: PhantomData,
         }
     }
@@ -95,26 +95,26 @@ impl<Data: Differentiable> BatchNorm<Data> {
 
 impl<Data: Tensorial> BatchNorm<Data> {
     /// Records the training-mode expression over the `[batch, features]`
-    /// value `input` on `network` — normalization by the batch's own
+    /// value `input` on `tape` — normalization by the batch's own
     /// mean and biased variance — and returns the output together with
     /// the statistic values it normalized by.
     ///
     /// # Panics
     /// Panics if the layer's parameters or `input` are not allocated on
-    /// `network`, or if `input` is not a rank-2 `[batch, features]`
+    /// `tape`, or if `input` is not a rank-2 `[batch, features]`
     /// value agreeing with the parameters on the feature count.
-    pub fn express<'network>(
+    pub fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Normalization<'network, Data> {
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Normalization<'tape, Data> {
         let mean = input.mean_along(0);
         let centered = input - mean.broadcast_along(0, input);
         // The biased (population) variance, which normalization uses at
         // training time; an unbiased running estimate is the caller's
         // averaging policy, not the graph's.
         let variance = (centered * centered).mean_along(0);
-        let output = self.normalize(network, centered, variance);
+        let output = self.normalize(tape, centered, variance);
         Normalization {
             output,
             mean,
@@ -123,7 +123,7 @@ impl<Data: Tensorial> BatchNorm<Data> {
     }
 
     /// Records the inference-mode expression over the `[batch, features]`
-    /// value `input` on `network`: normalization by the supplied
+    /// value `input` on `tape`: normalization by the supplied
     /// `[features]` statistics instead of the batch's own.
     ///
     /// Record `mean` and `variance` as per-run inputs and feed the
@@ -131,32 +131,32 @@ impl<Data: Tensorial> BatchNorm<Data> {
     /// expression serves every generation of the estimates.
     ///
     /// # Panics
-    /// Panics if the values are not allocated on `network`, `input` is
+    /// Panics if the values are not allocated on `tape`, `input` is
     /// not a rank-2 `[batch, features]` value agreeing with the
     /// parameters on the feature count, or the statistics are not
     /// `[features]` values.
-    pub fn express_with<'network>(
+    pub fn express_with<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-        mean: Value<'network, Data>,
-        variance: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+        mean: Value<'tape, Data>,
+        variance: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         let centered = input - mean.broadcast_along(0, input);
-        self.normalize(network, centered, variance)
+        self.normalize(tape, centered, variance)
     }
 
     /// Records the shared tail of both expressions: division by the
     /// epsilon-stabilized deviation and the learned affine.
-    fn normalize<'network>(
+    fn normalize<'tape>(
         &self,
-        network: &'network Network<Data>,
-        centered: Value<'network, Data>,
-        variance: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        let scale = network.resolve(self.scale);
-        let shift = network.resolve(self.shift);
-        let epsilon = network.resolve(self.epsilon);
+        tape: &'tape Tape<Data>,
+        centered: Value<'tape, Data>,
+        variance: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        let scale = tape.resolve(self.scale);
+        let shift = tape.resolve(self.shift);
+        let epsilon = tape.resolve(self.epsilon);
         let centered_shape = centered.shape();
         let scale_shape = scale.shape();
         assert_eq!(
@@ -185,13 +185,13 @@ impl<Data: Tensorial> BatchNorm<Data> {
 /// [`Run`](crate::Run) to maintain the running
 /// estimates that [`BatchNorm::express_with`] consumes at inference.
 #[derive(Debug)]
-pub struct Normalization<'network, Data> {
+pub struct Normalization<'tape, Data> {
     /// The normalized, affine-transformed `[batch, features]` output.
-    pub output: Value<'network, Data>,
+    pub output: Value<'tape, Data>,
     /// The batch's per-feature `[features]` mean.
-    pub mean: Value<'network, Data>,
+    pub mean: Value<'tape, Data>,
     /// The batch's per-feature `[features]` biased variance.
-    pub variance: Value<'network, Data>,
+    pub variance: Value<'tape, Data>,
 }
 
 // Manual implementations avoid the `Data: Copy` bound a derive would
@@ -234,14 +234,14 @@ impl<Data: Differentiable> BatchNorm<Data> {
 }
 
 impl<Data: Tensorial> Module<Data> for BatchNormInference<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        let mean = network.resolve(self.mean);
-        let variance = network.resolve(self.variance);
-        self.norm.express_with(network, input, mean, variance)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        let mean = tape.resolve(self.mean);
+        let variance = tape.resolve(self.variance);
+        self.norm.express_with(tape, input, mean, variance)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {

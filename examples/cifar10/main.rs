@@ -3,8 +3,8 @@
 //! real 32x32 color images, a dense head, and `cross_entropy`,
 //! compiled once into a training plan and a forward-only probe plan.
 //!
-//! The training plan retains what `backward` reads and survives every
-//! generation; the probe plan's liveness pass frees each intermediate
+//! The training plan retains what `backward` reads and outlives every
+//! training step; the probe plan's liveness pass frees each intermediate
 //! after its last consumer, which is what keeps the 500-image probe's
 //! footprint flat. Both print through `Plan::describe`'s summary at
 //! startup, and every convolution runs as one im2col matrix product.
@@ -20,8 +20,8 @@ mod dataset;
 use std::time::Instant;
 
 use topos::{
-    Compile, Conv2d, Linear, Module, Network, Plan, Shape, Symbol, Tensor, Tensorial, Value,
-    cross_entropy, init, max_pool,
+    Compile, Conv2d, Linear, Module, Parameters, Plan, Shape, Symbol, Tape, Tensor, Tensorial,
+    Value, cross_entropy, init, max_pool,
 };
 
 use chart::loss_chart;
@@ -51,7 +51,7 @@ const FLAT_LEN: usize = FILTERS[2] * (IMAGE_SIDE / 8) * (IMAGE_SIDE / 8);
 /// How many training steps to run: about two and a half epochs.
 const STEPS: usize = 2000;
 
-/// The model's layers, holding parameter symbols across generations.
+/// The model's layers, holding parameter symbols.
 struct Model {
     conv_1: Conv2d<Tensor<f32>>,
     conv_2: Conv2d<Tensor<f32>>,
@@ -60,10 +60,10 @@ struct Model {
 }
 
 impl Model {
-    /// Allocates the parameters on `network`: three 3x3 same-padded
+    /// Allocates the parameters on `tape`: three 3x3 same-padded
     /// convolution stages with Kaiming-scaled kernels and zero biases,
     /// and an affine classification head.
-    fn new(network: &Network<Tensor<f32>>) -> Self {
+    fn new(tape: &Tape<Tensor<f32>>) -> Self {
         // Kaiming deviations by kernel fan-in: `sqrt(2 / (c * kh * kw))`.
         let conv_1_weights =
             init::normal(21, (2.0 / 27.0_f64).sqrt())(&Shape::new([FILTERS[0], 3, 3, 3]));
@@ -74,28 +74,28 @@ impl Model {
         let mut head_weights = init::kaiming(24);
         Self {
             conv_1: Conv2d::new(
-                network,
+                tape,
                 conv_1_weights,
                 Tensor::filled([FILTERS[0]], 0.0),
                 1,
                 1,
             ),
             conv_2: Conv2d::new(
-                network,
+                tape,
                 conv_2_weights,
                 Tensor::filled([FILTERS[1]], 0.0),
                 1,
                 1,
             ),
             conv_3: Conv2d::new(
-                network,
+                tape,
                 conv_3_weights,
                 Tensor::filled([FILTERS[2]], 0.0),
                 1,
                 1,
             ),
             head: Linear::new(
-                network,
+                tape,
                 head_weights(&Shape::new([FLAT_LEN, CLASSES])),
                 head_weights(&Shape::new([CLASSES])),
             ),
@@ -105,17 +105,16 @@ impl Model {
     /// Records the model's expression over `images` (`[rows, 3, 32,
     /// 32]`) and returns the `[rows, 10]` logits: conv, rectify, pool,
     /// three times, then flatten and score.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Tensor<f32>>,
-        images: Value<'network, Tensor<f32>>,
+        tape: &'tape Tape<Tensor<f32>>,
+        images: Value<'tape, Tensor<f32>>,
         rows: usize,
-    ) -> Value<'network, Tensor<f32>> {
-        let stage_1 = max_pool(self.conv_1.express(network, images).relu(), 2, 2);
-        let stage_2 = max_pool(self.conv_2.express(network, stage_1).relu(), 2, 2);
-        let stage_3 = max_pool(self.conv_3.express(network, stage_2).relu(), 2, 2);
-        self.head
-            .express(network, stage_3.reshape([rows, FLAT_LEN]))
+    ) -> Value<'tape, Tensor<f32>> {
+        let stage_1 = max_pool(self.conv_1.express(tape, images).relu(), 2, 2);
+        let stage_2 = max_pool(self.conv_2.express(tape, stage_1).relu(), 2, 2);
+        let stage_3 = max_pool(self.conv_3.express(tape, stage_2).relu(), 2, 2);
+        self.head.express(tape, stage_3.reshape([rows, FLAT_LEN]))
     }
 }
 
@@ -135,7 +134,7 @@ fn batch_payloads(split: &Split, indices: &[usize]) -> (Tensor<f32>, Tensor<f32>
 /// Counts correct predictions over `PROBE_LEN` test images from `start`,
 /// one probe-plan run.
 fn probe_correct(
-    network: &Network<Tensor<f32>>,
+    parameters: &Parameters<Tensor<f32>>,
     probe_plan: &Plan<Tensor<f32>>,
     images_symbol: Symbol,
     logits_symbol: Symbol,
@@ -144,8 +143,8 @@ fn probe_correct(
 ) -> usize {
     let indices: Vec<usize> = (start..start + PROBE_LEN).collect();
     let (images, _) = batch_payloads(test, &indices);
-    let run = probe_plan.forward(network, [(images_symbol, images)]);
-    let logits = run.of(network.resolve(logits_symbol)).to_vec();
+    let run = probe_plan.forward(parameters, [(images_symbol, images)]);
+    let logits = run.of(logits_symbol).to_vec();
     let mut correct = 0;
     for (row, &index) in logits.chunks(CLASSES).zip(&indices) {
         let predicted = row
@@ -169,36 +168,40 @@ fn main() {
         test.len()
     );
 
-    let network = Network::new();
-    let model = Model::new(&network);
+    let tape = Tape::new();
+    let model = Model::new(&tape);
 
     // The training expression: images and one-hot targets are fed per
     // run, the defaults only fix the shapes.
-    let images = network.input(Tensor::filled(
+    let images = tape.input(Tensor::filled(
         [BATCH_LEN, 3, IMAGE_SIDE, IMAGE_SIDE],
         0.0_f32,
     ));
-    let targets = network.input(Tensor::selection(vec![0; BATCH_LEN], CLASSES, 1.0));
-    let loss = cross_entropy(model.express(&network, images, BATCH_LEN), targets);
+    let targets = tape.input(Tensor::selection(vec![0; BATCH_LEN], CLASSES, 1.0));
+    let loss = cross_entropy(model.express(&tape, images, BATCH_LEN), targets);
 
     // The accuracy twin over a probe of test images.
-    let probe_images = network.input(Tensor::filled(
+    let probe_images = tape.input(Tensor::filled(
         [PROBE_LEN, 3, IMAGE_SIDE, IMAGE_SIDE],
         0.0_f32,
     ));
-    let probe_logits = model.express(&network, probe_images, PROBE_LEN);
+    let probe_logits = model.express(&tape, probe_images, PROBE_LEN);
 
-    let images_symbol = images.symbol();
-    let targets_symbol = targets.symbol();
-    let loss_symbol = loss.symbol();
-    let probe_images_symbol = probe_images.symbol();
-    let probe_logits_symbol = probe_logits.symbol();
-    let recorded_nodes = network.len();
+    let (images, targets, loss, probe_images, probe_logits) = (
+        images.symbol(),
+        targets.symbol(),
+        loss.symbol(),
+        probe_images.symbol(),
+        probe_logits.symbol(),
+    );
+    let recorded_nodes = tape.len();
     println!("recorded {recorded_nodes} nodes for both expressions");
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
-    // Compile once, run every generation.
-    let training_plan = network.compile(Compile::roots([loss_symbol]).engine_backward());
-    let probe_plan = network.compile(Compile::roots([probe_logits_symbol]));
+    // Compile once, run every step.
+    let training_plan = network.compile(Compile::roots([loss]).engine_backward());
+    let probe_plan = network.compile(Compile::roots([probe_logits]));
     for line in probe_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")
     }) {
@@ -211,7 +214,6 @@ fn main() {
 
     let fast = Tensor::new([], [0.05_f32]);
     let slow = Tensor::new([], [0.005_f32]);
-    let mut network = network;
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..STEPS {
@@ -219,33 +221,29 @@ fn main() {
         let batch = &order[start..start + BATCH_LEN];
         let (batch_images, batch_targets) = batch_payloads(&train, batch);
 
-        let loss_value = network.resolve(loss_symbol);
         let run = training_plan.forward(
-            &network,
-            [
-                (images_symbol, batch_images),
-                (targets_symbol, batch_targets),
-            ],
+            &parameters,
+            [(images, batch_images), (targets, batch_targets)],
         );
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step == 0 {
             println!(
                 "step 0: minibatch loss = {batch_loss:.4} (a uniform model costs ln 10 ~ 2.30)"
             );
         }
-        let gradients = run.backward(loss_value);
+        let gradients = run.backward(loss);
         let learning_rate = if step < STEPS * 3 / 4 { &fast } else { &slow };
-        network = network.update(&gradients, |parameter, gradient| {
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
 
         if (step + 1) % 250 == 0 {
             let correct = probe_correct(
-                &network,
+                &parameters,
                 &probe_plan,
-                probe_images_symbol,
-                probe_logits_symbol,
+                probe_images,
+                probe_logits,
                 &test,
                 0,
             );
@@ -266,10 +264,10 @@ fn main() {
     let correct: usize = (0..test.len() / PROBE_LEN)
         .map(|chunk| {
             probe_correct(
-                &network,
+                &parameters,
                 &probe_plan,
-                probe_images_symbol,
-                probe_logits_symbol,
+                probe_images,
+                probe_logits,
                 &test,
                 chunk * PROBE_LEN,
             )

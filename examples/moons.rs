@@ -15,7 +15,7 @@ use std::f32::consts::PI;
 use std::time::Instant;
 
 use malevich::{Cells, Frame, Line, Plot, Points};
-use topos::{Mlp, Network, Shape, Tensor, Tensorial, init};
+use topos::{Mlp, Shape, Tape, Tensor, Tensorial, init};
 
 /// How many points each half-moon holds.
 const MOON_LEN: usize = 100;
@@ -72,12 +72,12 @@ fn main() {
     let mut target_values = vec![1.0_f32; MOON_LEN];
     target_values.extend(vec![-1.0; MOON_LEN]);
 
-    let network: Network<Tensor<f32>> = Network::new();
-    let mlp = Mlp::new(&network, &[2, 16, 16, 1], init::xavier(7));
+    let tape: Tape<Tensor<f32>> = Tape::new();
+    let mlp = Mlp::new(&tape, &[2, 16, 16, 1], init::xavier(7));
 
-    let input = network.input(Tensor::new([2 * MOON_LEN, 2], feature_values));
-    let expected = network.input(Tensor::new([2 * MOON_LEN, 1], target_values.clone()));
-    let predicted = mlp.express(&network, input);
+    let input = tape.input(Tensor::new([2 * MOON_LEN, 2], feature_values));
+    let expected = tape.input(Tensor::new([2 * MOON_LEN, 1], target_values.clone()));
+    let predicted = mlp.express(&tape, input);
     let error = predicted - expected;
     let loss = (error * error).sum();
 
@@ -93,15 +93,19 @@ fn main() {
             surface_centers.push(Y_SPAN.0 + fraction_y * (Y_SPAN.1 - Y_SPAN.0));
         }
     }
-    let surface_input = network.input(Tensor::new(
+    let surface_input = tape.input(Tensor::new(
         [SURFACE_COLUMNS * SURFACE_ROWS, 2],
         surface_centers,
     ));
-    let surface_predicted = mlp.express(&network, surface_input);
+    let surface_predicted = mlp.express(&tape, surface_input);
 
-    let predicted_symbol = predicted.symbol();
-    let surface_symbol = surface_predicted.symbol();
-    let loss_symbol = loss.symbol();
+    let (predicted, surface_predicted, loss) = (
+        predicted.symbol(),
+        surface_predicted.symbol(),
+        loss.symbol(),
+    );
+    let network = tape.into_network();
+    let mut parameters = network.parameters();
 
     println!(
         "{}",
@@ -115,19 +119,17 @@ fn main() {
     );
 
     let learning_rate = Tensor::new([], [0.0003]);
-    let mut network = network;
     let mut losses = Vec::new();
     let training = Instant::now();
     for step in 0..STEP_COUNT {
-        let loss_value = network.resolve(loss_symbol);
-        let run = network.forward();
-        let batch_loss = run.of(loss_value).to_vec()[0];
+        let run = network.forward(&parameters, []);
+        let batch_loss = run.of(loss).to_vec()[0];
         losses.push(batch_loss);
         if step % (STEP_COUNT / 5) == 0 {
             println!("step {step:4}: loss = {batch_loss:.4}");
         }
-        let gradients = run.backward(loss_value);
-        network = network.update(&gradients, |parameter, gradient| {
+        let gradients = run.backward(loss);
+        parameters = parameters.step(&gradients, |parameter, gradient| {
             parameter.clone() - gradient.clone() * learning_rate.broadcast_like(gradient)
         });
     }
@@ -150,9 +152,9 @@ fn main() {
 
     // One forward serves both readouts: the training points' signs for
     // the accuracy line and the grid twin for the surface chart.
-    let run = network.forward();
+    let run = network.forward(&parameters, []);
     let classified = run
-        .of(network.resolve(predicted_symbol))
+        .of(predicted)
         .to_vec()
         .iter()
         .zip(&target_values)
@@ -163,7 +165,7 @@ fn main() {
         2 * MOON_LEN
     );
 
-    let surface = run.of(network.resolve(surface_symbol)).to_vec();
+    let surface = run.of(surface_predicted).to_vec();
     println!(
         "{}",
         Plot::new()

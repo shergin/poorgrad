@@ -1,4 +1,4 @@
-use crate::{Gradients, Network, Tensorial, Value};
+use crate::{Gradients, Parameters, Symbol, Tensorial};
 
 use super::Optimizer;
 use super::optimizer::assert_single_value;
@@ -88,12 +88,12 @@ impl<Data: Tensorial> Adam<Data> {
 impl<Data: Tensorial> Optimizer<Data> for Adam<Data> {
     fn step(
         &mut self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         gradients: &Gradients<Data>,
         learning_rate: &Data,
-    ) -> Network<Data> {
+    ) -> Parameters<Data> {
         let direction = self.direction(gradients);
-        network.update(&direction, |parameter, direction| {
+        parameters.step(&direction, |parameter, direction| {
             parameter.clone() - direction.clone() * learning_rate.broadcast_like(direction)
         })
     }
@@ -106,8 +106,8 @@ impl<Data: Tensorial> Optimizer<Data> for Adam<Data> {
 /// The default policy is structural, needing no registry: decay
 /// applies to parameters of rank two and above (weights) and never to
 /// rank-one parameters (biases, norm gains) — the standard convention,
-/// decided per parameter from its recorded shape through the
-/// identity-aware [`Network::update_each`]. Any other policy is a
+/// decided per parameter from its payload's shape through the
+/// identity-aware [`Parameters::step_each`]. Any other policy is a
 /// caller predicate through [`AdamW::step_where`].
 #[derive(Debug, Clone)]
 pub struct AdamW<Data> {
@@ -132,19 +132,20 @@ impl<Data: Tensorial> AdamW<Data> {
     /// Steps like [`Optimizer::step`] with `policy` deciding, per
     /// parameter, whether decay applies — for conventions the default
     /// structural rule does not express (a symbol set works, since
-    /// [`Symbol`](crate::Symbol) is `Eq + Hash`).
+    /// [`Symbol`] is `Eq + Hash`; the current payload carries the
+    /// parameter's shape).
     pub fn step_where(
         &mut self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         gradients: &Gradients<Data>,
         learning_rate: &Data,
-        mut policy: impl FnMut(Value<'_, Data>) -> bool,
-    ) -> Network<Data> {
+        mut policy: impl FnMut(Symbol, &Data) -> bool,
+    ) -> Parameters<Data> {
         let direction = self.adam.direction(gradients);
-        network.update_each(&direction, |parameter, current, direction| {
+        parameters.step_each(&direction, |symbol, current, direction| {
             let stepped =
                 current.clone() - direction.clone() * learning_rate.broadcast_like(direction);
-            if policy(parameter) {
+            if policy(symbol, current) {
                 let decayed = current.clone()
                     * self.decay.broadcast_like(current)
                     * learning_rate.broadcast_like(current);
@@ -159,11 +160,11 @@ impl<Data: Tensorial> AdamW<Data> {
 impl<Data: Tensorial> Optimizer<Data> for AdamW<Data> {
     fn step(
         &mut self,
-        network: &Network<Data>,
+        parameters: &Parameters<Data>,
         gradients: &Gradients<Data>,
         learning_rate: &Data,
-    ) -> Network<Data> {
-        self.step_where(network, gradients, learning_rate, |parameter| {
+    ) -> Parameters<Data> {
+        self.step_where(parameters, gradients, learning_rate, |_, parameter| {
             parameter.shape().rank() >= 2
         })
     }

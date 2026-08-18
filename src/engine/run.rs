@@ -5,9 +5,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{
-    Designation, Field, Function, Gradients, Misbinding, Structure, Value, ValueRef, Witness,
-};
+use super::{Field, Function, Gradients, Origin, Structure, Symbol};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -59,16 +57,15 @@ impl Posture {
     }
 }
 
-/// The materialized payloads of one forward run over a `Network`.
+/// The materialized payloads of one forward run.
 ///
-/// A run is immutable, per-run state: the graph structure frozen
-/// at the start of the run and the payloads that run produced. It carries
-/// no borrow of the network — kinship is checked through the same
-/// [`Witness`] a [`Field`] uses — so runs outlive the generation
-/// that produced them and can be stashed, moved, or differentiated
-/// concurrently without pinning a `Network`. Later recordings and
-/// parameter updates do not change its values or the operations
-/// differentiated by [`Run::backward`].
+/// A run is immutable, per-run state: the graph structure frozen at
+/// the start of the run and the payloads that run produced. It borrows
+/// nothing — kinship is the same origin-and-coverage check every
+/// detached carrier makes — so runs can be stashed, moved, or
+/// differentiated concurrently without pinning a [`Network`](crate::Network),
+/// and a reopened tape recording new nodes does not change its values
+/// or the operations differentiated by [`Run::backward`].
 #[derive(Debug)]
 pub struct Run<Data> {
     /// Frozen node columns for this run: functions, operands, and the
@@ -81,7 +78,7 @@ pub struct Run<Data> {
 impl<Data: Differentiable> Run<Data> {
     pub(crate) fn new(
         structure: Structure<Data>,
-        witness: Witness,
+        origin: Origin,
         values: Vec<Data>,
         posture: Posture,
     ) -> Self {
@@ -91,7 +88,7 @@ impl<Data: Differentiable> Run<Data> {
         }
         Self {
             structure,
-            field: Field::new(witness, values),
+            field: Field::new(origin, values),
             posture,
         }
     }
@@ -105,43 +102,35 @@ impl<Data: Differentiable> Run<Data> {
         }
     }
 
-    /// Locates `value` in this run's slots through the field's one
-    /// kinship probe ([`Field::locate`]), formatting misbindings into
-    /// this run's own panic messages.
-    fn locate(&self, value: impl ValueRef<Data>) -> usize {
-        let designation = value.designation();
-        let subject = match &designation {
-            Designation::Bound { .. } => "value",
-            Designation::Named(_) => "symbol",
-        };
-        match self.field.locate(designation) {
-            Ok(index) => index,
-            Err(Misbinding::ForeignOrigin) => {
-                panic!("{subject} belongs to a different network lineage")
-            }
-            Err(Misbinding::DivergentBranch) => {
-                panic!("{subject} belongs to a divergent fork of the network")
-            }
-            Err(Misbinding::OutOfCoverage) => {
-                panic!("{subject} was allocated after this run")
-            }
-        }
-    }
-
-    /// Returns the computed payload of `value`, named by a bound
-    /// [`Value`] or a detached [`Symbol`](crate::Symbol).
-    ///
-    /// It is the shared read-back accessor of every position-indexed
-    /// buffer: runs, gradients, and fields all answer `of(value)`.
+    /// Locates `symbol` in this run's slots.
     ///
     /// # Panics
-    /// Panics if `value` belongs to a different lineage or a divergent
-    /// fork, was allocated after this run, or was skipped by
-    /// a target-sliced run (see
-    /// [`Network::forward_for`](crate::Network::forward_for)): a
+    /// Panics if `symbol` belongs to a different network or was
+    /// allocated after this run.
+    fn locate(&self, symbol: Symbol) -> usize {
+        assert!(
+            symbol.origin == self.field.origin(),
+            "symbol belongs to a different network"
+        );
+        assert!(
+            symbol.id.index() < self.field.len(),
+            "symbol was allocated after this run"
+        );
+        symbol.id.index()
+    }
+
+    /// Returns the computed payload of the value named by `symbol`.
+    ///
+    /// It is the shared read-back accessor of every position-indexed
+    /// buffer: runs, gradients, and fields all answer `of(symbol)`.
+    ///
+    /// # Panics
+    /// Panics if `symbol` belongs to a different network, was
+    /// allocated after this run, or was skipped by a target-sliced run
+    /// (see [`Network::forward_for`](crate::Network::forward_for)): a
     /// placeholder must never read as a result.
-    pub fn of(&self, value: impl ValueRef<Data>) -> &Data {
-        let index = self.locate(value);
+    pub fn of(&self, symbol: Symbol) -> &Data {
+        let index = self.locate(symbol);
         assert!(
             self.computed(index),
             "value was not computed by this target-sliced run; add it to the targets"
@@ -161,26 +150,23 @@ impl<Data: Differentiable> Run<Data> {
     /// payload from this run into the parameter's slot, with
     /// zeros everywhere else — the field [`Run::backward`]
     /// would produce for those parameters, when the gradients were
-    /// recorded by [`Network::differentiate`](crate::Network::differentiate)
+    /// recorded by [`Tape::differentiate`](crate::Tape::differentiate)
     /// instead of computed by the engine.
     ///
     /// It is the bridge from recorded gradients to
-    /// [`Network::update`](crate::Network::update): one forward run of
-    /// a compiled `[loss, gradients...]` plan yields the update
+    /// [`Parameters::step`](crate::Parameters::step): one forward run
+    /// of a compiled `[loss, gradients...]` plan yields the update
     /// direction with no backward pass at all, and the closure suite
     /// pins the two routes bitwise.
     ///
     /// # Panics
     /// Panics as [`Run::of`] panics for either half of a pair,
-    /// if a pair's first value is not a parameter, or if a gradient's
+    /// if a pair's first symbol is not a parameter, or if a gradient's
     /// payload shape differs from its parameter's recorded shape.
-    pub fn recorded_gradients<'value>(
+    pub fn recorded_gradients(
         &self,
-        pairs: impl IntoIterator<Item = (Value<'value, Data>, Value<'value, Data>)>,
-    ) -> Gradients<Data>
-    where
-        Data: 'value,
-    {
+        pairs: impl IntoIterator<Item = (Symbol, Symbol)>,
+    ) -> Gradients<Data> {
         let values = self.field.payloads();
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         for (parameter, gradient) in pairs {
@@ -191,17 +177,21 @@ impl<Data: Differentiable> Run<Data> {
                     Some(Function::Parameter(_))
                 ),
                 "recorded gradients pair each parameter with its gradient; the first \
-                 value of a pair is not a parameter"
+                 symbol of a pair is not a parameter"
             );
             let payload = self.of(gradient).clone();
             assert_eq!(
                 payload.shape(),
-                parameter.shape(),
+                self.structure
+                    .shapes
+                    .get(index)
+                    .expect("shapes cover the run")
+                    .clone(),
                 "recorded gradient shape does not match its parameter's"
             );
             gradients[index] = payload;
         }
-        Field::new(self.field.witness().clone(), gradients)
+        Field::new(self.field.origin(), gradients)
     }
 }
 
@@ -220,17 +210,16 @@ impl<Data: Tensorial> Run<Data> {
     /// value's gradient is exactly zero, and expressions the target does
     /// not depend on — including singular ones such as a division by
     /// zero, even when the target uses them purely as a shape or index
-    /// reference — cannot disturb the result. The run holds no
-    /// network borrow, so any number of threads can differentiate one
-    /// shared run for their own targets at once. Values recorded
-    /// after this run are absent from the result, exactly as
-    /// they are absent from `of`.
+    /// reference — cannot disturb the result. The run borrows nothing,
+    /// so any number of threads can differentiate one shared run for
+    /// their own targets at once. Values recorded after this run are
+    /// absent from the result, exactly as they are absent from `of`.
     ///
     /// # Panics
     /// Panics if `output` is not a scalar, belongs to a different
-    /// lineage or divergent fork, was allocated after this run
-    /// ran, or was skipped by a target-sliced run.
-    pub fn backward(&self, output: impl ValueRef<Data>) -> Gradients<Data> {
+    /// network, was allocated after this run, or was skipped by a
+    /// target-sliced run.
+    pub fn backward(&self, output: Symbol) -> Gradients<Data> {
         let output_index = self.locate(output);
         let values = self.field.payloads();
         // A sliced run evaluates the whole ancestor closure of its
@@ -283,12 +272,12 @@ impl<Data: Tensorial> Run<Data> {
                 .structure
                 .functions
                 .get(index)
-                .expect("snapshot cannot shrink");
+                .expect("the freeze cannot shrink");
             let links = self
                 .structure
                 .operands
                 .get(index)
-                .expect("snapshot cannot shrink")
+                .expect("the freeze cannot shrink")
                 .as_slice();
             // Every payload a derivative rule reads is present:
             // interpreter runs hold everything, and engine-backward
@@ -315,7 +304,7 @@ impl<Data: Tensorial> Run<Data> {
                 }
             }
         }
-        Field::new(self.field.witness().clone(), gradients)
+        Field::new(self.field.origin(), gradients)
     }
 }
 

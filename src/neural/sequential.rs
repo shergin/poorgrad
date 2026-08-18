@@ -1,4 +1,4 @@
-use crate::{Network, Tensorial, Value};
+use crate::{Tape, Tensorial, Value};
 
 use super::{Module, Segment, Visitor};
 
@@ -44,14 +44,14 @@ impl<Data: Tensorial> Default for Sequential<Data> {
 }
 
 impl<Data: Tensorial> Module<Data> for Sequential<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         self.stages
             .iter()
-            .fold(input, |value, stage| stage.express(network, value))
+            .fold(input, |value, stage| stage.express(tape, value))
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {

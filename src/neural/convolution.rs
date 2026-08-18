@@ -14,7 +14,7 @@ use std::marker::PhantomData;
 
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Symbol, Tensorial, Value};
+use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -50,13 +50,13 @@ assert_impl_all!(Conv2d<f64>: Send, Sync);
 /// Panics if the values belong to different networks, the ranks are
 /// not 4/4/1, the channel or filter counts disagree, `stride` is zero,
 /// or the padded extents cannot hold one kernel window.
-pub fn conv2d<'network, Data: Tensorial>(
-    input: Value<'network, Data>,
-    weights: Value<'network, Data>,
-    bias: Value<'network, Data>,
+pub fn conv2d<'tape, Data: Tensorial>(
+    input: Value<'tape, Data>,
+    weights: Value<'tape, Data>,
+    bias: Value<'tape, Data>,
     stride: usize,
     padding: usize,
-) -> Value<'network, Data> {
+) -> Value<'tape, Data> {
     let input_shape = input.shape();
     let weights_shape = weights.shape();
     let bias_shape = bias.shape();
@@ -139,7 +139,7 @@ pub fn conv2d<'network, Data: Tensorial>(
 /// conceptual shape; `express` records the formula, including the
 /// weight-side `permute` + `reshape` to the GEMM operand. Parameters
 /// are stored as [`Symbol`]s and resolved when the expression is
-/// recorded in a compatible [`Network`] generation, like
+/// recorded on the family's [`Tape`], like
 /// [`Layer`](super::Layer).
 #[derive(Debug, Clone)]
 pub struct Conv2d<Data> {
@@ -151,7 +151,7 @@ pub struct Conv2d<Data> {
 }
 
 impl<Data: Differentiable> Conv2d<Data> {
-    /// Allocates the layer's parameters on `network` from their initial
+    /// Allocates the layer's parameters on `tape` from their initial
     /// payloads and returns the layer.
     ///
     /// `weights` is a rank-4 `[filters, channels, kernel_height,
@@ -163,7 +163,7 @@ impl<Data: Differentiable> Conv2d<Data> {
     /// Panics if `weights` is not rank 4, `bias` is not rank 1, the two
     /// disagree on filters, or `stride` is zero.
     pub fn new(
-        network: &Network<Data>,
+        tape: &Tape<Data>,
         weights: Data,
         bias: Data,
         stride: usize,
@@ -189,8 +189,8 @@ impl<Data: Differentiable> Conv2d<Data> {
         );
         assert!(stride > 0, "conv2d stride must be positive");
         Self {
-            weights: network.parameter(weights).symbol(),
-            bias: network.parameter(bias).symbol(),
+            weights: tape.parameter(weights).symbol(),
+            bias: tape.parameter(bias).symbol(),
             stride,
             padding,
             _marker: PhantomData,
@@ -206,19 +206,19 @@ impl<Data: Differentiable> Conv2d<Data> {
 
 impl<Data: Tensorial> Conv2d<Data> {
     /// Records the layer's expression over the `[batch, channels,
-    /// height, width]` value `input` on `network` and returns the
+    /// height, width]` value `input` on `tape` and returns the
     /// `[batch, filters, out_height, out_width]` output value.
     ///
     /// # Panics
     /// Panics as documented on [`conv2d`], or if the layer's parameters
-    /// or `input` are not allocated on `network`.
-    pub fn express<'network>(
+    /// or `input` are not allocated on `tape`.
+    pub fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        let weights = network.resolve(self.weights);
-        let bias = network.resolve(self.bias);
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        let weights = tape.resolve(self.weights);
+        let bias = tape.resolve(self.bias);
         conv2d(input, weights, bias, self.stride, self.padding)
     }
 }
@@ -241,12 +241,12 @@ impl<Data: Differentiable> Conv2d<Data> {
 }
 
 impl<Data: Tensorial> Module<Data> for Conv2d<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        Conv2d::express(self, network, input)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        Conv2d::express(self, tape, input)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {

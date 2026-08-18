@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Symbol, Tensorial, Value};
+use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
 use super::{Module, Visitor};
 
@@ -19,8 +19,8 @@ assert_impl_all!(Linear<f64>: Send, Sync);
 /// one `[outputs]` parameter. The bias is broadcast explicitly across
 /// the batch axis, so expressing the transform records a small, fixed
 /// number of graph nodes regardless of parameter count. Parameters
-/// are stored as [`Symbol`]s and resolved when the module records in
-/// a compatible [`Network`] generation.
+/// are stored as [`Symbol`]s and resolved when the module records on
+/// the family's [`Tape`].
 #[derive(Debug, Clone)]
 pub struct Linear<Data> {
     weights: Symbol,
@@ -29,7 +29,7 @@ pub struct Linear<Data> {
 }
 
 impl<Data: Differentiable> Linear<Data> {
-    /// Allocates the transform's parameters on `network` from their
+    /// Allocates the transform's parameters on `tape` from their
     /// initial payloads and returns the module.
     ///
     /// The shapes are taken from the payloads: `weights` must be a
@@ -41,7 +41,7 @@ impl<Data: Differentiable> Linear<Data> {
     /// # Panics
     /// Panics if `weights` is not rank 2, `bias` is not rank 1, or the
     /// two disagree on the number of outputs.
-    pub fn new(network: &Network<Data>, weights: Data, bias: Data) -> Self {
+    pub fn new(tape: &Tape<Data>, weights: Data, bias: Data) -> Self {
         let weights_shape = weights.shape();
         let bias_shape = bias.shape();
         assert_eq!(
@@ -60,8 +60,8 @@ impl<Data: Differentiable> Linear<Data> {
             "linear weights {weights_shape} and bias {bias_shape} disagree on outputs"
         );
         Self {
-            weights: network.parameter(weights).symbol(),
-            bias: network.parameter(bias).symbol(),
+            weights: tape.parameter(weights).symbol(),
+            bias: tape.parameter(bias).symbol(),
             _marker: PhantomData,
         }
     }
@@ -101,15 +101,15 @@ impl<Data: Tensorial> Module<Data> for Linear<Data> {
     ///
     /// # Panics
     /// Panics if the parameters or `input` are not allocated on
-    /// `network`, or if `input` and the weights are not compatible
+    /// `tape`, or if `input` and the weights are not compatible
     /// rank-2 matrices.
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        let weights = network.resolve(self.weights);
-        let bias = network.resolve(self.bias);
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        let weights = tape.resolve(self.weights);
+        let bias = tape.resolve(self.bias);
         let product = input.matmul(weights);
         // The bias is repeated across the batch axis; its gradient sums
         // back along the same axis, one contribution per sample.

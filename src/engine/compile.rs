@@ -1,8 +1,4 @@
-use std::marker::PhantomData;
-
-use crate::Differentiable;
-
-use super::{Designation, Symbol, Value, ValueRef};
+use super::Symbol;
 
 /// A compile request: the explicit product of what a plan computes.
 ///
@@ -11,16 +7,22 @@ use super::{Designation, Symbol, Value, ValueRef};
 /// extra interior values to observe (readable after a run, alongside
 /// the roots), and whether run buffers support the engine reverse
 /// scan ([`Compile::engine_backward`]). The builder never touches the
-/// tape: recorded gradients enter as ordinary roots, produced by a
-/// visible [`Network::differentiate`](crate::Network::differentiate)
+/// graph: recorded gradients enter as ordinary roots, produced by a
+/// visible [`Tape::differentiate`](crate::Tape::differentiate)
 /// beforehand, so a request is cheap and re-runnable.
+///
+/// Roots and observes are detached [`Symbol`]s; a [`Value`](crate::Value)
+/// still in scope converts through `Into<Symbol>`, and validation
+/// happens when [`Network::compile`](crate::Network::compile) resolves
+/// them.
 ///
 /// # Examples
 /// ```
-/// # use topos::{Compile, Network};
-/// # let network = Network::new();
-/// # let weight = network.parameter(1.0_f64);
-/// # let loss = (weight * weight).sum();
+/// # use topos::{Compile, Tape};
+/// # let tape = Tape::new();
+/// # let weight = tape.parameter(1.0_f64);
+/// # let loss = (weight * weight).sum().symbol();
+/// # let network = tape.into_network();
 /// // Pure inference: a forward-only plan over one root.
 /// let inference = network.compile(Compile::roots([loss]));
 ///
@@ -30,35 +32,28 @@ use super::{Designation, Symbol, Value, ValueRef};
 /// assert!(training.can_backward());
 /// ```
 #[derive(Debug, Clone)]
-pub struct Compile<Data> {
+pub struct Compile {
     pub(crate) roots: Vec<Symbol>,
     pub(crate) observe: Vec<Symbol>,
     pub(crate) engine_backward: bool,
-    /// The payload type the request compiles for: roots are detached
-    /// `Symbol`s, so nothing else pins `Data` until the network does.
-    payload: PhantomData<fn() -> Data>,
 }
 
-impl<Data: Differentiable> Compile<Data> {
+impl Compile {
     /// Opens a request over `roots`, the closure sources a run must
-    /// compute; every root is readable after a run. References
-    /// detach to [`Symbol`]s immediately and are validated against
-    /// the network when [`Network::compile`](crate::Network::compile)
-    /// resolves them.
-    pub fn roots(roots: impl IntoIterator<Item = impl ValueRef<Data>>) -> Self {
+    /// compute; every root is readable after a run.
+    pub fn roots(roots: impl IntoIterator<Item = impl Into<Symbol>>) -> Self {
         Self {
-            roots: roots.into_iter().map(detach).collect(),
+            roots: roots.into_iter().map(Into::into).collect(),
             observe: Vec::new(),
             engine_backward: false,
-            payload: PhantomData,
         }
     }
 
     /// Adds interior values the caller also wants readable after a
     /// run; like roots, they seed the plan's reachability closure.
     /// Repeated calls accumulate.
-    pub fn observe(mut self, extra: impl IntoIterator<Item = impl ValueRef<Data>>) -> Self {
-        self.observe.extend(extra.into_iter().map(detach));
+    pub fn observe(mut self, extra: impl IntoIterator<Item = impl Into<Symbol>>) -> Self {
+        self.observe.extend(extra.into_iter().map(Into::into));
         self
     }
 
@@ -71,15 +66,5 @@ impl<Data: Differentiable> Compile<Data> {
     pub fn engine_backward(mut self) -> Self {
         self.engine_backward = true;
         self
-    }
-}
-
-/// Returns the detached name of `reference`: a symbol passes through,
-/// a bound proxy detaches through its own tape. Lineage and branch
-/// validation happens where the symbol is resolved, at compile time.
-fn detach<Data: Differentiable>(reference: impl ValueRef<Data>) -> Symbol {
-    match reference.designation() {
-        Designation::Bound { tape, id } => Value::bind(tape, id).symbol(),
-        Designation::Named(symbol) => symbol,
     }
 }

@@ -1,6 +1,6 @@
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Network, Shape, Symbol, Tensorial, Value};
+use crate::{Differentiable, Shape, Symbol, Tape, Tensorial, Value};
 
 use super::{Activation, Linear, Module, Segment, Visitor};
 
@@ -22,7 +22,7 @@ pub struct Mlp<Data> {
 }
 
 impl<Data: Differentiable> Mlp<Data> {
-    /// Allocates the perceptron's stages on `network` and returns it.
+    /// Allocates the perceptron's stages on `tape` and returns it.
     ///
     /// `sizes` lists the value widths from the input width to the
     /// output width. `initializer` produces the initial payload for
@@ -37,7 +37,7 @@ impl<Data: Differentiable> Mlp<Data> {
     /// [`Linear::new`] validation failures if initialized weights and
     /// biases do not form valid parameter shapes.
     pub fn new(
-        network: &Network<Data>,
+        tape: &Tape<Data>,
         sizes: &[usize],
         mut initializer: impl FnMut(&Shape) -> Data,
     ) -> Self {
@@ -50,7 +50,7 @@ impl<Data: Differentiable> Mlp<Data> {
             .map(|pair| {
                 let weights = initializer(&Shape::new([pair[0], pair[1]]));
                 let bias = initializer(&Shape::new([pair[1]]));
-                Linear::new(network, weights, bias)
+                Linear::new(tape, weights, bias)
             })
             .collect();
         Self { stages }
@@ -65,23 +65,23 @@ impl<Data: Differentiable> Mlp<Data> {
 
 impl<Data: Tensorial> Mlp<Data> {
     /// Records the perceptron's expression over the `[batch, inputs]`
-    /// value `input` on `network` and returns the `[batch, outputs]`
+    /// value `input` on `tape` and returns the `[batch, outputs]`
     /// output value.
     ///
     /// # Panics
-    /// Panics if the parameters or `input` are not allocated on `network`, or
+    /// Panics if the parameters or `input` are not allocated on `tape`, or
     /// if `input` and the initialized stage shapes are incompatible.
-    pub fn express<'network>(
+    pub fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
         let last = self.stages.len() - 1;
         self.stages
             .iter()
             .enumerate()
             .fold(input, |value, (index, stage)| {
-                let affine = Module::express(stage, network, value);
+                let affine = Module::express(stage, tape, value);
                 if index == last {
                     affine
                 } else {
@@ -92,12 +92,12 @@ impl<Data: Tensorial> Mlp<Data> {
 }
 
 impl<Data: Tensorial> Module<Data> for Mlp<Data> {
-    fn express<'network>(
+    fn express<'tape>(
         &self,
-        network: &'network Network<Data>,
-        input: Value<'network, Data>,
-    ) -> Value<'network, Data> {
-        Mlp::express(self, network, input)
+        tape: &'tape Tape<Data>,
+        input: Value<'tape, Data>,
+    ) -> Value<'tape, Data> {
+        Mlp::express(self, tape, input)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {
