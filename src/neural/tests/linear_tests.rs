@@ -54,22 +54,3 @@ fn express_records_the_affine_transform() {
     // no bundled activation.
     assert_eq!(run.of(output).to_vec(), vec![14.0, 26.0]);
 }
-
-#[test]
-fn from_symbols_ties_existing_parameters() {
-    let tape = Tape::new();
-    let original = Linear::new(
-        &tape,
-        Tensor::new([2, 2], [1.0_f64, 2.0, 3.0, 4.0]),
-        Tensor::new([2], [0.0, 0.0]),
-    );
-    let tied = Linear::from_symbols(original.weights(), original.bias());
-    assert_eq!(tape.len(), 2, "tying allocates nothing");
-
-    let input = tape.leaf(Tensor::new([1, 2], [1.0_f64, 1.0]));
-    let first = original.express(&tape, input).symbol();
-    let second = tied.express(&tape, input).symbol();
-    let network = tape.into_network();
-    let run = network.forward(&network.parameters(), []);
-    assert_eq!(run.of(first).to_vec(), run.of(second).to_vec());
-}

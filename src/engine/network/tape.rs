@@ -166,16 +166,6 @@ impl<Data: Differentiable> Tape<Data> {
         Value::bind(self, symbol.id)
     }
 
-    /// Resolves `symbol`, or returns `None` if it belongs to a
-    /// different network or is not allocated here: the probing form of
-    /// `resolve`.
-    pub fn try_resolve(&self, symbol: Symbol) -> Option<Value<'_, Data>> {
-        if symbol.origin != self.origin || symbol.id.index() >= self.len() {
-            return None;
-        }
-        Some(Value::bind(self, symbol.id))
-    }
-
     /// Returns the number of recorded nodes.
     pub fn len(&self) -> usize {
         self.lock().structure.len()

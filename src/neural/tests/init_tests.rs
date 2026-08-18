@@ -166,13 +166,6 @@ fn scaled_rejects_higher_ranks() {
 
 #[test]
 fn gains_state_the_standard_factors() {
-    assert_eq!(Activation::Identity.gain(), 1.0);
-    assert_eq!(Activation::Sigmoid.gain(), 1.0);
     assert_eq!(Activation::Tanh.gain(), 5.0 / 3.0);
     assert_eq!(Activation::Relu.gain(), 2.0_f64.sqrt());
-    assert_eq!(Activation::Elu.gain(), 2.0_f64.sqrt());
-    // The leaky slope of 1/100 barely lowers relu's factor.
-    let leaky = Activation::LeakyRelu.gain();
-    assert!(leaky < 2.0_f64.sqrt());
-    assert!((leaky - (2.0 / 1.0001_f64).sqrt()).abs() < 1e-12);
 }

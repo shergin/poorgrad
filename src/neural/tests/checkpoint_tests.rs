@@ -1,4 +1,6 @@
-use crate::{Activation, Linear, Module, Sequential, Tape, Tensor};
+use crate::{
+    Activation, Linear, Module, Segment, Sequential, Symbol, Tape, Tensor, Value, Visitor,
+};
 
 use super::{named_restore, named_snapshot, restore, snapshot};
 
@@ -108,21 +110,36 @@ fn named_restore_rejects_unexpected_entries() {
 
 #[test]
 fn tied_parameters_restore_once() {
+    /// One table announced under two paths, the way a tied head
+    /// shares an embedding's weights.
+    struct Tied(Symbol);
+    impl Module<Tensor<f64>> for Tied {
+        fn express<'tape>(
+            &self,
+            tape: &'tape Tape<Tensor<f64>>,
+            _input: Value<'tape, Tensor<f64>>,
+        ) -> Value<'tape, Tensor<f64>> {
+            tape.resolve(self.0)
+        }
+        fn visit(&self, visitor: &mut dyn Visitor) {
+            visitor.enter(Segment::Name("embedding"));
+            visitor.parameter("weights", self.0);
+            visitor.leave();
+            visitor.enter(Segment::Name("head"));
+            visitor.parameter("weights", self.0);
+            visitor.leave();
+        }
+    }
+
     let tape = Tape::new();
-    let head = Linear::new(
-        &tape,
-        Tensor::filled([2, 2], 0.5_f64),
-        Tensor::filled([2], 0.0),
-    );
-    let tied = Linear::from_symbols(head.weights(), head.bias());
-    let model = Sequential::new().then(head).then(tied);
+    let table = tape.parameter(Tensor::filled([2, 2], 0.5_f64)).symbol();
+    let model = Tied(table);
     let parameters = tape.into_network().parameters();
 
     let entries = named_snapshot(&parameters, &model);
     // One symbol under two paths: both entries are present, and the
     // restore takes the later one in visit order.
-    assert_eq!(entries.len(), 4);
+    assert_eq!(entries.len(), 2);
     let restored = named_restore(&parameters, &model, entries);
-    let payloads = snapshot(&restored, &model);
-    assert_eq!(payloads[0].to_vec(), vec![0.5; 4]);
+    assert_eq!(restored.of(table).to_vec(), vec![0.5; 4]);
 }

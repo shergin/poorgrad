@@ -62,6 +62,21 @@ The format is based on [Keep a Changelog], and this project adheres to
   What remains of graph identity at runtime is origin equality plus
   coverage: two integer compares.
 
+- The consumer-less quarter of the neural tier, retired by the
+  post-split audit under the consumers-before-machinery rule:
+  `Neuron` (the scalar teaching block no example used), `Residual`
+  (whose target consumers hand-roll pre-norm skips it cannot
+  express), `BatchNormInference`, the module wrappers `MaxPool`,
+  `AveragePool`, `Flatten`, and `Reshape` (their Sequential-composed
+  convnet consumer never appeared; the `max_pool` free function and
+  `Value::reshape` stay), the `average_pool` free function,
+  `Linear::from_symbols` (tying goes through exposed symbols, as
+  GPT-2's tied head does), `Activation`'s composed `Identity`,
+  `Sigmoid`, `LeakyRelu`, and `Elu` variants (the enum keeps the
+  dedicated `Tanh`/`Relu` pair; other activations are caller-side
+  compositions, like the GELU example), `Value::broadcast_pair`, and
+  `Tape::try_resolve`.
+
 ## [0.11.0] - 2026-08-17
 
 ### Changed

@@ -45,15 +45,6 @@ fn resolve_rejects_foreign_symbols() {
 }
 
 #[test]
-fn try_resolve_probes_without_panicking() {
-    let tape = Tape::new();
-    let weight = tape.parameter(2.0_f64);
-    let foreign = Tape::new().leaf(1.0_f64).symbol();
-    assert!(tape.try_resolve(weight.symbol()).is_some());
-    assert!(tape.try_resolve(foreign).is_none());
-}
-
-#[test]
 fn into_network_and_back_preserves_symbols_and_length() {
     let tape = Tape::new();
     let weight = tape.parameter(2.0_f64);

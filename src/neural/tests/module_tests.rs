@@ -1,9 +1,9 @@
-use crate::{Activation, Linear, Residual, Sequential, Tape, Tensor};
+use crate::{Activation, Linear, Sequential, Tape, Tensor};
 
 use super::{Module, named_parameters, parameters};
 
-/// Builds a small tree exercising positional segments, stateless
-/// stages, and `Residual` transparency.
+/// Builds a small tree exercising positional segments and stateless
+/// stages.
 fn tree(tape: &Tape<Tensor<f64>>) -> Sequential<Tensor<f64>> {
     let entry = Linear::new(
         tape,
@@ -18,7 +18,7 @@ fn tree(tape: &Tape<Tensor<f64>>) -> Sequential<Tensor<f64>> {
     Sequential::new()
         .then(entry)
         .then(Activation::Tanh)
-        .then(Residual(inner))
+        .then(inner)
 }
 
 #[test]
@@ -27,8 +27,8 @@ fn named_parameters_carry_dotted_paths() {
     let model = tree(&tape);
     let named = named_parameters(&model);
     let rendered: Vec<String> = named.iter().map(|(path, _)| path.to_string()).collect();
-    // The activation contributes nothing, and `Residual` is
-    // path-transparent: its inner parameters keep the stage's index.
+    // The activation contributes nothing, so the second linear stage
+    // keeps its positional index.
     assert_eq!(rendered, ["0.weights", "0.bias", "2.weights", "2.bias"]);
 }
 
@@ -50,8 +50,8 @@ fn sequential_expresses_through_dyn_stages() {
     let model = tree(&tape);
     let input = tape.leaf(Tensor::filled([2, 3], 0.5_f64));
     let output = model.express(&tape, input).symbol();
-    // Zero weights and biases: tanh(0) = 0, and the residual passes
-    // the zero through, so the output is exactly zero.
+    // Zero weights and biases: tanh(0) = 0, and the second affine
+    // stage maps it to zero again, so the output is exactly zero.
     let network = tape.into_network();
     let run = network.forward(&network.parameters(), []);
     assert_eq!(run.of(output).to_vec(), vec![0.0; 8]);

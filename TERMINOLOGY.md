@@ -252,8 +252,8 @@ valid across every `into_tape` round trip, because linear extension
 never moves a recorded node. Reads go through `Parameters::of`,
 `Run::of`, and `Field::of`; run-time naming (feeds, `backward` targets,
 compile roots and observes) speaks symbols; `Tape::resolve` turns one
-back into a proxy when a network reopens, with `try_resolve` as the
-probing form. Resolving a foreign symbol panics rather than misbinding:
+back into a proxy when a network reopens. Resolving a foreign symbol
+panics rather than misbinding:
 origin equality plus coverage are the two integer compares that remain
 of graph identity. In topos:
 [`Symbol`](src/engine/network/symbol.rs), obtained with `Value::symbol`.
@@ -647,10 +647,10 @@ module (a namespace): this is the ML term of art. In topos:
 
 **Sequential.** The ordered module chain: each stage's output feeds
 the next, stages heterogeneous behind `dyn Module`, appended with the
-boxing `then`. `Residual` is its skip-connection companion —
-`input + inner(input)`, path-transparent. In topos:
-[`Sequential`](src/neural/sequential.rs),
-[`Residual`](src/neural/residual.rs).
+boxing `then`. Skip connections stay hand-written where they are
+used — the pre-norm blocks of the transformer examples add around a
+normalized inner expression, a shape no generic wrapper fits. In
+topos: [`Sequential`](src/neural/sequential.rs).
 
 **Checkpoint.** A module tree's parameter payloads, captured and
 restored in two identities: positional (`snapshot`/`restore`, visit
@@ -661,24 +661,15 @@ require). A checkpoint is pure state, so both directions are plain
 `Parameters` transforms — no graph is touched, and nothing mutates. In
 topos: [`checkpoint`](src/neural/checkpoint.rs).
 
-**Neuron.** The smallest learnable unit: a weighted sum of inputs plus a
-bias, passed through an activation —
-`activation(weights . inputs + bias)`. Its parameters are allocated on a
-tape at construction but held as symbols, so the neuron itself is
-detached: it outlives the recording phase, and `express` records its
-expression whenever the family's tape is open. It is the scalar-granularity
-teaching block; `Linear` records at tensor granularity and does not
-build on it. In topos: [`Neuron`](src/neural/neuron.rs).
-
 **Linear.** The dense (fully connected) affine transform at tensor
 granularity: `x . w + b` over a `[batch, inputs]` value, with one
 `[inputs, outputs]` weight parameter and one `[outputs]` bias met
 through the explicit axis broadcast — a handful of tensor nodes
 instead of one node per scalar weight, and deliberately *unfused*: an
 activation is its own composition stage, which unlocks the orderings
-a bundled activation forbids. Detached like `Neuron`, and the
-weight-tying constructor `from_symbols` builds one over another
-module's parameters. In topos:
+a bundled activation forbids. Weight tying goes through the symbols a
+module already exposes, the way GPT-2's example records its head over
+the embedding table's transpose. In topos:
 [`Linear`](src/neural/linear.rs).
 
 **Mlp.** A multilayer perceptron: affine stages chained by a topology
@@ -734,13 +725,14 @@ code — it is `reshape`'s ordinary view-else-copy fallback firing on
 the overlapping window view.
 
 **Pooling.** Downsampling a spatial value by reducing each window to
-one number. In topos both pools compose over the same `unfold`
-windows: [`average_pool`](src/neural/pooling.rs) reduces with
-`mean_along`, and [`max_pool`](src/neural/pooling.rs) folds the
-window lanes with the binary `maximum`, left-biased, so a tied
-maximum routes its gradient to the earliest window position —
-deterministic, like every tie rule in the crate. No dedicated reduce
-opcode exists for pooling; a fused `MaxAlong` stays a deferred option.
+one number. In topos [`max_pool`](src/neural/pooling.rs) composes
+over the same `unfold` windows as convolution and folds the window
+lanes with the binary `maximum`, left-biased, so a tied maximum
+routes its gradient to the earliest window position — deterministic,
+like every tie rule in the crate. No dedicated reduce opcode exists
+for pooling (a fused `MaxAlong` stays a deferred option), and no
+other pooling flavor ships without a consumer: an average pool is one
+`mean_along` over the same windows, caller territory until then.
 
 **RMS normalization (RMSNorm).** Layer normalization without the
 centering and the shift: every sample is divided by the root mean
@@ -788,24 +780,22 @@ per-step argument — schedules stay caller-owned loop arithmetic. In
 topos: the [`Optimizer`](src/neural/optimizer.rs) trait and
 [`Adam`/`AdamW`](src/neural/adam.rs).
 
-**Activation.** The nonlinearity applied to a neuron's weighted sum, which
-is what gives stacked neurons expressive power beyond affine maps. It is a
+**Activation.** The nonlinearity applied to a stage's affine output,
+which is what gives stacked affine maps expressive power. It is a
 graph operation like any other, so it participates in differentiation
 (`Function::Tanh`, recorded by `Value::tanh`, whose derivative
 `1 - tanh(x)^2` reuses the node's own output; `Function::Relu`, recorded
 by `Value::relu`, whose gradient is masked by the 0/1 `step` indicator —
 a dedicated unary variant so the mask costs one node and no zero leaf
 per occurrence, while the rule reaches its zero at run time through
-`zero_like`). Beyond the dedicated pair, activations are short
-compositions whose gradients are the chain rule: `Sigmoid` as
-`(tanh(x / 2) + 1) / 2` (stable by inheritance where the naive
-exponential overflows), `LeakyRelu` as `maximum(x, x / 100)`, and
-`Elu` as `maximum(x, exp(-relu(-x)) - 1)` (the clamped exponent
-cannot overflow, and the left-biased tie keeps the subgradient at
-zero equal to one). Constants are integer `counted` ratios per the
-settled literal decision; arbitrary-constant activations stay caller
-territory, like GPT-2's GELU. In topos: the
-[`Activation`](src/neural/activation.rs) enum and its
+`zero_like`). The enum carries exactly that dedicated pair; every
+other activation is a short caller-side composition over the public
+surface whose gradient is the chain rule, the way GPT-2's example
+composes its GELU — the once-shipped `Sigmoid`, `LeakyRelu`, and
+`Elu` variants were retired when no consumer materialized. Each
+variant also states its initialization `gain`, the factor
+[`init::scaled`](src/neural/init.rs) compensates at initialization.
+In topos: the [`Activation`](src/neural/activation.rs) enum and its
 `Activation::express`.
 
 **Loss.** A scalar training objective written as a composed formula over

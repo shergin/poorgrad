@@ -4,8 +4,6 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
-use super::{Module, Visitor};
-
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(BatchNorm<f64>: Send, Sync);
@@ -207,45 +205,3 @@ impl<Data> Copy for Normalization<'_, Data> {}
 #[cfg(test)]
 #[path = "tests/batch_norm_tests.rs"]
 mod tests;
-
-/// The inference-mode module adapter of a [`BatchNorm`]:
-/// normalization by fixed statistic values named at construction —
-/// typically per-run inputs fed with the running estimates maintained
-/// during training — so the mode is visible where the chain is
-/// composed, never a hidden flag. Training mode is deliberately not a
-/// module: it returns the batch statistics besides the output, and a
-/// module must not hide values its caller needs.
-pub struct BatchNormInference<Data> {
-    norm: BatchNorm<Data>,
-    mean: Symbol,
-    variance: Symbol,
-}
-
-impl<Data: Differentiable> BatchNorm<Data> {
-    /// Returns the inference-mode module normalizing by the
-    /// `[features]` values named `mean` and `variance`.
-    pub fn inference(&self, mean: Symbol, variance: Symbol) -> BatchNormInference<Data> {
-        BatchNormInference {
-            norm: self.clone(),
-            mean,
-            variance,
-        }
-    }
-}
-
-impl<Data: Tensorial> Module<Data> for BatchNormInference<Data> {
-    fn express<'tape>(
-        &self,
-        tape: &'tape Tape<Data>,
-        input: Value<'tape, Data>,
-    ) -> Value<'tape, Data> {
-        let mean = tape.resolve(self.mean);
-        let variance = tape.resolve(self.variance);
-        self.norm.express_with(tape, input, mean, variance)
-    }
-
-    fn visit(&self, visitor: &mut dyn Visitor) {
-        visitor.parameter("scale", self.norm.scale);
-        visitor.parameter("shift", self.norm.shift);
-    }
-}

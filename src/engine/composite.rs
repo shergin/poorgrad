@@ -124,27 +124,6 @@ impl<'tape, Data: Tensorial> Value<'tape, Data> {
         }
         current
     }
-
-    /// Records both values broadcast to their common shape under the
-    /// right-aligned NumPy and TensorFlow rule, and returns the two proxies
-    /// in the operand order.
-    ///
-    /// The common shape takes the larger extent on every axis after trailing
-    /// alignment; a value already at that shape is returned unchanged. It is
-    /// the ergonomic entry for elementwise operations over unequal shapes:
-    /// `let (left, right) = left.broadcast_pair(right)` yields operands that
-    /// `add`, `mul`, and the other strict elementwise ops accept directly.
-    ///
-    /// # Panics
-    /// Panics if the values belong to different networks or their shapes do
-    /// not broadcast against each other.
-    pub fn broadcast_pair(self, other: Self) -> (Self, Self) {
-        let common = broadcasted_shape(&self.shape(), &other.shape());
-        (
-            self.broadcast_to(common.clone()),
-            other.broadcast_to(common),
-        )
-    }
 }
 
 /// Records the concatenation of `values` along `axis` and returns a proxy
@@ -210,40 +189,6 @@ pub fn stack<'tape, Data: Tensorial>(
     let lifted: Vec<Value<'tape, Data>> =
         values.iter().map(|&value| value.unsqueeze(axis)).collect();
     concat(&lifted, axis)
-}
-
-/// Returns the shape two operands broadcast to under the right-aligned rule:
-/// the larger extent on every axis after aligning both from the trailing
-/// axis, where a missing leading axis counts as extent one.
-///
-/// # Panics
-/// Panics if an aligned axis pair differs with neither extent one.
-fn broadcasted_shape(left: &Shape, right: &Shape) -> Shape {
-    let rank = left.rank().max(right.rank());
-    let mut axes = Vec::with_capacity(rank);
-    for offset in 0..rank {
-        let left_extent = extent_from_end(left, offset);
-        let right_extent = extent_from_end(right, offset);
-        assert!(
-            left_extent == right_extent || left_extent == 1 || right_extent == 1,
-            "broadcast of {left} and {right} cannot align extents \
-             {left_extent} and {right_extent}"
-        );
-        axes.push(left_extent.max(right_extent));
-    }
-    axes.reverse();
-    Shape::new(axes)
-}
-
-/// Returns the extent `offset` axes in from the trailing axis of `shape`, or
-/// one when the offset reaches past the leading axis.
-fn extent_from_end(shape: &Shape, offset: usize) -> usize {
-    let rank = shape.rank();
-    if offset < rank {
-        shape.axes()[rank - 1 - offset]
-    } else {
-        1
-    }
 }
 
 #[cfg(test)]

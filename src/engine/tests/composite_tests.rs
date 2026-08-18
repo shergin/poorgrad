@@ -184,29 +184,6 @@ fn broadcast_to_rejects_an_incompatible_axis() {
 }
 
 #[test]
-fn broadcast_pair_lifts_both_operands_to_the_common_shape() {
-    let tape = Tape::new();
-    // Outer sum of a column and a row: [2, 1] against [1, 3] gives [2, 3].
-    let column = tape.leaf(Tensor::new([2, 1], [1.0_f64, 2.0]));
-    let row = tape.leaf(Tensor::new([1, 3], [10.0_f64, 20.0, 30.0]));
-    let (left, right) = column.broadcast_pair(row);
-    assert_eq!(left.shape(), Shape::new([2, 3]));
-    assert_eq!(right.shape(), Shape::new([2, 3]));
-    let sum = left + right;
-    let loss = sum.sum();
-    let (column, row, sum, loss) = (column.symbol(), row.symbol(), sum.symbol(), loss.symbol());
-    let network = tape.into_network();
-
-    let run = network.forward(&network.parameters(), []);
-    assert_eq!(run.of(sum).to_vec(), &[11.0, 21.0, 31.0, 12.0, 22.0, 32.0]);
-
-    let gradients = run.backward(loss);
-    // The column repeats across three columns, the row across two rows.
-    assert_eq!(gradients.of(column).to_vec(), &[3.0, 3.0]);
-    assert_eq!(gradients.of(row).to_vec(), &[2.0, 2.0, 2.0]);
-}
-
-#[test]
 fn logsumexp_gradient_is_the_softmax() {
     let tape = Tape::new();
     let x = tape.leaf(Tensor::new([1, 2], [0.0_f64, 3.0_f64.ln()]));

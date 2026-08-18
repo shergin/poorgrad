@@ -1,6 +1,6 @@
 use crate::{Shape, Tape, Tensor};
 
-use super::{average_pool, max_pool};
+use super::max_pool;
 
 #[test]
 fn max_pool_takes_window_maxima() {
@@ -58,27 +58,6 @@ fn max_pool_ties_route_to_the_earliest_lane() {
     // hands the whole gradient to the first lane in window order.
     let gradients = run.backward(loss);
     assert_eq!(gradients.of(input).to_vec(), &[1.0, 0.0, 0.0, 0.0]);
-}
-
-#[test]
-fn average_pool_takes_window_means() {
-    let tape = Tape::new();
-    let input = tape.leaf(Tensor::new(
-        [1, 1, 4, 4],
-        (1..=16).map(|v| v as f64).collect::<Vec<_>>(),
-    ));
-
-    let pooled = average_pool(input, 2, 2);
-    let loss = pooled.sum();
-
-    let (pooled, loss, input) = (pooled.symbol(), loss.symbol(), input.symbol());
-    let network = tape.into_network();
-    let run = network.forward(&network.parameters(), []);
-    assert_eq!(run.of(pooled).to_vec(), &[3.5, 5.5, 11.5, 13.5]);
-
-    // Every window element contributes `1 / (size * size)`.
-    let gradients = run.backward(loss);
-    assert_eq!(gradients.of(input).to_vec(), &[0.25; 16]);
 }
 
 #[test]

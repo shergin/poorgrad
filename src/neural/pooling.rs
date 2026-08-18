@@ -1,21 +1,18 @@
-//! Spatial pooling as composed formulas over the sliding-window view.
+//! Spatial pooling as a composed formula over the sliding-window view.
 //!
-//! Both pools ride the same two single-axis `unfold`s as convolution
-//! and need no reduce opcode of their own: the average is
-//! `mean_along`, and the maximum is a left-biased fold of the existing
-//! binary `maximum` over the window lanes, so ties route their
-//! gradient deterministically to the earliest lane.
+//! Max pooling rides the same two single-axis `unfold`s as convolution
+//! and needs no reduce opcode of its own: the maximum is a left-biased
+//! fold of the existing binary `maximum` over the window lanes, so
+//! ties route their gradient deterministically to the earliest lane.
 
-use crate::{Tape, Tensorial, Value};
-
-use super::Module;
+use crate::{Tensorial, Value};
 
 /// Records the square windows of a pooling operation and returns them
 /// as `[batch, channels, out_height, out_width, size * size]` lanes.
 ///
-/// It records the shared head of both pools: two unfolds, the axis
-/// permutation, and the lane-merging reshape (a copy, since the window
-/// view overlaps for `stride < size`).
+/// It records the pooling head: two unfolds, the axis permutation,
+/// and the lane-merging reshape (a copy, since the window view
+/// overlaps for `stride < size`).
 fn window_lanes<'tape, Data: Tensorial>(
     input: Value<'tape, Data>,
     size: usize,
@@ -62,69 +59,6 @@ pub fn max_pool<'tape, Data: Tensorial>(
     largest.squeeze(4)
 }
 
-/// Records the `size x size` average pooling of the `[batch, channels,
-/// height, width]` value `input` with `stride` and returns the pooled
-/// `[batch, channels, out_height, out_width]` value.
-///
-/// # Panics
-/// Panics if `input` is not rank 4, `size` or `stride` is zero, or a
-/// window does not fit the spatial extents.
-pub fn average_pool<'tape, Data: Tensorial>(
-    input: Value<'tape, Data>,
-    size: usize,
-    stride: usize,
-) -> Value<'tape, Data> {
-    window_lanes(input, size, stride).mean_along(4)
-}
-
 #[cfg(test)]
 #[path = "tests/pooling_tests.rs"]
 mod tests;
-
-/// The module form of [`max_pool`]: a stateless stage carrying its
-/// window geometry.
-pub struct MaxPool {
-    size: usize,
-    stride: usize,
-}
-
-impl MaxPool {
-    /// Creates the stage with the given window `size` and `stride`.
-    pub fn new(size: usize, stride: usize) -> Self {
-        Self { size, stride }
-    }
-}
-
-impl<Data: Tensorial> Module<Data> for MaxPool {
-    fn express<'tape>(
-        &self,
-        _tape: &'tape Tape<Data>,
-        input: Value<'tape, Data>,
-    ) -> Value<'tape, Data> {
-        max_pool(input, self.size, self.stride)
-    }
-}
-
-/// The module form of [`average_pool`]: a stateless stage carrying
-/// its window geometry.
-pub struct AveragePool {
-    size: usize,
-    stride: usize,
-}
-
-impl AveragePool {
-    /// Creates the stage with the given window `size` and `stride`.
-    pub fn new(size: usize, stride: usize) -> Self {
-        Self { size, stride }
-    }
-}
-
-impl<Data: Tensorial> Module<Data> for AveragePool {
-    fn express<'tape>(
-        &self,
-        _tape: &'tape Tape<Data>,
-        input: Value<'tape, Data>,
-    ) -> Value<'tape, Data> {
-        average_pool(input, self.size, self.stride)
-    }
-}

@@ -66,18 +66,6 @@ impl<Data: Differentiable> Linear<Data> {
         }
     }
 
-    /// Builds the module over existing parameter symbols: the weight
-    /// tying constructor. The symbols may come from another module's
-    /// typed accessors (an embedding's table tied into an output
-    /// head); shape validation happens where the module expresses.
-    pub fn from_symbols(weights: Symbol, bias: Symbol) -> Self {
-        Self {
-            weights,
-            bias,
-            _marker: PhantomData,
-        }
-    }
-
     /// Returns the symbol of the `[inputs, outputs]` weight matrix.
     pub fn weights(&self) -> Symbol {
         self.weights
