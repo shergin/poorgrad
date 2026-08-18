@@ -475,7 +475,7 @@ impl<Data: Tensorial> Function<Data> {
     /// The rule payload is a separate parameter from the tape's own
     /// `Data` because the rules are pure trait polymorphism: the engine
     /// applies them over payload buffers, and `differentiate` applies
-    /// the very same rules over recording [`Trace`](super::Trace)
+    /// the very same rules over recording `Trace`
     /// handles — one source of derivative truth, two interpretations.
     pub(crate) fn backward<Rule: Tensorial>(
         &self,

@@ -3,10 +3,10 @@ use std::sync::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-use crate::engine::{Function, Trace};
+use crate::engine::Function;
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Network, Operands, Origin, SlotStore, Structure, Symbol, Value, ValueId};
+use super::{Network, Operands, Origin, SlotStore, Structure, Symbol, Trace, Value, ValueId};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.

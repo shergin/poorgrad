@@ -1,7 +1,13 @@
-//! Graph ownership across the two phases: the recording [`Tape`], the
-//! sealed [`Network`], the caller-owned [`Parameters`], and the node
-//! handles ([`Value`], [`Symbol`]).
+//! Graph ownership across the two phases — the recording [`Tape`],
+//! the sealed [`Network`], the caller-owned [`Parameters`], and the
+//! node handles ([`Value`], [`Symbol`]) — together with the recording
+//! surface built over them: the opcode mnemonics on `Value`, the
+//! composite tier (`composite.rs`), the payload-literal operator
+//! sugar (`literal.rs`), and the recording [`Trace`] payload behind
+//! `Tape::differentiate`.
 
+mod composite;
+mod literal;
 // The module convention names each file after its main concept, and this
 // module's main concept is the `Network` itself; the inception is
 // deliberate.
@@ -15,8 +21,10 @@ mod slot_store;
 mod structure;
 mod symbol;
 mod tape;
+mod trace;
 mod value;
 
+pub use composite::{concat, stack};
 pub use network::Network;
 pub use parameters::Parameters;
 pub use symbol::Symbol;
@@ -29,3 +37,5 @@ pub(crate) use slot::SlotId;
 pub(crate) use slot_store::SlotStore;
 pub(crate) use structure::Structure;
 pub(crate) use value::ValueId;
+
+pub(super) use trace::Trace;

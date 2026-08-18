@@ -211,7 +211,7 @@ dedicated backward rule. The operation surface has three tiers, marked by
 files rather than by types: [`value.rs`](src/engine/network/value.rs) holds the
 opcode mnemonics, each recording exactly one computed node (payload
 literals additionally record a leaf — data injection, not computation);
-[`composite.rs`](src/engine/composite.rs) holds the composites (`abs` as
+[`composite.rs`](src/engine/network/composite.rs) holds the composites (`abs` as
 `maximum(-self)`, `softmax` as `exp(log_softmax)` — stable by inheritance,
 since log-probabilities cannot make `exp` overflow — and `mean_along`,
 `sum_along` divided by the reduced axis's
