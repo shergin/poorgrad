@@ -6,7 +6,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Elementary, Shape, Tensorial};
 
-use super::super::Function;
+use crate::function::Function;
+
 use super::{Symbol, Tape};
 
 // Compile-time contract: proxies stay thread-safe and `Copy`; the anchor

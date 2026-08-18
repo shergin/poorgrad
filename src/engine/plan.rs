@@ -6,10 +6,10 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{
-    Compile, Function, Network, Operands, Origin, Parameters, Posture, Run, SlotStore, Structure,
-    Symbol,
-};
+use crate::function::Function;
+use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
+
+use super::{Compile, Posture, Run};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.

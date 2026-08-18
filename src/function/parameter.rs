@@ -1,4 +1,4 @@
-use crate::engine::SlotId;
+use super::SlotId;
 
 /// A learnable parameter: a leaf whose payload `Network::update`
 /// replaces on each training step.

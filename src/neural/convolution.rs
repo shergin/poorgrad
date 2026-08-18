@@ -140,7 +140,7 @@ pub fn conv2d<'tape, Data: Tensorial>(
 /// weight-side `permute` + `reshape` to the GEMM operand. Parameters
 /// are stored as [`Symbol`]s and resolved when the expression is
 /// recorded on the family's [`Tape`], like
-/// [`Layer`](super::Layer).
+/// [`Linear`](super::Linear).
 #[derive(Debug, Clone)]
 pub struct Conv2d<Data> {
     weights: Symbol,

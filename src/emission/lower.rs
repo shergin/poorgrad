@@ -16,7 +16,8 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::{Function, WindowProduct};
+use crate::engine::WindowProduct;
+use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
 use super::builder::{

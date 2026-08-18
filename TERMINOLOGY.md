@@ -28,12 +28,12 @@ singular ones — cannot disturb the result.
 **Chain rule.** The composition law of derivatives: each operation knows the
 derivative of its output with respect to each operand and multiplies the
 incoming gradient through. Implemented locally by every `Function` variant
-in [`Operation::backward`](src/engine/function/operation.rs).
+in [`Operation::backward`](src/function/operation.rs).
 
 **Gradient.** The vector of partial derivatives of one chosen scalar (the
 *target*) with respect to every other value. A gradient is always "of a
 target"; there is no target-free gradient of a network. In topos:
-[`Gradients`](src/engine/field.rs), produced by one backward sweep and tied to
+[`Gradients`](src/graph/field.rs), produced by one backward sweep and tied to
 one run and one target; it is a named role of `Field`, not a separate
 type.
 
@@ -55,7 +55,7 @@ implicitly.
 
 **Gradient descent.** Iteratively moving parameters against the gradient of
 a loss: `w <- w - learning_rate * dLoss/dw`. One step is
-[`Parameters::step`](src/engine/network/parameters.rs) with an update
+[`Parameters::step`](src/graph/parameters.rs) with an update
 closure — a pure data transformation of the caller-owned state; see
 [`examples/gradient_descent.rs`](examples/gradient_descent.rs).
 
@@ -71,7 +71,7 @@ allocation order is a topological order.
 operation in execution order — the recipe, not the result: it holds no
 gradient values. Replayed forward it evaluates the program; replayed
 backward with the chain rule it yields gradients for any target. In
-topos: the public [`Tape`](src/engine/network/tape.rs), the construction
+topos: the public [`Tape`](src/graph/tape.rs), the construction
 phase of a network — expressions record onto it through [`Value`]
 proxies, shape-checked at the recording expression, behind the engine's
 single synchronization point (a mutex quarantined to this phase).
@@ -84,9 +84,9 @@ origin and position alone.
 
 **Node.** One recorded entry of the graph: the operation that produced a
 value, its operand links, and its parameters. In topos a node is a
-[`Function<Data>`](src/engine/function/function.rs) (the operation and its
+[`Function<Data>`](src/function/function.rs) (the operation and its
 parameters) stored on the tape beside its operand links (the
-[`Operands`](src/engine/network/operands.rs) column) and its inferred `Shape`;
+[`Operands`](src/graph/operands.rs) column) and its inferred `Shape`;
 none of them change once recorded.
 
 **Shape.** The extent of a payload along every axis; a scalar is rank 0.
@@ -98,7 +98,7 @@ type-level shapes at no type-system cost. Shapes never change once
 recorded — `Parameters::step` and the checkpoint installs validate every
 replacement payload against the current shape — and are stored as a
 separate cold column beside the hot function and operands columns inside
-[`Structure`](src/engine/network/structure.rs) (data-oriented layout:
+[`Structure`](src/graph/structure.rs) (data-oriented layout:
 runs replay functions and operand links, never shapes). The three
 columns always move together: seals, freezes, and reopens share one
 `Structure`. Construction boundaries (`Tensor::new`,
@@ -122,12 +122,12 @@ operands column, and `backward` returns one cotangent per operand
 (`None` for an operand that is data, like a gather's selection) for the
 engine to accumulate. No rule ever sees the tape, a `ValueId`, or a run
 buffer, so every rule is plain math, testable without a network. In
-topos: the [`Operation`](src/engine/function/operation.rs) trait,
+topos: the [`Operation`](src/function/operation.rs) trait,
 implemented by each computed `Function` variant (`Add`, `Sub`, `Mul`,
 `Div`, `Neg`, `Tanh`, `Exp`, `Ln`, `Sqrt`, `Powf`, `Maximum`, `Relu`,
 `MatMul`, `Transpose`, `Sum`, `SumAlong`, `Broadcast`, `BroadcastAlong`,
 `Reshape`, `Permute`, `Narrow`, `Gather`, `LogSoftmax` under
-[`src/engine/function/`](src/engine/function/)) and dispatched with a
+[`src/function/`](src/function/)) and dispatched with a
 plain `match`.
 `Leaf`, `Parameter`, and `Input` are supplied rather than computed, so
 the enum's dispatch handles them directly instead of through the trait.
@@ -139,15 +139,15 @@ tensor-native ones raise the bound of running (not building) a graph to
 time. Gradients stop there and get read out; its `backward` is a no-op.
 Parameters and inputs are the other leaf kinds: trainable and fed
 per-run respectively. In topos: `Function::Leaf`, allocated with
-[`Tape::leaf`](src/engine/network/tape.rs); payload literals in expressions
+[`Tape::leaf`](src/graph/tape.rs); payload literals in expressions
 (`x * 2.0`) record leaves implicitly, one per appearance.
 
 **Parameter.** A trainable leaf: identical to `Leaf` during runs, but
 designated as updatable so a training step knows which leaves to replace.
 In topos: `Function::Parameter`, allocated with
-[`Tape::parameter`](src/engine/network/tape.rs) from its record-site
+[`Tape::parameter`](src/graph/tape.rs) from its record-site
 initial. The node holds only its slot; live payloads are the caller's
-[`Parameters`](src/engine/network/parameters.rs) state, stepped by
+[`Parameters`](src/graph/parameters.rs) state, stepped by
 `Parameters::step` — training never touches the recorded node.
 
 **Input.** A declared per-run leaf: `Tape::input` records it with a
@@ -158,7 +158,7 @@ inputs fall back to their defaults. Feeds are run state, not graph
 state — feeding never touches the spec, which is what lets concurrent
 runs forward one shared network on different batches. In topos:
 `Function::Input`, fed via the feed pairs of
-[`Network::forward`](src/engine/network/network.rs) and `Plan::forward`.
+[`Network::forward`](src/graph/network.rs) and `Plan::forward`.
 
 **Topological (allocation) order.** Any ordering in which every operand
 precedes its consumers. Topos's recording enforces it by construction —
@@ -178,7 +178,7 @@ could be reopened into a divergent future, which the ownership rule
 exists to make unrepresentable. Runs and plans read parameter payloads
 from a caller-supplied [`Parameters`] per call. It is the boundary of
 type homogeneity (one `Data` type per network). In topos:
-[`Network`](src/engine/network/network.rs).
+[`Network`](src/graph/network.rs).
 
 **Parameters.** The live parameter payloads of one network, as a
 caller-owned value: the state half of the spec/state split. Born from
@@ -191,7 +191,7 @@ slots take their initials), and installed into by name
 O(parameters), which is the whole cost of a what-if: one spec, any
 number of states. Optimizer state is `Field` algebra held beside a
 `Parameters` value; nothing hides in the graph. In topos:
-[`Parameters`](src/engine/network/parameters.rs).
+[`Parameters`](src/graph/parameters.rs).
 
 **Value (proxy).** The operand of recording: a `Copy` handle pairing a
 borrow of the tape with a node position, alive only inside the
@@ -203,15 +203,15 @@ cross `Tape::into_network`: the seal consumes the tape, so a proxy
 outliving the phase is a borrow error at the exact line, and
 `Value::symbol` is the documented bridge out. Payloads live in
 [`Parameters`] and [`Run`]s, read by [`Symbol`]. In topos:
-[`Value`](src/engine/network/value.rs).
+[`Value`](src/graph/value.rs).
 
 **Composite (operation).** A method that expands to several primitive
 nodes: a formula over opcodes whose gradient the chain rule pays with no
 dedicated backward rule. The operation surface has three tiers, marked by
-files rather than by types: [`value.rs`](src/engine/network/value.rs) holds the
+files rather than by types: [`value.rs`](src/graph/value.rs) holds the
 opcode mnemonics, each recording exactly one computed node (payload
 literals additionally record a leaf — data injection, not computation);
-[`composite.rs`](src/engine/network/composite.rs) holds the composites (`abs` as
+[`composite.rs`](src/graph/composite.rs) holds the composites (`abs` as
 `maximum(-self)`, `softmax` as `exp(log_softmax)` — stable by inheritance,
 since log-probabilities cannot make `exp` overflow — and `mean_along`,
 `sum_along` divided by the reduced axis's
@@ -242,7 +242,7 @@ reproduces `Run::backward` bitwise; per-variant closure tests
 hold that contract. Differentiation appends nodes, so it is a
 construction-phase operation and lives on the tape. In topos:
 `Tape::differentiate`, the `Trace` payload, and the closure suite in
-`engine/network/tests/differentiate_tests.rs`.
+`graph/tests/differentiate_tests.rs`.
 
 **Symbol.** A detached, `Copy` name of a value: an origin plus a node
 position, and the sole currency of every phase after recording. Access
@@ -256,7 +256,7 @@ back into a proxy when a network reopens. Resolving a foreign symbol
 panics rather than misbinding:
 origin equality plus coverage are the two integer compares that remain
 of graph identity. In topos:
-[`Symbol`](src/engine/network/symbol.rs), obtained with `Value::symbol`.
+[`Symbol`](src/graph/symbol.rs), obtained with `Value::symbol`.
 
 **Seal / reopen.** The two phase transitions of one recording:
 `Tape::into_network` seals the construction phase into the immutable
@@ -270,10 +270,10 @@ caller's `Parameters` and mints no new network, so the questions the
 old generation machinery answered (which generation does a symbol,
 field, or plan bind to; who may record next) can no longer be asked.
 
-**Slot store.** A dense table of payloads keyed by [`SlotId`](src/engine/network/slot.rs),
-each row also holding the tape [`ValueId`](src/engine/network/value.rs) of the
+**Slot store.** A dense table of payloads keyed by [`SlotId`](src/graph/slot.rs),
+each row also holding the tape [`ValueId`](src/graph/value.rs) of the
 node that names that slot. Parameter initials and input defaults share
-this layout ([`SlotStore`](src/engine/network/slot_store.rs)): structure
+this layout ([`SlotStore`](src/graph/slot_store.rs)): structure
 is recorded once; the caller's `Parameters` carries the live parameter
 table (`step` rebuilds payloads in O(parameters)), and the spec's input
 table holds defaults (runs may overlay feeds without touching the
@@ -291,7 +291,7 @@ keep-set answers reads, `backward` refused), training from an
 engine-backward plan (everything `backward` reads retained) — so an
 impossible combination cannot be represented. Runs never mutate the network, so any number can
 execute concurrently; a backward sweep reads a `Run` and returns
-[`Gradients`](src/engine/field.rs) (a gradient per node, for one target;
+[`Gradients`](src/graph/field.rs) (a gradient per node, for one target;
 a `Field`, so it combines and carries optimizer state directly). Both
 are read back with the same proxies that built the graph: every
 position-indexed buffer — runs, gradients, fields — answers the same
@@ -299,7 +299,7 @@ read-back accessor, `of(value)`.
 
 **Target-sliced run.** A forward run restricted to the ancestor
 closure of declared targets:
-[`Network::forward_for`](src/engine/network/network.rs) marks
+[`Network::forward_for`](src/graph/network.rs) marks
 reachability over the operand links in one descending sweep and skips
 every node outside the closure, leaving an O(1), shape-correct zero
 placeholder (`counted(shape, 0)`) in each skipped slot. The
@@ -394,7 +394,7 @@ a discrete gradient field over the graph, which is why `Gradients` is an
 alias for `Field` rather than a wrapper around it: the buffer's invariant is
 alignment to a graph, not differentiation, and Adam's second moment or a
 run's forward payloads are fields that are not gradients at all. In
-topos: [`Field`](src/engine/field.rs).
+topos: [`Field`](src/graph/field.rs).
 
 **Origin.** The identity of one tape-network family: a `Copy` token
 minted from a process-global counter at `Tape::new` and carried through
@@ -405,7 +405,7 @@ stable forever — which is why origin plus node position is the whole
 identity a detached carrier (`Symbol`, `Field`, `Parameters`, `Plan`,
 `Run`) needs, and the whole runtime price of detachment: two integer
 compares. In topos: the crate-internal
-[`Origin`](src/engine/network/origin.rs), embedded in every `Symbol`.
+[`Origin`](src/graph/origin.rs), embedded in every `Symbol`.
 
 **Payload (`Data`).** The numeric value a node carries: a scalar
 (`f32`/`f64`) or an elementwise [`Tensor`](src/payload/tensor.rs). Its
@@ -548,7 +548,7 @@ elements read from it — deterministic under any evaluation strategy.
 Two `unfold`s produce 2-D windows (torch semantics). In topos:
 [`Tensorial::unfold`/`fold`](src/payload/tensorial.rs) over
 [`Layout::unfold`](src/payload/layout.rs), recorded by
-[`Value::unfold`](src/engine/network/value.rs) (with `fold` as its gradient
+[`Value::unfold`](src/graph/value.rs) (with `fold` as its gradient
 rule, a payload method rather than an opcode until transposed
 convolution needs the forward direction); `Value::pad` records
 `narrow`'s adjoint the same way.

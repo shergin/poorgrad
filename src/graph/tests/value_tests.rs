@@ -1,7 +1,7 @@
 use std::thread;
 
 use crate::Tape;
-use crate::engine::Function;
+use crate::function::Function;
 
 #[test]
 fn operator_sugar_allocates_on_the_same_tape() {

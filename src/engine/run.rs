@@ -5,7 +5,8 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Tensorial};
 
-use super::{Field, Function, Gradients, Origin, Structure, Symbol};
+use crate::function::{Function, SlotId};
+use crate::graph::{Field, Gradients, Network, Origin, Parameters, Structure, Symbol, ValueId};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
@@ -311,3 +312,199 @@ impl<Data: Tensorial> Run<Data> {
 #[cfg(test)]
 #[path = "tests/run_tests.rs"]
 mod tests;
+
+// The forward entry points live here rather than on the spec's own
+// file for the same reason `compile` lives in `plan.rs`: running is
+// the executor's business, and the graph tier must not depend on it.
+impl<Data: Tensorial> Network<Data> {
+    /// Evaluates every node in allocation order, materializing the
+    /// payload of each value into a fresh [`Run`], reading parameter
+    /// payloads from `parameters` and binding `feeds` to declared
+    /// inputs for this run only.
+    ///
+    /// Feeds are run-local state: they overlay the input defaults
+    /// without touching the spec, so any number of threads can forward
+    /// one shared network on different batches — or different
+    /// [`Parameters`] — concurrently. Unfed inputs use their defaults.
+    /// Allocation order is dependency order by construction, which is
+    /// what makes the single forward scan sufficient. The returned run
+    /// owns its values, so [`Run::backward`] needs no network borrow.
+    ///
+    /// # Panics
+    /// Panics if `parameters` belongs to a different network or does
+    /// not cover this one, if a fed symbol does not resolve here or
+    /// names a node that is not an input, or if a fed payload's shape
+    /// differs from the input's recorded shape.
+    pub fn forward(
+        &self,
+        parameters: &Parameters<Data>,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Run<Data> {
+        self.run(parameters, None, feeds)
+    }
+
+    /// Panics unless `parameters` was born from this network's exact
+    /// extent: the run-side kinship check.
+    fn assert_covering(&self, parameters: &Parameters<Data>) {
+        assert!(
+            parameters.origin() == self.origin(),
+            "parameters belong to a different network"
+        );
+        assert_eq!(
+            parameters.len(),
+            self.parameters_len(),
+            "parameters do not cover this network's parameter slots; \
+             carry them across a reopen with `Parameters::carried`"
+        );
+    }
+
+    /// Evaluates only the ancestors of `targets` — the target-sliced
+    /// run — with `feeds` bound to declared inputs for this run only.
+    ///
+    /// It is `forward` restricted to what the caller will read:
+    /// reachability over the operand links selects the targets'
+    /// ancestor closure, and every node outside it is skipped, its slot
+    /// holding an O(1) zero placeholder of the recorded shape. Reads
+    /// stay loud: [`Run::of`] and [`Run::backward`] panic on a skipped
+    /// value instead of answering with a placeholder.
+    ///
+    /// With several expressions recorded on one tape (the training and
+    /// evaluation twins of the examples), slicing to one expression's
+    /// targets skips the other expression entirely — the first rung of
+    /// the plan-lowering ladder, applied without any plan object.
+    ///
+    /// # Panics
+    /// Panics if a target does not resolve in this network, or as
+    /// [`Network::forward`] panics.
+    pub fn forward_for(
+        &self,
+        parameters: &Parameters<Data>,
+        targets: impl IntoIterator<Item = Symbol>,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Run<Data> {
+        let targets: Vec<ValueId> = targets
+            .into_iter()
+            .map(|target| self.locate(target))
+            .collect();
+        self.run(parameters, Some(targets), feeds)
+    }
+
+    /// Returns the input slot behind `id`, or `None` if the node is
+    /// not an input.
+    fn input_slot(&self, id: ValueId) -> Option<SlotId> {
+        match self
+            .structure()
+            .functions
+            .get(id.index())
+            .expect("`ValueId` is in bounds for its network")
+        {
+            Function::Input(input) => Some(input.0),
+            _ => None,
+        }
+    }
+
+    /// Replays the recording: the shared body of `forward` (every
+    /// node) and `forward_for` (the targets' ancestor closure).
+    fn run(
+        &self,
+        parameters: &Parameters<Data>,
+        targets: Option<Vec<ValueId>>,
+        feeds: impl IntoIterator<Item = (Symbol, Data)>,
+    ) -> Run<Data> {
+        self.assert_covering(parameters);
+        let mut bindings = Vec::new();
+        for (symbol, payload) in feeds {
+            let id = self.locate(symbol);
+            let slot = self.input_slot(id).expect("only inputs can be fed");
+            let declared = self
+                .structure()
+                .shapes
+                .get(id.index())
+                .expect("shapes cover the network");
+            assert_eq!(
+                &payload.shape(),
+                declared,
+                "fed payload must match the input's recorded shape"
+            );
+            bindings.push((slot, payload));
+        }
+        let inputs = if bindings.is_empty() {
+            Arc::clone(self.inputs())
+        } else {
+            let mut overlaid = self.inputs().as_ref().clone();
+            for (slot, payload) in bindings {
+                overlaid.set(slot, payload);
+            }
+            Arc::new(overlaid)
+        };
+
+        let structure = self.structure();
+        // Reachability doubles the backward scan's trick in reverse:
+        // operands live below their consumers, so one descending sweep
+        // marks the whole ancestor closure.
+        let computed = targets.map(|targets| {
+            let mut wanted = vec![false; structure.len()];
+            for target in targets {
+                wanted[target.index()] = true;
+            }
+            for index in (0..wanted.len()).rev() {
+                if !wanted[index] {
+                    continue;
+                }
+                let links = structure
+                    .operands
+                    .get(index)
+                    .expect("operands cover the network");
+                for link in links.as_slice() {
+                    wanted[link.index()] = true;
+                }
+            }
+            wanted
+        });
+        let mut values = Vec::with_capacity(structure.len());
+        for (index, (function, links)) in structure
+            .functions
+            .iter()
+            .zip(structure.operands.iter())
+            .enumerate()
+        {
+            let skipped = matches!(&computed, Some(wanted) if !wanted[index]);
+            let value = if skipped {
+                // A shape-correct, non-allocating zero: never read back
+                // (`of` checks the computed set), but shaped so that
+                // gradient buffers stay coherent.
+                let shape = structure
+                    .shapes
+                    .get(index)
+                    .expect("shapes cover the network")
+                    .clone();
+                Data::counted(shape, 0)
+            } else {
+                let operands: SmallVec<[&Data; 2]> = links
+                    .as_slice()
+                    .iter()
+                    .map(|link| &values[link.index()])
+                    .collect();
+                let value = function.forward(&operands, parameters.payloads(), inputs.payloads());
+                // The recorded shape is the type of this node; a payload
+                // whose rule answers a different shape has broken the
+                // operation contract at exactly this producing node.
+                debug_assert_eq!(
+                    value.shape(),
+                    *structure
+                        .shapes
+                        .get(index)
+                        .expect("shapes cover the network"),
+                    "operation output shape disagrees with the recorded shape at node {index}"
+                );
+                value
+            };
+            values.push(value);
+        }
+        let posture = match computed {
+            Some(computed) => Posture::Sliced { computed },
+            None => Posture::Complete,
+        };
+        Run::new(structure.clone(), self.origin(), values, posture)
+    }
+}

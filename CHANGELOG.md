@@ -32,6 +32,14 @@ The format is based on [Keep a Changelog], and this project adheres to
   `parameters.with_payloads(...)` installs checkpoints. What-ifs are
   `parameters.clone()`: one spec, any number of states.
 
+- The module tree now mirrors the stack: the op rules live in a
+  top-level `function` tier, the graph world (tape, network,
+  parameters, fields, handles, the recording surface) in a top-level
+  `graph` tier, and `engine` shrank to what the prose always meant by
+  the word — the executor (`Run`, `Plan`, `Compile`, and the forward
+  entry points, which moved next to `compile`'s home in the planner).
+  Purely internal: the crate root re-exports are unchanged.
+
 - Post-recording APIs speak `Symbol` only: `Run::of`,
   `Run::backward`, `Field::of`, `forward_for` targets, and
   `recorded_gradients` pairs take symbols, `Compile` is non-generic

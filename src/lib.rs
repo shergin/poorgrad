@@ -54,6 +54,8 @@
 mod backend;
 mod emission;
 mod engine;
+mod function;
+mod graph;
 mod neural;
 #[cfg(feature = "evcxr")]
 mod notebook;
@@ -61,9 +63,8 @@ mod payload;
 
 pub use backend::{Backend, BackendUnavailable};
 pub use emission::{EmitError, Emittable};
-pub use engine::{
-    Compile, Field, Gradients, Network, Parameters, Plan, Run, Symbol, Tape, Value, concat, stack,
-};
+pub use engine::{Compile, Plan, Run};
+pub use graph::{Field, Gradients, Network, Parameters, Symbol, Tape, Value, concat, stack};
 pub use neural::{
     Activation, Adam, AdamW, BatchNorm, Conv2d, Dropout, LayerNorm, Linear, Mlp, Module,
     Normalization, Optimizer, Path, RmsNorm, Segment, Sequential, Sgd, Visitor, checkpoint, conv2d,

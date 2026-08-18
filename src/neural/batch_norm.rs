@@ -36,7 +36,7 @@ assert_impl_all!(BatchNorm<f64>: Send, Sync);
 ///
 /// Parameters are stored as [`Symbol`]s and resolved when an expression
 /// is recorded on the family's [`Tape`], like
-/// [`Layer`](super::Layer).
+/// [`Linear`](super::Linear).
 #[derive(Debug, Clone)]
 pub struct BatchNorm<Data> {
     scale: Symbol,

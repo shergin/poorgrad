@@ -1,4 +1,4 @@
-use crate::engine::SlotId;
+use super::SlotId;
 use crate::{Differentiable, Shape, Tensorial};
 
 use static_assertions::assert_impl_all;

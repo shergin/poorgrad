@@ -1,6 +1,6 @@
 //! Deterministic initializer factories for neural building blocks.
 //!
-//! Initialization is caller-owned: [`Layer`](super::Layer) and
+//! Initialization is caller-owned: [`Linear`](super::Linear) and
 //! [`Mlp`](super::Mlp) record whatever payloads they are given and take a
 //! shape-to-payload closure at construction. This module manufactures
 //! such closures. Every factory takes an explicit `seed` and each

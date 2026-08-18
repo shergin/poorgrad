@@ -1,6 +1,6 @@
-use crate::engine::ValueId;
+use crate::function::SlotId;
 
-use super::SlotId;
+use super::ValueId;
 
 /// A dense, slot-indexed table of payloads with their tape nodes.
 ///

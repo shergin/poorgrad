@@ -32,7 +32,7 @@ assert_impl_all!(LayerNorm<f64>: Send, Sync);
 ///
 /// Parameters are stored as [`Symbol`]s and resolved when the expression
 /// is recorded on the family's [`Tape`], like
-/// [`Layer`](super::Layer).
+/// [`Linear`](super::Linear).
 #[derive(Debug, Clone)]
 pub struct LayerNorm<Data> {
     scale: Symbol,

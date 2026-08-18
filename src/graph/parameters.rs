@@ -1,7 +1,8 @@
 use static_assertions::assert_impl_all;
 
 use crate::Differentiable;
-use crate::engine::Field;
+
+use super::Field;
 
 use super::{Network, Origin, SlotStore, Symbol};
 

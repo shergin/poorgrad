@@ -1,7 +1,9 @@
 use cow_vec::CowVec;
 
 use crate::Shape;
-use crate::engine::{Function, ValueId};
+use crate::function::Function;
+
+use super::ValueId;
 
 use super::Operands;
 

@@ -1,3 +1,8 @@
+//! The differentiable operation set: the [`Function`] node vocabulary
+//! the graph records and the executor replays, one file per
+//! operation, each a pure forward/backward rule over the payload
+//! traits.
+
 mod add;
 mod broadcast;
 mod broadcast_along;
@@ -28,6 +33,7 @@ mod powf;
 mod relu;
 mod reshape;
 mod scatter;
+mod slot;
 mod sqrt;
 mod step;
 mod sub;
@@ -63,6 +69,7 @@ pub(crate) use powf::Powf;
 pub(crate) use relu::Relu;
 pub(crate) use reshape::Reshape;
 pub(crate) use scatter::Scatter;
+pub(crate) use slot::SlotId;
 pub(crate) use sqrt::Sqrt;
 pub(crate) use step::Step;
 pub(crate) use sub::Sub;

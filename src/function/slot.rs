@@ -7,7 +7,7 @@ pub(crate) struct SlotId(usize);
 
 impl SlotId {
     /// Creates a slot for `index` in its store.
-    pub(super) fn new(index: usize) -> Self {
+    pub(crate) fn new(index: usize) -> Self {
         Self(index)
     }
 

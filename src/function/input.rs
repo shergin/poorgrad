@@ -1,4 +1,4 @@
-use crate::engine::SlotId;
+use super::SlotId;
 
 /// A declared per-run input: a leaf whose payload is supplied when a
 /// run starts, falling back to a recorded default.

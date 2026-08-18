@@ -1,4 +1,4 @@
-use super::Symbol;
+use crate::graph::Symbol;
 
 /// A compile request: the explicit product of what a plan computes.
 ///

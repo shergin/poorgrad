@@ -3,10 +3,11 @@ use std::sync::{Mutex, MutexGuard};
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-use crate::engine::Function;
+use crate::function::Function;
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::{Network, Operands, Origin, SlotStore, Structure, Symbol, Trace, Value, ValueId};
+use super::trace::Trace;
+use super::{Network, Operands, Origin, SlotStore, Structure, Symbol, Value, ValueId};
 
 // Compile-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
@@ -314,7 +315,7 @@ impl<Data: Tensorial> Tape<Data> {
     ///
     /// It is `backward` as a tape-to-tape transform: the same reverse
     /// scan the engine runs over payload buffers runs here over
-    /// recording [`Trace`] handles, applying the very same derivative
+    /// recording `Trace` handles, applying the very same derivative
     /// rules — so the recorded gradient and the engine's are one body
     /// of knowledge, and a compiled plan over `[loss, gradients...]`
     /// reproduces [`Run::backward`](crate::Run::backward) bitwise

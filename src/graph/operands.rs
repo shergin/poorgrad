@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::engine::ValueId;
+use super::ValueId;
 
 /// The operand links of one recorded node, in the operation's positional
 /// order.
