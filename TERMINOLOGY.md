@@ -369,17 +369,22 @@ measured. Keeping a rule and its read set in step is part of
 changing either.
 
 **Pattern (catalog).** A closed, documented set of patterns — same
-spirit as `Function` — matched once at `Network::compile` over the
-plan's frozen columns and stored as one column on the plan
+spirit as `Function` — over the plan's frozen columns
 (`src/engine/pattern/`). A pattern is a compile-time match, not a
-tape rewrite: every entry raises abroad, and a variant may
-additionally fuse at home — the one policy point is `Pattern::fused`,
-gated by memory posture. Matchers share one `View` (wanted, keep-set,
-consumer counts), claim nodes first-wins in documented order, and
-require the claimed subgraph to be closed — unnamed interiors
-unreadable, every wanted consumer inside the match. Dispatch at both
-consumers is a plain enum `match`; the tape and the backends never
-see a pattern.
+tape rewrite. Compilation *discovers* once: every closed candidate
+(unnamed interiors unreadable, every wanted consumer inside the
+match) pools in priority order, posture-blind and
+consumer-independent. Each consumer then *elects* its own catalog
+from the pool under its repertoire — the patterns it can act on: a
+forward run fuses its elected groups (`Pattern::fused`; the home
+repertoire is empty on engine-backward plans), and StableHLO
+emission raises its elected groups with a total repertoire, on every
+memory posture. Electing is claiming, first-wins; unsupported
+candidates never claim, so their regions stay free, and an unelected
+region simply runs or lowers its recorded primitives — a pattern is
+an offer, never an obligation. Matchers share one `View` (wanted,
+keep-set, consumer counts); dispatch everywhere is a plain enum
+`match`; the tape and the backends never see a pattern.
 
 **Fusion (window-GEMM).** The catalog's first pattern: the
 canonical im2col chain — pads, two unfolds, the permute, the patch
@@ -394,17 +399,18 @@ follows the plan's memory posture: forward-only plans always fuse (a
 pure win — the chain simply never exists, and recorded-gradient
 training plans are forward-only, so they fuse too), while
 engine-backward plans stay unfused so their memory contract stays
-exact for the reverse scan. `describe` prints the groups;
-recognition proposes, payloads and backends dispose — neither ever
-sees graph structure.
+exact for the reverse scan. The raise is not posture-gated: an
+engine-backward plan emits `stablehlo.convolution` exactly like its
+forward twin. `describe` prints the groups; recognition proposes,
+payloads and backends dispose — neither ever sees graph structure.
 
 **Pool window (reduce_window).** The catalog's first raise-only
 pattern: the canonical `max_pool` spelling — two square
 unfolds, the lane permute and reshape, the left-associated `maximum`
 fold in lane order, the trailing squeeze — rooted at the squeeze
-reshape. It has no home action: forward runs execute the recorded
-fold unchanged, so storage is not gated by memory posture and
-engine-backward plans carry the match too. Emission raises the group
+reshape. It has no home action: it sits outside the home repertoire,
+so forward runs execute the recorded fold unchanged on every memory
+posture. Emission raises the group
 to `stablehlo.reduce_window` over the rank-4 source, so the unfolded
 lanes never cross the boundary. A balanced fold tree, a permuted lane
 order, or an omitted squeeze is a documented false negative;

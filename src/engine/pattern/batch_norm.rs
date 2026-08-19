@@ -3,7 +3,7 @@ use smallvec::{SmallVec, smallvec};
 use crate::Differentiable;
 use crate::function::Function;
 
-use super::catalog::Candidate;
+use super::candidates::Candidate;
 use super::pattern::Pattern;
 use super::view::View;
 
@@ -215,6 +215,7 @@ pub(crate) fn match_training<Data: Differentiable>(
     let named = smallvec![tail.group.mean, tail.group.variance];
     Some(Candidate {
         pattern: Pattern::BatchNormTraining(tail.group),
+        root: index,
         interiors: tail.interiors,
         named,
     })
@@ -233,6 +234,7 @@ pub(crate) fn match_inference<Data: Differentiable>(
     let tail = match_tail(index, view)?;
     Some(Candidate {
         pattern: Pattern::BatchNormInference(tail.group),
+        root: index,
         interiors: tail.interiors,
         named: SmallVec::new(),
     })

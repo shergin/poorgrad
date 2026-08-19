@@ -2,6 +2,7 @@ use crate::function::Function;
 use crate::graph::Network;
 use crate::{BatchNorm, Tape, Tensor};
 
+use super::super::candidates::Candidates;
 use super::super::catalog::Catalog;
 use super::super::pattern::Pattern;
 use super::super::view::View;
@@ -49,18 +50,17 @@ fn the_training_formula_matches_with_observed_statistics() {
     readable[mean] = true;
     readable[variance] = true;
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
 
     let Some(Pattern::BatchNormTraining(group)) = catalog.at(root) else {
         panic!("the training formula matches at the shift root");
     };
     assert_eq!(group.mean, mean);
     assert_eq!(group.variance, variance);
-    // Raise-only: nothing skips at home, and the named statistics
-    // skip at emit alongside the unnamed interiors.
-    assert!((0..length).all(|index| !catalog.home_interior(index)));
-    assert!(catalog.emit_interior(mean));
-    assert!(catalog.emit_interior(variance));
+    // The named statistics skip alongside the unnamed interiors in
+    // the raising consumer's election.
+    assert!(catalog.interior(mean));
+    assert!(catalog.interior(variance));
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn an_observed_centering_bars_the_training_match() {
     readable[root] = true;
     readable[centered] = true;
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
     assert!(catalog.at(root).is_none());
 }
 
@@ -111,7 +111,7 @@ fn a_shared_statistic_bars_the_match() {
     let wanted = vec![true; length];
     let readable = vec![false; length];
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
     assert!(catalog.at(root).is_none());
 }
 
@@ -145,7 +145,7 @@ fn an_unverified_divisor_is_not_a_training_mean() {
     let wanted = vec![true; length];
     let readable = vec![false; length];
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
     assert!(catalog.at(root).is_none());
 }
 
@@ -174,7 +174,7 @@ fn the_inference_formula_matches_supplied_statistics() {
     let wanted = vec![true; length];
     let readable = vec![false; length];
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
     let Some(Pattern::BatchNormInference(group)) = catalog.at(root) else {
         panic!("the inference formula matches at the shift root");
     };
@@ -182,8 +182,13 @@ fn the_inference_formula_matches_supplied_statistics() {
     // stay ordinary emitted operands.
     assert_eq!(group.mean, mean);
     assert_eq!(group.variance, variance);
-    assert!(!catalog.emit_interior(mean));
-    assert!(!catalog.emit_interior(variance));
+    assert!(!catalog.interior(mean));
+    assert!(!catalog.interior(variance));
+    // Raise-only: the home repertoire never elects a batch norm.
+    let home = Catalog::elect(&Candidates::discover(&view), |pattern| {
+        pattern.fused().is_some()
+    });
+    assert_eq!(home.groups(), 0);
 }
 
 #[test]

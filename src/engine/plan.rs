@@ -9,7 +9,7 @@ use crate::{Differentiable, Shape, Tensorial};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{Catalog, View};
+use super::pattern::{Candidates, Catalog, View};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -59,9 +59,13 @@ pub struct Plan<Data> {
     /// small mid-run frees measured as an RSS regression — allocator
     /// fragmentation) and report this set as their release floor.
     releases: Vec<SmallVec<[usize; 2]>>,
-    /// The compiled pattern catalog: the pattern rooted at each node,
-    /// if any, and the interior skip-masks its consumers read.
-    catalog: Catalog,
+    /// All discovered pattern candidates, in priority order: the pool
+    /// every consumer elects its catalog from.
+    candidates: Candidates,
+    /// The home consumer's election: the patterns a forward run fuses.
+    /// Empty on engine-backward plans, whose memory contract forbids
+    /// fusing.
+    home: Catalog,
     /// The engine-backward posture: `false` compiles forward liveness
     /// (runs refuse `backward`), `true` retains what the engine
     /// reverse scan reads.
@@ -96,14 +100,18 @@ impl<Data: Differentiable> Plan<Data> {
             }
         }
 
-        // Patterns: one structural match over the frozen columns, all
-        // sharing the claim discipline. Home-fusing patterns are
-        // gated by memory posture — fusing requires the chain to never
+        // Patterns: discovery pools every closed candidate over the
+        // frozen columns, posture-blind; each consumer then elects
+        // what its repertoire supports. The home repertoire is gated
+        // by memory posture — fusing requires the chain to never
         // materialize, so it is a forward-only move: engine-backward
         // plans keep their exact contract unfused, the reverse scan
         // reading what the recording named.
         let view = View::new(&structure, &wanted, &readable);
-        let catalog = Catalog::collect(&view, !training);
+        let candidates = Candidates::discover(&view);
+        let home = Catalog::elect(&candidates, |pattern| {
+            !training && pattern.fused().is_some()
+        });
 
         // Liveness: a slot may be freed by its highest consumer inside
         // the closure once nothing later can read its value — neither
@@ -153,7 +161,7 @@ impl<Data: Differentiable> Plan<Data> {
         // A home-fusing root reads values directly, past the skipped
         // chain the operand links describe: liveness must not release
         // them before the fused call.
-        catalog.pin_liveness(&mut last_consumer);
+        home.pin_liveness(&mut last_consumer);
         for slot in 0..length {
             if !wanted[slot] || readable[slot] || required[slot] {
                 continue;
@@ -179,7 +187,8 @@ impl<Data: Differentiable> Plan<Data> {
             wanted,
             readable: Arc::new(readable),
             releases,
-            catalog,
+            candidates,
+            home,
             backward,
         }
     }
@@ -229,11 +238,16 @@ impl<Data: Differentiable> Plan<Data> {
         &self.readable
     }
 
-    /// Returns the compiled pattern catalog, for plan consumers such
-    /// as the StableHLO emitter — introspection siblings of
-    /// `describe`.
-    pub(crate) fn catalog(&self) -> &Catalog {
-        &self.catalog
+    /// Returns the discovered pattern pool, for plan consumers such as
+    /// the StableHLO emitter to elect their catalogs from —
+    /// introspection siblings of `describe`.
+    pub(crate) fn candidates(&self) -> &Candidates {
+        &self.candidates
+    }
+
+    /// Returns the home consumer's catalog: what a forward run fuses.
+    pub(crate) fn home(&self) -> &Catalog {
+        &self.home
     }
 
     /// Simulates a run's live volume under `releases`, returning the
@@ -244,7 +258,7 @@ impl<Data: Differentiable> Plan<Data> {
         let mut peak_at: usize = 0;
         let mut total: usize = 0;
         for (index, slots) in releases.iter().enumerate() {
-            if !self.wanted[index] || self.catalog.home_interior(index) {
+            if !self.wanted[index] || self.home.interior(index) {
                 continue;
             }
             let volume = self.structure.shapes[index].volume();
@@ -257,7 +271,7 @@ impl<Data: Differentiable> Plan<Data> {
             for &slot in slots {
                 // Fusion interiors were never counted live: their
                 // slots hold placeholders from the start.
-                if self.catalog.home_interior(slot) {
+                if self.home.interior(slot) {
                     continue;
                 }
                 live -= self.structure.shapes[slot].volume();
@@ -274,13 +288,13 @@ impl<Data: Differentiable> Plan<Data> {
         let mut live: usize = 0;
         let mut series = Vec::new();
         for (index, slots) in self.releases.iter().enumerate() {
-            if !self.wanted[index] || self.catalog.home_interior(index) {
+            if !self.wanted[index] || self.home.interior(index) {
                 continue;
             }
             live += self.structure.shapes[index].volume();
             series.push(live as f64);
             for &slot in slots {
-                if self.catalog.home_interior(slot) {
+                if self.home.interior(slot) {
                     continue;
                 }
                 live -= self.structure.shapes[slot].volume();
@@ -326,7 +340,7 @@ impl<Data: Differentiable> Plan<Data> {
                 .functions
                 .get(index)
                 .expect("plan columns are fixed");
-            let liveness = if self.catalog.home_interior(index) {
+            let liveness = if self.home.interior(index) {
                 "fused (window-gemm)".to_string()
             } else if self.readable[index] {
                 "kept".to_string()
@@ -352,13 +366,13 @@ impl<Data: Differentiable> Plan<Data> {
             self.readable.iter().filter(|&&readable| readable).count(),
         )
         .expect("writing to a string cannot fail");
-        let groups = self.catalog.home_groups();
+        let groups = self.home().groups();
         if groups > 0 {
             writeln!(
                 lines,
                 "fused {groups} window-gemm groups, {} interior nodes skipped",
                 (0..self.len())
-                    .filter(|&index| self.catalog.home_interior(index))
+                    .filter(|&index| self.home.interior(index))
                     .count(),
             )
             .expect("writing to a string cannot fail");
@@ -451,9 +465,9 @@ impl<Data: Tensorial> Plan<Data> {
 
         let mut values: Vec<Data> = Vec::with_capacity(self.len());
         for index in 0..self.len() {
-            let value = if !self.wanted[index] || self.catalog.home_interior(index) {
+            let value = if !self.wanted[index] || self.home.interior(index) {
                 Data::counted(self.structure.shapes[index].clone(), 0)
-            } else if let Some(group) = self.catalog.at(index).and_then(|pattern| pattern.fused()) {
+            } else if let Some(group) = self.home.at(index).and_then(|pattern| pattern.fused()) {
                 // The fused call reads its sources directly; the chain
                 // between them was never materialized.
                 group.apply(&values)

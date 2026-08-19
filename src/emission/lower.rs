@@ -16,7 +16,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::{BatchNormalization, Pattern, ReduceWindow, WindowProduct};
+use crate::engine::{BatchNormalization, Catalog, Pattern, ReduceWindow, WindowProduct};
 use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
@@ -85,14 +85,17 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     /// self-contained interchange text; parsing, bytecode serialization,
     /// and execution belong to toolchains outside the crate.
     ///
-    /// Matched catalog groups raise: a window-GEMM group's matmul
+    /// Elected catalog groups raise: a window-GEMM group's matmul
     /// emits `stablehlo.convolution` from the source and kernel with
     /// the im2col chain never crossing the boundary, a max-pool
     /// window group emits `stablehlo.reduce_window` over its source,
     /// and a batch-normalization formula emits
     /// `stablehlo.batch_norm_training` / `batch_norm_inference` —
     /// the pattern library's second life, recovering the richer named
-    /// operations the target holds library kernels for.
+    /// operations the target holds library kernels for. Emission
+    /// elects from the plan's candidate pool with a total repertoire,
+    /// so raising happens on every memory posture: an engine-backward
+    /// plan emits the same module as its forward twin.
     ///
     /// # Errors
     /// [`EmitError::Unsupported`] is reserved for future operations
@@ -101,6 +104,11 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         let shapes = self.shapes();
         let wanted = self.wanted();
         let tensor = |index: usize| tensor_type::<Element>(&shapes[index]);
+
+        // The emission consumer elects its catalog from the plan's
+        // candidate pool. Its repertoire is total — every pattern
+        // raises here, on every memory posture.
+        let catalog = Catalog::elect(self.candidates(), |_| true);
 
         // Arguments: parameters first, then inputs, in recording order.
         let mut emitter = Emitter {
@@ -126,14 +134,13 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         }
 
         for (index, &wanted_node) in wanted.iter().enumerate() {
-            // A pattern's emit interior is replaced wholesale by the
+            // An elected entry's interior is replaced wholesale by the
             // operation raised at its group's root, exactly as runs
             // replace home interiors with the fused call.
-            if !wanted_node || self.catalog().emit_interior(index) || emitter.names[index].is_some()
-            {
+            if !wanted_node || catalog.interior(index) || emitter.names[index].is_some() {
                 continue;
             }
-            self.lower(index, &mut emitter)?;
+            self.lower(index, &catalog, &mut emitter)?;
         }
 
         let mut results: Vec<(String, String)> = Vec::new();
@@ -168,10 +175,15 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     }
 
     /// Lowers node `index` into `emitter`, naming its result. A node
-    /// carrying a catalog entry raises to its named operation instead
-    /// of lowering primitives; the emitter never rematches.
-    fn lower(&self, index: usize, emitter: &mut Emitter) -> Result<(), EmitError> {
-        if let Some(pattern) = self.catalog().at(index) {
+    /// carrying an elected catalog entry raises to its named operation
+    /// instead of lowering primitives; the emitter never rematches.
+    fn lower(
+        &self,
+        index: usize,
+        catalog: &Catalog,
+        emitter: &mut Emitter,
+    ) -> Result<(), EmitError> {
+        if let Some(pattern) = catalog.at(index) {
             match pattern {
                 Pattern::WindowProduct(group) => {
                     self.raise_convolution(index, group, emitter);

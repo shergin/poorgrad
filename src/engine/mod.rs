@@ -12,5 +12,5 @@ pub use plan::Plan;
 pub use request::Request;
 pub use run::Run;
 
-pub(crate) use pattern::{BatchNormalization, Pattern, ReduceWindow, WindowProduct};
+pub(crate) use pattern::{BatchNormalization, Catalog, Pattern, ReduceWindow, WindowProduct};
 pub(crate) use run::Posture;

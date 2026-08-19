@@ -28,6 +28,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- The pattern layer split into discovery and election: compilation
+  pools every closed candidate once, posture-blind, and each consumer
+  elects the entries its repertoire supports, so a partial-support
+  consumer never claims a region it cannot use. Emission's repertoire
+  is total, and engine-backward plans now raise window-GEMM groups to
+  `stablehlo.convolution` exactly like forward plans — the old
+  posture gate wrongly kept them primitive. Home fusion is unchanged
+  on every posture.
+
 - The window-GEMM match moved from ad-hoc `Plan` columns into a
   pattern catalog (`src/engine/pattern/`): one compiled column any
   number of patterns share, with home fusion and StableHLO raising as

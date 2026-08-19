@@ -2,6 +2,7 @@ use crate::function::Function;
 use crate::graph::Network;
 use crate::{Tape, Tensor, max_pool};
 
+use super::super::candidates::Candidates;
 use super::super::catalog::Catalog;
 use super::super::pattern::Pattern;
 use super::super::view::View;
@@ -28,13 +29,6 @@ fn full_view<'plan>(
     readable: &'plan [bool],
 ) -> View<'plan, Tensor<f64>> {
     View::new(network.structure(), wanted, readable)
-}
-
-/// Counts the stored catalog entries.
-fn entries(catalog: &Catalog, length: usize) -> usize {
-    (0..length)
-        .filter(|&index| catalog.at(index).is_some())
-        .count()
 }
 
 #[test]
@@ -105,22 +99,27 @@ fn a_kept_lanes_reshape_bars_the_match() {
     let mut readable = vec![false; length];
     readable[lanes] = true;
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, true);
-    assert_eq!(entries(&catalog, length), 0);
+    let catalog = Catalog::elect(&Candidates::discover(&view), |_| true);
+    assert_eq!(catalog.groups(), 0);
 }
 
 #[test]
-fn the_posture_gate_does_not_gate_the_raise_only_pattern() {
-    // Engine-backward plans store the pool match too: the home run
-    // executes every node either way, and only emission consumes it.
-    let (network, _root) = pool_network();
+fn the_home_repertoire_never_elects_the_raise_only_pattern() {
+    // Discovery pools the pool candidate on every plan; the home
+    // consumer's repertoire excludes it (raise-only), so home runs
+    // execute the recorded fold while a total election raises it.
+    let (network, root) = pool_network();
     let length = network.structure().functions.len();
     let wanted = vec![true; length];
     let readable = vec![false; length];
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, false);
-    assert_eq!(entries(&catalog, length), 1);
-    assert_eq!(catalog.home_groups(), 0);
-    assert!((0..length).all(|index| !catalog.home_interior(index)));
-    assert!((0..length).any(|index| catalog.emit_interior(index)));
+    let candidates = Candidates::discover(&view);
+
+    let total = Catalog::elect(&candidates, |_| true);
+    assert!(total.at(root).is_some());
+    assert!((0..length).any(|index| total.interior(index)));
+
+    let home = Catalog::elect(&candidates, |pattern| pattern.fused().is_some());
+    assert_eq!(home.groups(), 0);
+    assert!((0..length).all(|index| !home.interior(index)));
 }

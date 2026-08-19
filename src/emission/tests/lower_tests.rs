@@ -311,7 +311,7 @@ fn convolution_case() -> Case {
     let convolved = conv2d(image_value, weights_value, bias_value, 2, 1).symbol();
     let network = tape.into_network();
     let plan = network.compile(Request::roots([convolved]));
-    assert_eq!(plan.catalog().home_groups(), 1, "the forward plan fuses");
+    assert_eq!(plan.home().groups(), 1, "the forward plan fuses");
     let run = plan.forward(&network.parameters(), []);
     Case {
         name: "convolution",
@@ -362,7 +362,7 @@ fn probe_case() -> Case {
         .symbol();
     let network = tape.into_network();
     let plan = network.compile(Request::roots([scores]));
-    assert_eq!(plan.catalog().home_groups(), 1, "the conv chain fuses");
+    assert_eq!(plan.home().groups(), 1, "the conv chain fuses");
     let run = plan.forward(&network.parameters(), []);
     Case {
         name: "probe",
@@ -591,6 +591,37 @@ fn engine_backward_plans_still_raise_the_pool() {
     let plan = network.compile(Request::roots([loss]).backward());
     let module = plan.emit_stablehlo().expect("the plan emits");
     assert!(module.contains("\"stablehlo.reduce_window\""), "{module}");
+}
+
+#[test]
+fn engine_backward_plans_emit_the_same_module() {
+    // Emission elects with a total repertoire on every memory
+    // posture, so the backward plan of the same request emits
+    // byte-identical text — including the raised convolution, which
+    // the old posture gate wrongly kept primitive.
+    use crate::conv2d;
+
+    let tape = Tape::new();
+    let image = tape.parameter(Tensor::new(
+        [1, 1, 3, 3],
+        (0..9)
+            .map(|index| index as f32 / 3.0 - 1.0)
+            .collect::<Vec<_>>(),
+    ));
+    let weights = tape.parameter(Tensor::new([1, 1, 2, 2], [0.5_f32, -0.5, 0.25, -0.25]));
+    let bias = tape.parameter(Tensor::new([1], [0.1_f32]));
+    let convolved = conv2d(image, weights, bias, 1, 0).symbol();
+    let network = tape.into_network();
+
+    let forward = network.compile(Request::roots([convolved]));
+    let backward = network.compile(Request::roots([convolved]).backward());
+    let forward_module = forward.emit_stablehlo().expect("the forward plan emits");
+    let backward_module = backward.emit_stablehlo().expect("the backward plan emits");
+    assert!(
+        backward_module.contains("stablehlo.convolution"),
+        "{backward_module}"
+    );
+    assert_eq!(forward_module, backward_module);
 }
 
 #[test]

@@ -439,9 +439,9 @@ live volume: peak 192 elements at node 13, retain-all 856
 
     // The posture gate: the same tape compiled engine-backward stores
     // no window-GEMM group.
-    assert_eq!(forward.catalog().home_groups(), 1);
+    assert_eq!(forward.home().groups(), 1);
     let backward = network.compile(Request::roots([output]).backward());
-    assert_eq!(backward.catalog().home_groups(), 0);
+    assert_eq!(backward.home().groups(), 0);
 }
 
 #[test]

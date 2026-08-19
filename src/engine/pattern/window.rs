@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use crate::function::Function;
 use crate::{Differentiable, Shape, Tensorial};
 
-use super::catalog::Candidate;
+use super::candidates::Candidate;
 use super::pattern::Pattern;
 use super::view::View;
 
@@ -148,6 +148,7 @@ pub(crate) fn match_at<Data: Differentiable>(index: usize, view: &View<Data>) ->
             stride,
             padding,
         }),
+        root: index,
         interiors: chain,
         named: SmallVec::new(),
     })
