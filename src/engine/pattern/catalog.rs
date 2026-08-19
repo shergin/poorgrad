@@ -89,6 +89,10 @@ impl Catalog {
         &self.home_interior
     }
 
+    pub(crate) fn emit_interiors(&self) -> &[bool] {
+        &self.emit_interior
+    }
+
     /// Returns how many home-fusing groups the plan matched.
     pub(crate) fn home_groups(&self) -> usize {
         self.at

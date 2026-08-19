@@ -16,7 +16,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::WindowProduct;
+use crate::engine::{Pattern, WindowProduct};
 use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
@@ -123,10 +123,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         }
 
         for (index, &wanted_node) in wanted.iter().enumerate() {
-            // A fusion interior is replaced wholesale by its group's
-            // raised convolution, exactly as runs replace it with the
-            // fused call.
-            if !wanted_node || self.fused_interiors()[index] || emitter.names[index].is_some() {
+            // A pattern's emit interior is replaced wholesale by the
+            // operation raised at its group's root, exactly as runs
+            // replace home interiors with the fused call.
+            if !wanted_node || self.emit_interiors()[index] || emitter.names[index].is_some() {
                 continue;
             }
             self.lower(index, &mut emitter)?;
@@ -163,11 +163,17 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         Ok(module)
     }
 
-    /// Lowers node `index` into `emitter`, naming its result.
+    /// Lowers node `index` into `emitter`, naming its result. A node
+    /// carrying a catalog entry raises to its named operation instead
+    /// of lowering primitives; the emitter never rematches.
     fn lower(&self, index: usize, emitter: &mut Emitter) -> Result<(), EmitError> {
-        if let Some(group) = self.fusion_group(index) {
-            self.raise_convolution(index, group, emitter);
-            return Ok(());
+        if let Some(pattern) = self.pattern(index) {
+            match pattern {
+                Pattern::WindowProduct(group) => {
+                    self.raise_convolution(index, group, emitter);
+                    return Ok(());
+                }
+            }
         }
         let shapes = self.shapes();
         let shape = &shapes[index];

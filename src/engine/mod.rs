@@ -12,5 +12,5 @@ pub use plan::Plan;
 pub use request::Request;
 pub use run::Run;
 
-pub(crate) use pattern::WindowProduct;
+pub(crate) use pattern::{Pattern, WindowProduct};
 pub(crate) use run::Posture;

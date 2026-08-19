@@ -9,7 +9,7 @@ use crate::{Differentiable, Shape, Tensorial};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{Catalog, Pattern, PostureGate, View, WindowProduct};
+use super::pattern::{Catalog, Pattern, PostureGate, View};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -240,20 +240,18 @@ impl<Data: Differentiable> Plan<Data> {
         self.catalog.home_groups()
     }
 
-    /// Returns the window-GEMM fusion group rooted at node `index`, if
-    /// its im2col chain matched.
-    pub(crate) fn fusion_group(&self, index: usize) -> Option<&WindowProduct> {
-        match self.catalog.at(index) {
-            Some(Pattern::WindowProduct(group)) => Some(group),
-            _ => None,
-        }
+    /// Returns the pattern rooted at node `index`, if one matched:
+    /// the only read emission is allowed — the emitter consumes
+    /// catalog entries and never rematches.
+    pub(crate) fn pattern(&self, index: usize) -> Option<&Pattern> {
+        self.catalog.at(index)
     }
 
-    /// Returns which nodes are fusion-group interiors: skipped by runs
-    /// and replaced wholesale by the fused call — or by the raised
-    /// operation, when a plan consumer emits instead of executing.
-    pub(crate) fn fused_interiors(&self) -> &[bool] {
-        self.catalog.home_interiors()
+    /// Returns which nodes a raising consumer skips: the unnamed
+    /// interiors and named results of raising matches, replaced
+    /// wholesale by the raised operation at each group's root.
+    pub(crate) fn emit_interiors(&self) -> &[bool] {
+        self.catalog.emit_interiors()
     }
 
     /// Simulates a run's live volume under `releases`, returning the
