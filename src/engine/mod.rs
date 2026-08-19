@@ -12,5 +12,7 @@ pub use plan::Plan;
 pub use request::Request;
 pub use run::Run;
 
-pub(crate) use pattern::{Pattern, ReduceWindow, WindowProduct};
+pub(crate) use pattern::{
+    BatchNormInference, BatchNormTraining, Pattern, ReduceWindow, WindowProduct,
+};
 pub(crate) use run::Posture;

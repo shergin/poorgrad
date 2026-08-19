@@ -1,5 +1,6 @@
 use smallvec::{SmallVec, smallvec};
 
+use super::batch_norm::{BatchNormInference, BatchNormTraining};
 use super::reduce_window::ReduceWindow;
 use super::window::WindowProduct;
 
@@ -17,6 +18,11 @@ pub(crate) enum Pattern {
     WindowProduct(WindowProduct),
     /// Canonical max-pool window fold ending in the facade squeeze.
     ReduceWindow(ReduceWindow),
+    /// Batch normalization by the batch's own statistics, with the
+    /// mean and variance as named results.
+    BatchNormTraining(BatchNormTraining),
+    /// Batch normalization by supplied statistics.
+    BatchNormInference(BatchNormInference),
 }
 
 impl Pattern {
@@ -28,7 +34,9 @@ impl Pattern {
             Pattern::WindowProduct(group) => {
                 smallvec![group.source, group.kernel]
             }
-            Pattern::ReduceWindow(_) => SmallVec::new(),
+            Pattern::ReduceWindow(_)
+            | Pattern::BatchNormTraining(_)
+            | Pattern::BatchNormInference(_) => SmallVec::new(),
         }
     }
 
@@ -38,7 +46,9 @@ impl Pattern {
     pub(crate) fn homes(&self) -> bool {
         match self {
             Pattern::WindowProduct(_) => true,
-            Pattern::ReduceWindow(_) => false,
+            Pattern::ReduceWindow(_)
+            | Pattern::BatchNormTraining(_)
+            | Pattern::BatchNormInference(_) => false,
         }
     }
 
@@ -46,8 +56,10 @@ impl Pattern {
     /// operation.
     pub(crate) fn raises(&self) -> bool {
         match self {
-            Pattern::WindowProduct(_) => true,
-            Pattern::ReduceWindow(_) => true,
+            Pattern::WindowProduct(_)
+            | Pattern::ReduceWindow(_)
+            | Pattern::BatchNormTraining(_)
+            | Pattern::BatchNormInference(_) => true,
         }
     }
 }

@@ -16,7 +16,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::{Pattern, ReduceWindow, WindowProduct};
+use crate::engine::{BatchNormInference, BatchNormTraining, Pattern, ReduceWindow, WindowProduct};
 use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
@@ -87,8 +87,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     ///
     /// Matched catalog groups raise: a window-GEMM group's matmul
     /// emits `stablehlo.convolution` from the source and kernel with
-    /// the im2col chain never crossing the boundary, and a max-pool
-    /// window group emits `stablehlo.reduce_window` over its source —
+    /// the im2col chain never crossing the boundary, a max-pool
+    /// window group emits `stablehlo.reduce_window` over its source,
+    /// and a batch-normalization formula emits
+    /// `stablehlo.batch_norm_training` / `batch_norm_inference` —
     /// the pattern library's second life, recovering the richer named
     /// operations the target holds library kernels for.
     ///
@@ -176,6 +178,14 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
                 }
                 Pattern::ReduceWindow(group) => {
                     self.raise_reduce_window(index, group, emitter);
+                    return Ok(());
+                }
+                Pattern::BatchNormTraining(group) => {
+                    self.raise_batch_norm_training(index, group, emitter);
+                    return Ok(());
+                }
+                Pattern::BatchNormInference(group) => {
+                    self.raise_batch_norm_inference(index, group, emitter);
                     return Ok(());
                 }
             }
@@ -773,6 +783,82 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             tensor_type::<Element>(&shapes[index]),
             size = group.size,
             stride = group.stride,
+        ));
+        emitter.names[index] = Some(format!("%v{index}"));
+    }
+
+    /// Renders the epsilon a batch-norm raise carries as its
+    /// attribute, read from the matched single-value leaf. StableHLO
+    /// types the attribute `f32` regardless of the module's element
+    /// type, so a wider recorded epsilon rounds — within emission's
+    /// envelope-based conformance contract, like the target's own
+    /// reassociation.
+    fn epsilon_literal(&self, index: usize) -> String {
+        let Some(Function::Leaf(leaf)) = self.functions().get(index) else {
+            unreachable!("the matcher requires a single-value leaf epsilon")
+        };
+        leaf.0.to_vec()[0].literal()
+    }
+
+    /// Writes the raise of one training-mode batch normalization: a
+    /// single `stablehlo.batch_norm_training` over the input, scale,
+    /// and shift, whose three results name the root, the mean, and
+    /// the variance — the named results were emit-skipped, and this
+    /// is the only name they receive, so an observed statistic lands
+    /// in the result list directly from the raised operation.
+    fn raise_batch_norm_training(
+        &self,
+        index: usize,
+        group: &BatchNormTraining,
+        emitter: &mut Emitter,
+    ) {
+        let shapes = self.shapes();
+        emitter.line(format!(
+            "%v{index}:3 = \"stablehlo.batch_norm_training\"({}, {}, {}) \
+             {{epsilon = {} : f32, feature_index = 1 : i64}} \
+             : ({}, {}, {}) -> ({}, {stat}, {stat})",
+            emitter.name(group.input),
+            emitter.name(group.scale),
+            emitter.name(group.shift),
+            self.epsilon_literal(group.epsilon),
+            tensor_type::<Element>(&shapes[group.input]),
+            tensor_type::<Element>(&shapes[group.scale]),
+            tensor_type::<Element>(&shapes[group.shift]),
+            tensor_type::<Element>(&shapes[index]),
+            stat = tensor_type::<Element>(&shapes[group.mean]),
+        ));
+        emitter.names[index] = Some(format!("%v{index}#0"));
+        emitter.names[group.mean] = Some(format!("%v{index}#1"));
+        emitter.names[group.variance] = Some(format!("%v{index}#2"));
+    }
+
+    /// Writes the raise of one inference-mode batch normalization: a
+    /// single `stablehlo.batch_norm_inference` over the input, scale,
+    /// shift, and the supplied statistics, which are ordinary
+    /// already-named operands.
+    fn raise_batch_norm_inference(
+        &self,
+        index: usize,
+        group: &BatchNormInference,
+        emitter: &mut Emitter,
+    ) {
+        let shapes = self.shapes();
+        emitter.line(format!(
+            "%v{index} = \"stablehlo.batch_norm_inference\"({}, {}, {}, {}, {}) \
+             {{epsilon = {} : f32, feature_index = 1 : i64}} \
+             : ({}, {}, {}, {}, {}) -> {}",
+            emitter.name(group.input),
+            emitter.name(group.scale),
+            emitter.name(group.shift),
+            emitter.name(group.mean),
+            emitter.name(group.variance),
+            self.epsilon_literal(group.epsilon),
+            tensor_type::<Element>(&shapes[group.input]),
+            tensor_type::<Element>(&shapes[group.scale]),
+            tensor_type::<Element>(&shapes[group.shift]),
+            tensor_type::<Element>(&shapes[group.mean]),
+            tensor_type::<Element>(&shapes[group.variance]),
+            tensor_type::<Element>(&shapes[index]),
         ));
         emitter.names[index] = Some(format!("%v{index}"));
     }

@@ -708,6 +708,15 @@ impl<Element: Differentiable> Differentiable for Tensor<Element> {
     fn shape(&self) -> Shape {
         self.logical_shape().clone()
     }
+
+    /// A tensor certifies through its elements: the shape matches and
+    /// every element is its own type's counted value.
+    fn is_counted(&self, shape: &Shape, count: usize) -> bool {
+        *self.logical_shape() == *shape
+            && self
+                .iter()
+                .all(|element| element.is_counted(&Shape::scalar(), count))
+    }
 }
 
 impl<Element: Elementary> Tensor<Element> {

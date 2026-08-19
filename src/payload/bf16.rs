@@ -204,6 +204,11 @@ impl Differentiable for Bf16 {
     fn shape(&self) -> Shape {
         Shape::scalar()
     }
+
+    /// Scalar payloads ignore the shape, mirroring `counted`.
+    fn is_counted(&self, _shape: &Shape, count: usize) -> bool {
+        *self == Self::from_f32(count as f32)
+    }
 }
 
 impl Elementary for Bf16 {

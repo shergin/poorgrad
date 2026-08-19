@@ -2,6 +2,7 @@ use smallvec::SmallVec;
 
 use crate::{Differentiable, Tensorial};
 
+use super::batch_norm;
 use super::pattern::Pattern;
 use super::reduce_window;
 use super::view::View;
@@ -77,6 +78,16 @@ impl Catalog {
             collect_one(view, &mut catalog, &mut claimed, window::match_at);
         }
         collect_one(view, &mut catalog, &mut claimed, reduce_window::match_at);
+        // Training before inference: the richer, more specific ending
+        // claims first, so a training recording never raises as
+        // inference-over-computed-statistics.
+        collect_one(view, &mut catalog, &mut claimed, batch_norm::match_training);
+        collect_one(
+            view,
+            &mut catalog,
+            &mut claimed,
+            batch_norm::match_inference,
+        );
 
         catalog
     }
@@ -137,7 +148,9 @@ impl Catalog {
                 group.stride,
                 group.padding,
             )),
-            Pattern::ReduceWindow(_) => None,
+            Pattern::ReduceWindow(_)
+            | Pattern::BatchNormTraining(_)
+            | Pattern::BatchNormInference(_) => None,
         }
     }
 }

@@ -458,6 +458,120 @@ fn a_hand_rolled_pool_fold_raises_identically() {
     assert_eq!(module, pool_case().module);
 }
 
+/// Builds a training-mode batch normalization with its statistics
+/// observed: the three-result raise, whose mean and variance reach
+/// the result list straight from the raised operation.
+fn batch_norm_training_case() -> Case {
+    use crate::BatchNorm;
+
+    let tape = Tape::new();
+    let scale = Tensor::new([2], [1.5_f32, 0.5]);
+    let shift = Tensor::new([2], [0.25_f32, -0.25]);
+    let layer = BatchNorm::new(
+        &tape,
+        scale.clone(),
+        shift.clone(),
+        Tensor::filled([], 1e-5_f32),
+    );
+    let input = Tensor::new(
+        [3, 2],
+        (0..6).map(|v| v as f32 * 0.7 - 2.0).collect::<Vec<_>>(),
+    );
+    let input_value = tape.input(input.clone());
+    let normalization = layer.express(&tape, input_value);
+    let output = normalization.output.symbol();
+    let mean = normalization.mean.symbol();
+    let variance = normalization.variance.symbol();
+    // The module's result list follows recording order: the mean and
+    // variance precede the trailing shift root.
+    let mut readable: Vec<crate::Symbol> = vec![output, mean, variance];
+    readable.sort_by_key(|&symbol: &crate::Symbol| symbol.id.index());
+    let network = tape.into_network();
+    let plan = network.compile(Request::roots([output]).observe([mean, variance]));
+    let run = plan.forward(&network.parameters(), []);
+    Case {
+        name: "batch-norm-training",
+        tolerance: 1e-4,
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![scale, shift, input],
+        expected: readable
+            .iter()
+            .map(|&symbol| run.of(symbol).to_vec())
+            .collect(),
+    }
+}
+
+#[test]
+fn training_batch_norms_raise_with_named_statistics() {
+    let module = batch_norm_training_case().module;
+    assert!(
+        module.contains("\"stablehlo.batch_norm_training\""),
+        "{module}"
+    );
+    assert!(module.contains("epsilon = 1.0e-5 : f32"), "{module}");
+    assert!(module.contains("feature_index = 1 : i64"), "{module}");
+    // The primitive decomposition never crosses the boundary: no
+    // statistic reductions, no division, no square root.
+    assert!(!module.contains("stablehlo.reduce"), "{module}");
+    assert!(!module.contains("stablehlo.divide"), "{module}");
+    assert!(!module.contains("stablehlo.sqrt"), "{module}");
+    // The observed statistics return as the raise's own results.
+    assert!(module.contains("#1"), "{module}");
+    assert!(module.contains("#2"), "{module}");
+}
+
+/// Builds an inference-mode batch normalization over fed statistics:
+/// the five-operand raise, statistics as ordinary arguments.
+fn batch_norm_inference_case() -> Case {
+    use crate::BatchNorm;
+
+    let tape = Tape::new();
+    let scale = Tensor::new([2], [1.5_f32, 0.5]);
+    let shift = Tensor::new([2], [0.25_f32, -0.25]);
+    let layer = BatchNorm::new(
+        &tape,
+        scale.clone(),
+        shift.clone(),
+        Tensor::filled([], 1e-5_f32),
+    );
+    let input = Tensor::new(
+        [3, 2],
+        (0..6).map(|v| v as f32 * 0.6 - 1.5).collect::<Vec<_>>(),
+    );
+    let input_value = tape.input(input.clone());
+    let mean = Tensor::new([2], [0.1_f32, -0.2]);
+    let mean_value = tape.input(mean.clone());
+    let variance = Tensor::new([2], [1.25_f32, 0.75]);
+    let variance_value = tape.input(variance.clone());
+    let output = layer
+        .express_with(&tape, input_value, mean_value, variance_value)
+        .symbol();
+    let network = tape.into_network();
+    let plan = network.compile(Request::roots([output]));
+    let run = plan.forward(&network.parameters(), []);
+    Case {
+        name: "batch-norm-inference",
+        tolerance: 1e-4,
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![scale, shift, input, mean, variance],
+        expected: vec![run.of(output).to_vec()],
+    }
+}
+
+#[test]
+fn inference_batch_norms_raise_over_their_arguments() {
+    let module = batch_norm_inference_case().module;
+    assert!(
+        module.contains("\"stablehlo.batch_norm_inference\""),
+        "{module}"
+    );
+    assert!(!module.contains("stablehlo.divide"), "{module}");
+    assert!(!module.contains("stablehlo.sqrt"), "{module}");
+    // The fed statistics cross the boundary as ordinary arguments.
+    assert!(module.contains("%arg3"), "{module}");
+    assert!(module.contains("%arg4"), "{module}");
+}
+
 #[test]
 fn engine_backward_plans_still_raise_the_pool() {
     // The pool motif is raise-only, so its storage is not gated by
@@ -612,6 +726,8 @@ fn emitted_modules_parse_through_the_toolchain() {
         convolution_case(),
         probe_case(),
         pool_case(),
+        batch_norm_training_case(),
+        batch_norm_inference_case(),
         bf16_case(),
     ] {
         let path = temp_file(&format!("parse-{}.mlir", case.name), &case.module);
@@ -674,6 +790,10 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         convolution_case(),
         probe_case(),
         pool_case(),
+        // The batch-norm cases parse (tier 0) but stay out of this
+        // list: the reference interpreter does not implement the
+        // batch_norm operations yet (openxla/stablehlo#1571). The
+        // XLA-backed `run-stablehlo-xla.py` evaluator executes them.
         bf16_case(),
     ] {
         let module_path = temp_file(&format!("eval-{}.mlir", case.name), &case.module);

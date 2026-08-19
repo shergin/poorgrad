@@ -81,6 +81,22 @@ pub trait Differentiable:
     /// It is what record-time shape inference seeds leaves with. Scalars
     /// are rank 0.
     fn shape(&self) -> Shape;
+
+    /// Returns whether this payload is exactly what
+    /// [`counted`](Differentiable::counted) mints for `shape` and
+    /// `count`.
+    ///
+    /// It is the recognizer half of `counted`: pattern matchers use it
+    /// to certify a recorded size-derived constant (the divisor of a
+    /// composed mean) before raising the surrounding formula to a
+    /// named target operation, where an unverified divisor would
+    /// silently change semantics abroad. The conservative default
+    /// answers `false`, which only forgoes recognitions: a payload
+    /// that cannot certify stays on the primitive path.
+    fn is_counted(&self, shape: &Shape, count: usize) -> bool {
+        let _ = (shape, count);
+        false
+    }
 }
 
 impl Differentiable for f32 {
@@ -111,6 +127,11 @@ impl Differentiable for f32 {
     fn shape(&self) -> Shape {
         Shape::scalar()
     }
+
+    /// Scalar payloads ignore the shape, mirroring `counted`.
+    fn is_counted(&self, _shape: &Shape, count: usize) -> bool {
+        *self == count as f32
+    }
 }
 
 impl Differentiable for f64 {
@@ -140,5 +161,10 @@ impl Differentiable for f64 {
 
     fn shape(&self) -> Shape {
         Shape::scalar()
+    }
+
+    /// Scalar payloads ignore the shape, mirroring `counted`.
+    fn is_counted(&self, _shape: &Shape, count: usize) -> bool {
+        *self == count as f64
     }
 }

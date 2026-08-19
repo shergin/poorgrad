@@ -410,6 +410,24 @@ lanes never cross the boundary. A balanced fold tree, a permuted lane
 order, or an omitted squeeze is a documented false negative;
 `describe` never mentions raise-only matches.
 
+**Batch-norm raise (batch_norm_training / batch_norm_inference).**
+Two raise-only catalog motifs over the recorded `BatchNorm` formulas,
+rooted at the trailing shift `Add`. The training variant matches the
+batch's own statistics — each `mean_along` verified as
+`Div(SumAlong, counted leaf)` through `Differentiable::is_counted`,
+so an unverified divisor (an unbiased variance) never raises — and
+emits `stablehlo.batch_norm_training`, whose three results name the
+output, mean, and variance; the statistics are *named results*, the
+keep-set refinement: they may be observed (training loops read them
+for running estimates) and are emit-skipped, receiving their SSA
+names from the raise at the root. The inference variant matches the
+same tail over supplied statistics and emits
+`stablehlo.batch_norm_inference` with the statistics as ordinary
+arguments. The single-value epsilon leaf rides as the operation's
+`f32` attribute. Unnamed interiors (the centering, the deviation)
+still bar when readable, and a statistic feeding an expression
+outside the formula bars the match.
+
 **Field.** A value-aligned buffer: one payload per node, carrying its
 network family's origin rather than borrowing anything, so it can be
 combined across runs (averaging data-parallel gradients) and carried

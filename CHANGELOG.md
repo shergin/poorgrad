@@ -9,6 +9,17 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- StableHLO emission raises the recorded `BatchNorm` formulas to
+  `stablehlo.batch_norm_training` / `batch_norm_inference`. The
+  training raise returns the batch statistics as its own results, so
+  observing the mean and variance no longer bars recognition; the
+  primitive statistic reductions never cross the boundary. Raise-only:
+  forward runs execute the recorded formulas unchanged.
+- `Differentiable::is_counted`, the recognizer half of `counted`: a
+  provided method certifying that a payload is exactly the
+  size-derived constant `counted` mints. Pattern matchers use it to
+  verify a recorded mean's divisor before raising; the conservative
+  default answers `false` and only forgoes recognitions.
 - StableHLO emission raises the canonical `max_pool` window fold to
   `stablehlo.reduce_window`: the unfolded lanes and the recorded
   `maximum` fold no longer cross the boundary as a static gather.
