@@ -1,5 +1,6 @@
 use smallvec::{SmallVec, smallvec};
 
+use super::reduce_window::ReduceWindow;
 use super::window::WindowProduct;
 
 /// A recognized motif rooted at one plan node.
@@ -14,16 +15,20 @@ use super::window::WindowProduct;
 pub(crate) enum Pattern {
     /// Canonical im2col chain feeding a rank-2 `matmul`.
     WindowProduct(WindowProduct),
+    /// Canonical max-pool window fold ending in the facade squeeze.
+    ReduceWindow(ReduceWindow),
 }
 
 impl Pattern {
     /// Returns the slots a home action reads past the root's operand
     /// links; liveness must keep them alive until the fused call.
+    /// Raise-only motifs read nothing extra: their chains run.
     pub(crate) fn extra_reads(&self) -> SmallVec<[usize; 4]> {
         match self {
             Pattern::WindowProduct(group) => {
                 smallvec![group.source, group.kernel]
             }
+            Pattern::ReduceWindow(_) => SmallVec::new(),
         }
     }
 
@@ -33,6 +38,7 @@ impl Pattern {
     pub(crate) fn homes(&self) -> bool {
         match self {
             Pattern::WindowProduct(_) => true,
+            Pattern::ReduceWindow(_) => false,
         }
     }
 
@@ -41,6 +47,7 @@ impl Pattern {
     pub(crate) fn raises(&self) -> bool {
         match self {
             Pattern::WindowProduct(_) => true,
+            Pattern::ReduceWindow(_) => true,
         }
     }
 }

@@ -398,6 +398,18 @@ exact for the reverse scan. `describe` prints the groups;
 recognition proposes, payloads and backends dispose — neither ever
 sees graph structure.
 
+**Pool window (reduce_window).** The pattern catalog's first
+raise-only motif: the canonical `max_pool` spelling — two square
+unfolds, the lane permute and reshape, the left-associated `maximum`
+fold in lane order, the trailing squeeze — rooted at the squeeze
+reshape. It has no home action: forward runs execute the recorded
+fold unchanged, so storage is not gated by memory posture and
+engine-backward plans carry the match too. Emission raises the group
+to `stablehlo.reduce_window` over the rank-4 source, so the unfolded
+lanes never cross the boundary. A balanced fold tree, a permuted lane
+order, or an omitted squeeze is a documented false negative;
+`describe` never mentions raise-only matches.
+
 **Field.** A value-aligned buffer: one payload per node, carrying its
 network family's origin rather than borrowing anything, so it can be
 combined across runs (averaging data-parallel gradients) and carried

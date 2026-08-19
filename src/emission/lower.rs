@@ -16,7 +16,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::{Pattern, WindowProduct};
+use crate::engine::{Pattern, ReduceWindow, WindowProduct};
 use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
@@ -85,11 +85,12 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     /// self-contained interchange text; parsing, bytecode serialization,
     /// and execution belong to toolchains outside the crate.
     ///
-    /// A matched window-GEMM fusion group raises: the im2col chain
-    /// never crosses the boundary, and the group's matmul node emits
-    /// `stablehlo.convolution` from the source and kernel directly —
-    /// the pattern library's second life, recovering the richer op the
-    /// target holds a named kernel for.
+    /// Matched catalog groups raise: a window-GEMM group's matmul
+    /// emits `stablehlo.convolution` from the source and kernel with
+    /// the im2col chain never crossing the boundary, and a max-pool
+    /// window group emits `stablehlo.reduce_window` over its source —
+    /// the pattern library's second life, recovering the richer named
+    /// operations the target holds library kernels for.
     ///
     /// # Errors
     /// [`EmitError::Unsupported`] is reserved for future operations
@@ -171,6 +172,10 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             match pattern {
                 Pattern::WindowProduct(group) => {
                     self.raise_convolution(index, group, emitter);
+                    return Ok(());
+                }
+                Pattern::ReduceWindow(group) => {
+                    self.raise_reduce_window(index, group, emitter);
                     return Ok(());
                 }
             }
@@ -716,6 +721,58 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         emitter.line(format!(
             "%v{index} = stablehlo.reshape {windows} : ({windows_type}) -> {}",
             tensor_type::<Element>(&shapes[index]),
+        ));
+        emitter.names[index] = Some(format!("%v{index}"));
+    }
+
+    /// Writes the raise of one max-pool window group: a single
+    /// `stablehlo.reduce_window` with a `maximum` region reads the
+    /// rank-4 source directly, so the unfolded lanes and the recorded
+    /// fold never cross the boundary. The window and strides ride the
+    /// spatial axes only; v1 pools carry no padding. Tie-breaking is
+    /// value-identical (`maximum` over a window is order-free on
+    /// values), and gradients never cross: the raise serves forward
+    /// plans, whose runs execute the recorded fold at home.
+    fn raise_reduce_window(&self, index: usize, group: &ReduceWindow, emitter: &mut Emitter) {
+        let shapes = self.shapes();
+        let source_axes = shapes[group.source].axes();
+        let out_height = (source_axes[2] - group.size) / group.stride + 1;
+        let out_width = (source_axes[3] - group.size) / group.stride + 1;
+        assert_eq!(
+            shapes[index].axes(),
+            [source_axes[0], source_axes[1], out_height, out_width],
+            "the pooled root's shape disagrees with the group's geometry"
+        );
+
+        let seed = format!("%v{index}_seed");
+        emitter.line(format!(
+            "{seed} = stablehlo.constant dense<{}> : tensor<{}>",
+            Element::NEGATIVE_INFINITY,
+            Element::ELEMENT,
+        ));
+        let element = Element::ELEMENT;
+        emitter.line(format!(
+            "%v{index} = \"stablehlo.reduce_window\"({}, {seed}) ({{",
+            emitter.name(group.source),
+        ));
+        emitter.line(format!(
+            "^bb0(%v{index}_left: tensor<{element}>, %v{index}_right: tensor<{element}>):"
+        ));
+        emitter.line(format!(
+            "  %v{index}_larger = stablehlo.maximum %v{index}_left, %v{index}_right \
+             : tensor<{element}>"
+        ));
+        emitter.line(format!(
+            "  stablehlo.return %v{index}_larger : tensor<{element}>"
+        ));
+        emitter.line(format!(
+            "}}) {{window_dimensions = array<i64: 1, 1, {size}, {size}>, \
+             window_strides = array<i64: 1, 1, {stride}, {stride}>}} \
+             : ({}, tensor<{element}>) -> {}",
+            tensor_type::<Element>(&shapes[group.source]),
+            tensor_type::<Element>(&shapes[index]),
+            size = group.size,
+            stride = group.stride,
         ));
         emitter.names[index] = Some(format!("%v{index}"));
     }

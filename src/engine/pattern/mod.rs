@@ -12,10 +12,12 @@
 
 mod catalog;
 mod pattern;
+mod reduce_window;
 mod view;
 mod window;
 
 pub(crate) use catalog::{Catalog, PostureGate};
 pub(crate) use pattern::Pattern;
+pub(crate) use reduce_window::ReduceWindow;
 pub(crate) use view::View;
 pub(crate) use window::WindowProduct;

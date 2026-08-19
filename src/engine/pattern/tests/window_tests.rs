@@ -49,6 +49,7 @@ fn the_conv_chain_matches_with_its_geometry() {
     let candidate = match_at(matmul, &view).expect("the canonical chain matches");
     let group = match candidate.pattern {
         Pattern::WindowProduct(group) => group,
+        _ => panic!("the conv chain matches as a window product"),
     };
     assert_eq!(structure.shapes[group.source].axes(), [1, 2, 4, 4]);
     assert_eq!(structure.shapes[group.kernel].axes(), [8, 2]);

@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- StableHLO emission raises the canonical `max_pool` window fold to
+  `stablehlo.reduce_window`: the unfolded lanes and the recorded
+  `maximum` fold no longer cross the boundary as a static gather.
+  The motif is raise-only — forward runs execute the recorded fold
+  unchanged, on every memory posture.
+
 ### Changed
 
 - The window-GEMM match moved from ad-hoc `Plan` columns into a

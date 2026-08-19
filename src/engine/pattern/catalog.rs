@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 use crate::{Differentiable, Tensorial};
 
 use super::pattern::Pattern;
+use super::reduce_window;
 use super::view::View;
 use super::window;
 
@@ -69,10 +70,13 @@ impl Catalog {
         let mut claimed = vec![false; length];
 
         // Homing matchers live inside the posture gate; raise-only
-        // matchers run un-gated below it.
+        // matchers run un-gated below it, storing on every plan the
+        // matcher accepts — including engine-backward, whose home run
+        // still executes every node.
         if gate.fuse {
             collect_one(view, &mut catalog, &mut claimed, window::match_at);
         }
+        collect_one(view, &mut catalog, &mut claimed, reduce_window::match_at);
 
         catalog
     }
@@ -121,13 +125,11 @@ impl Catalog {
     }
 
     /// Returns the payload of a home action at `index`, if this node
-    /// is a home-fusing root.
+    /// is a home-fusing root. The arms are the truth of
+    /// [`Pattern::homes`]: a raise-only variant answers `None`, so the
+    /// node runs its recorded rule.
     pub(crate) fn home<Data: Tensorial>(&self, index: usize, values: &[Data]) -> Option<Data> {
-        let pattern = self.at[index].as_ref()?;
-        if !pattern.homes() {
-            return None;
-        }
-        match pattern {
+        match self.at[index].as_ref()? {
             Pattern::WindowProduct(group) => Some(values[group.source].windowed_product(
                 &values[group.kernel],
                 group.kernel_height,
@@ -135,6 +137,7 @@ impl Catalog {
                 group.stride,
                 group.padding,
             )),
+            Pattern::ReduceWindow(_) => None,
         }
     }
 }

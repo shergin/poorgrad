@@ -376,12 +376,107 @@ fn probe_case() -> Case {
 #[test]
 fn probe_networks_emit_end_to_end() {
     let module = probe_case().module;
-    // The conv chain raises; the pool chain lowers through the
-    // static-gather fallback until a reduce_window raise earns its
-    // place.
+    // Both window chains raise: the conv to `convolution`, the pool
+    // to `reduce_window` — no static-gather fallback remains.
     assert!(module.contains("stablehlo.convolution"), "{module}");
-    assert!(module.contains("\"stablehlo.gather\""), "{module}");
-    assert!(module.contains("stablehlo.maximum"), "{module}");
+    assert!(module.contains("\"stablehlo.reduce_window\""), "{module}");
+    assert!(!module.contains("stablehlo.gather"), "{module}");
+}
+
+/// Builds a plain max pool over a parameter: the raised
+/// `reduce_window` path on its own.
+fn pool_case() -> Case {
+    use crate::max_pool;
+
+    let tape = Tape::new();
+    let image = Tensor::new(
+        [1, 2, 4, 4],
+        (0..32)
+            .map(|index| (index % 9) as f32 / 4.0 - 1.0)
+            .collect::<Vec<_>>(),
+    );
+    let image_value = tape.parameter(image.clone());
+    let pooled = max_pool(image_value, 2, 2).symbol();
+    let network = tape.into_network();
+    let plan = network.compile(Request::roots([pooled]));
+    let run = plan.forward(&network.parameters(), []);
+    Case {
+        name: "pool",
+        tolerance: 1e-4,
+        module: plan.emit_stablehlo().expect("the plan emits"),
+        arguments: vec![image],
+        expected: vec![run.of(pooled).to_vec()],
+    }
+}
+
+#[test]
+fn pooled_plans_raise_to_reduce_window() {
+    let module = pool_case().module;
+    assert!(module.contains("\"stablehlo.reduce_window\""), "{module}");
+    assert!(
+        module.contains("window_dimensions = array<i64: 1, 1, 2, 2>"),
+        "{module}"
+    );
+    assert!(
+        module.contains("window_strides = array<i64: 1, 1, 2, 2>"),
+        "{module}"
+    );
+    // The negative-infinity seed and the maximum region.
+    assert!(module.contains("dense<0xFF800000>"), "{module}");
+    assert!(module.contains("stablehlo.return"), "{module}");
+    // The lanes never cross the boundary: no gathered windows, no
+    // lane slices.
+    assert!(!module.contains("stablehlo.gather"), "{module}");
+    assert!(!module.contains("stablehlo.slice"), "{module}");
+}
+
+#[test]
+fn a_hand_rolled_pool_fold_raises_identically() {
+    // Provenance-blind matching: the facade's exact spelling written
+    // by hand raises to the same module.
+    let tape = Tape::new();
+    let image = Tensor::new(
+        [1, 2, 4, 4],
+        (0..32)
+            .map(|index| (index % 9) as f32 / 4.0 - 1.0)
+            .collect::<Vec<_>>(),
+    );
+    let image_value = tape.parameter(image);
+    let lanes = image_value
+        .unfold(2, 2, 2, 1)
+        .unfold(4, 2, 2, 1)
+        .permute([0, 1, 2, 4, 3, 5])
+        .reshape([1, 2, 2, 2, 4]);
+    let mut largest = lanes.narrow(4, 0, 1);
+    for lane in 1..4 {
+        largest = largest.maximum(lanes.narrow(4, lane, 1));
+    }
+    let pooled = largest.squeeze(4).symbol();
+    let network = tape.into_network();
+    let plan = network.compile(Request::roots([pooled]));
+    let module = plan.emit_stablehlo().expect("the plan emits");
+    assert_eq!(module, pool_case().module);
+}
+
+#[test]
+fn engine_backward_plans_still_raise_the_pool() {
+    // The pool motif is raise-only, so its storage is not gated by
+    // memory posture: an engine-backward plan executes the recorded
+    // fold at home and still raises it abroad.
+    use crate::max_pool;
+
+    let tape = Tape::new();
+    let image_value = tape.parameter(Tensor::new(
+        [1, 2, 4, 4],
+        (0..32)
+            .map(|index| index as f32 / 8.0 - 2.0)
+            .collect::<Vec<_>>(),
+    ));
+    let loss = max_pool(image_value, 2, 2).sum().symbol();
+    let network = tape.into_network();
+    let plan = network.compile(Request::roots([loss]).backward());
+    let module = plan.emit_stablehlo().expect("the plan emits");
+    assert!(module.contains("\"stablehlo.reduce_window\""), "{module}");
 }
 
 #[test]
@@ -516,6 +611,7 @@ fn emitted_modules_parse_through_the_toolchain() {
         unfold_case(),
         convolution_case(),
         probe_case(),
+        pool_case(),
         bf16_case(),
     ] {
         let path = temp_file(&format!("parse-{}.mlir", case.name), &case.module);
@@ -577,6 +673,7 @@ fn emitted_modules_execute_within_the_oracle_envelope() {
         unfold_case(),
         convolution_case(),
         probe_case(),
+        pool_case(),
         bf16_case(),
     ] {
         let module_path = temp_file(&format!("eval-{}.mlir", case.name), &case.module);
