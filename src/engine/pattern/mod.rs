@@ -17,8 +17,8 @@ mod reduce_window;
 mod view;
 mod window;
 
-pub(crate) use batch_norm::{BatchNormInference, BatchNormTraining};
-pub(crate) use catalog::{Catalog, PostureGate};
+pub(crate) use batch_norm::BatchNormalization;
+pub(crate) use catalog::Catalog;
 pub(crate) use pattern::Pattern;
 pub(crate) use reduce_window::ReduceWindow;
 pub(crate) use view::View;

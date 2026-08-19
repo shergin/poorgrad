@@ -1,6 +1,6 @@
 use smallvec::SmallVec;
 
-use crate::{Differentiable, Tensorial};
+use crate::Differentiable;
 
 use super::batch_norm;
 use super::pattern::Pattern;
@@ -10,44 +10,29 @@ use super::window;
 
 /// One matcher result, not yet claimed.
 ///
-/// Home and emit actions are variant policy ([`Pattern::homes`] /
-/// [`Pattern::raises`]), not fields here: storing flags on a
-/// candidate and then dropping them would make "matched, home false"
-/// look representable when [`Catalog`] cannot hold it.
+/// Whether the entry also fuses at home is variant policy
+/// ([`Pattern::fused`]), not a field here: a per-candidate flag would
+/// make "matched, home false" look representable when [`Catalog`]
+/// cannot hold it.
 pub(crate) struct Candidate {
     pub(crate) pattern: Pattern,
-    /// Unnamed interiors. Home-fusing matches skip them at home;
-    /// raising matches skip them at emit.
+    /// Unnamed interiors: skipped at emit by every match, and at home
+    /// too when the match fuses.
     pub(crate) interiors: SmallVec<[usize; 8]>,
-    /// Extra results of a raise that may be readable. Claimed so
+    /// Extra results of the raise that may be readable. Claimed so
     /// later matchers cannot take them, and marked `emit_interior` so
     /// their primitive lowers are skipped; never marked
-    /// `home_interior`, so a raise-only run still executes them.
+    /// `home_interior`, so runs still execute them.
     pub(crate) named: SmallVec<[usize; 4]>,
-}
-
-/// Whether this plan may apply home-fusing actions.
-///
-/// Raise-only matchers ignore it. A homing motif is stored only when
-/// `fuse` is true, which is exactly a forward-only request: fusing
-/// engine-backward would leave the reverse scan nothing to read.
-#[derive(Clone, Copy)]
-pub(crate) struct PostureGate {
-    pub(crate) fuse: bool,
-}
-
-impl PostureGate {
-    pub(crate) fn from_backward(backward: bool) -> Self {
-        Self { fuse: !backward }
-    }
 }
 
 /// The compiled motif column of one plan: the pattern rooted at each
 /// node, if any, and the two interior skip-masks its consumers read.
 ///
-/// The home and emit masks are allowed to diverge: a raise-only motif
-/// skips its interiors (and named results) at emit while executing
-/// all of them at home.
+/// The masks diverge by design: every match skips its interiors (and
+/// named results) at emit, while only a home-fusing match skips its
+/// unnamed interiors at home — the home mask is a subset of the emit
+/// mask by construction.
 #[derive(Debug, Clone)]
 pub(crate) struct Catalog {
     at: Vec<Option<Pattern>>,
@@ -57,11 +42,16 @@ pub(crate) struct Catalog {
 
 impl Catalog {
     /// Runs every matcher over `view` and claims nodes first-wins.
+    /// `fuse` is the memory-posture gate: a homing motif is stored
+    /// only when it is true, which is exactly a forward-only request —
+    /// fusing engine-backward would leave the reverse scan nothing to
+    /// read. Raise-only matchers run un-gated, storing on every plan
+    /// the matcher accepts.
     ///
     /// Matcher order in this body is the first priority axis; within
     /// one matcher, `collect_one` scans in recording order. Adding a
     /// motif is one call here, in its documented overlap position.
-    pub(crate) fn collect<Data: Differentiable>(view: &View<Data>, gate: PostureGate) -> Self {
+    pub(crate) fn collect<Data: Differentiable>(view: &View<Data>, fuse: bool) -> Self {
         let length = view.len();
         let mut catalog = Self {
             at: vec![None; length],
@@ -70,11 +60,7 @@ impl Catalog {
         };
         let mut claimed = vec![false; length];
 
-        // Homing matchers live inside the posture gate; raise-only
-        // matchers run un-gated below it, storing on every plan the
-        // matcher accepts — including engine-backward, whose home run
-        // still executes every node.
-        if gate.fuse {
+        if fuse {
             collect_one(view, &mut catalog, &mut claimed, window::match_at);
         }
         collect_one(view, &mut catalog, &mut claimed, reduce_window::match_at);
@@ -92,6 +78,9 @@ impl Catalog {
         catalog
     }
 
+    /// Returns the pattern rooted at `index`, if one matched. This is
+    /// the only read consumers are allowed: home runs and emission
+    /// consume stored entries and never rematch.
     pub(crate) fn at(&self, index: usize) -> Option<&Pattern> {
         self.at[index].as_ref()
     }
@@ -100,12 +89,8 @@ impl Catalog {
         self.home_interior[index]
     }
 
-    pub(crate) fn home_interiors(&self) -> &[bool] {
-        &self.home_interior
-    }
-
-    pub(crate) fn emit_interiors(&self) -> &[bool] {
-        &self.emit_interior
+    pub(crate) fn emit_interior(&self, index: usize) -> bool {
+        self.emit_interior[index]
     }
 
     /// Returns how many home-fusing groups the plan matched.
@@ -113,44 +98,22 @@ impl Catalog {
         self.at
             .iter()
             .flatten()
-            .filter(|pattern| pattern.homes())
+            .filter(|pattern| pattern.fused().is_some())
             .count()
     }
 
-    /// Pins `last_consumer` so the extra reads of a home-fusing match
+    /// Pins `last_consumer` so the reads of a home-fusing match
     /// outlive the skipped chain. Raise-only motifs pin nothing: their
     /// chains actually run, so ordinary last-consumer is correct.
     pub(crate) fn pin_liveness(&self, last_consumer: &mut [Option<usize>]) {
         for (index, pattern) in self.at.iter().enumerate() {
-            let Some(pattern) = pattern else {
+            let Some(group) = pattern.as_ref().and_then(Pattern::fused) else {
                 continue;
             };
-            if !pattern.homes() {
-                continue;
-            }
-            for slot in pattern.extra_reads() {
+            for slot in group.reads() {
                 let latest = last_consumer[slot].unwrap_or(0).max(index);
                 last_consumer[slot] = Some(latest);
             }
-        }
-    }
-
-    /// Returns the payload of a home action at `index`, if this node
-    /// is a home-fusing root. The arms are the truth of
-    /// [`Pattern::homes`]: a raise-only variant answers `None`, so the
-    /// node runs its recorded rule.
-    pub(crate) fn home<Data: Tensorial>(&self, index: usize, values: &[Data]) -> Option<Data> {
-        match self.at[index].as_ref()? {
-            Pattern::WindowProduct(group) => Some(values[group.source].windowed_product(
-                &values[group.kernel],
-                group.kernel_height,
-                group.kernel_width,
-                group.stride,
-                group.padding,
-            )),
-            Pattern::ReduceWindow(_)
-            | Pattern::BatchNormTraining(_)
-            | Pattern::BatchNormInference(_) => None,
         }
     }
 }
@@ -185,26 +148,21 @@ fn collect_one<Data: Differentiable>(
         {
             continue;
         }
-        let homes = candidate.pattern.homes();
-        let raises = candidate.pattern.raises();
+        let homes = candidate.pattern.fused().is_some();
         claimed[index] = true;
         for &node in candidate.interiors.iter().chain(candidate.named.iter()) {
             claimed[node] = true;
         }
         for &node in &candidate.interiors {
+            catalog.emit_interior[node] = true;
             if homes {
                 catalog.home_interior[node] = true;
             }
-            if raises {
-                catalog.emit_interior[node] = true;
-            }
         }
-        // Named results of a raise skip their primitive emit but still
-        // execute at home.
-        if raises {
-            for &node in &candidate.named {
-                catalog.emit_interior[node] = true;
-            }
+        // Named results skip their primitive emit but still execute at
+        // home.
+        for &node in &candidate.named {
+            catalog.emit_interior[node] = true;
         }
         catalog.at[index] = Some(candidate.pattern);
     }

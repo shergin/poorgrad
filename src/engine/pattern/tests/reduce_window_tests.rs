@@ -2,7 +2,7 @@ use crate::function::Function;
 use crate::graph::Network;
 use crate::{Tape, Tensor, max_pool};
 
-use super::super::catalog::{Catalog, PostureGate};
+use super::super::catalog::Catalog;
 use super::super::pattern::Pattern;
 use super::super::view::View;
 use super::match_at;
@@ -27,14 +27,7 @@ fn full_view<'plan>(
     wanted: &'plan [bool],
     readable: &'plan [bool],
 ) -> View<'plan, Tensor<f64>> {
-    let structure = network.structure();
-    View::new(
-        &structure.functions,
-        &structure.operands,
-        &structure.shapes,
-        wanted,
-        readable,
-    )
+    View::new(network.structure(), wanted, readable)
 }
 
 /// Counts the stored catalog entries.
@@ -112,7 +105,7 @@ fn a_kept_lanes_reshape_bars_the_match() {
     let mut readable = vec![false; length];
     readable[lanes] = true;
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, PostureGate { fuse: true });
+    let catalog = Catalog::collect(&view, true);
     assert_eq!(entries(&catalog, length), 0);
 }
 
@@ -125,9 +118,9 @@ fn the_posture_gate_does_not_gate_the_raise_only_motif() {
     let wanted = vec![true; length];
     let readable = vec![false; length];
     let view = full_view(&network, &wanted, &readable);
-    let catalog = Catalog::collect(&view, PostureGate { fuse: false });
+    let catalog = Catalog::collect(&view, false);
     assert_eq!(entries(&catalog, length), 1);
     assert_eq!(catalog.home_groups(), 0);
-    assert!(catalog.home_interiors().iter().all(|&interior| !interior));
-    assert!(catalog.emit_interiors().iter().any(|&interior| interior));
+    assert!((0..length).all(|index| !catalog.home_interior(index)));
+    assert!((0..length).any(|index| catalog.emit_interior(index)));
 }

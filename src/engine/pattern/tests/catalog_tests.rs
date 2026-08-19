@@ -2,7 +2,7 @@ use crate::graph::Network;
 use crate::{Tape, Tensor, conv2d};
 
 use super::super::view::View;
-use super::{Catalog, PostureGate};
+use super::Catalog;
 
 /// Records `count` convolutions and returns the network; `shared`
 /// routes every convolution through one input value, so their chains
@@ -38,33 +38,27 @@ fn conv_network(count: usize, shared: bool) -> Network<Tensor<f64>> {
 
 /// Collects the catalog over the whole network with every node wanted
 /// and none readable.
-fn collect(network: &Network<Tensor<f64>>, gate: PostureGate) -> Catalog {
-    let structure = network.structure();
-    let length = structure.functions.len();
+fn collect(network: &Network<Tensor<f64>>, fuse: bool) -> Catalog {
+    let length = network.structure().len();
     let wanted = vec![true; length];
     let readable = vec![false; length];
-    let view = View::new(
-        &structure.functions,
-        &structure.operands,
-        &structure.shapes,
-        &wanted,
-        &readable,
-    );
-    Catalog::collect(&view, gate)
+    let view = View::new(network.structure(), &wanted, &readable);
+    Catalog::collect(&view, fuse)
 }
 
 #[test]
 fn the_posture_gate_stores_no_homing_motif() {
     let network = conv_network(1, false);
-    let catalog = collect(&network, PostureGate { fuse: false });
+    let length = network.structure().len();
+    let catalog = collect(&network, false);
     assert_eq!(catalog.home_groups(), 0);
-    assert!(catalog.home_interiors().iter().all(|&interior| !interior));
+    assert!((0..length).all(|index| !catalog.home_interior(index)));
 }
 
 #[test]
 fn disjoint_groups_all_claim() {
     let network = conv_network(2, false);
-    let catalog = collect(&network, PostureGate { fuse: true });
+    let catalog = collect(&network, true);
     assert_eq!(catalog.home_groups(), 2);
 }
 
@@ -74,6 +68,6 @@ fn a_shared_source_feeds_two_groups() {
     // both match, the source being an argument of each fused call
     // rather than anyone's private interior.
     let network = conv_network(2, true);
-    let catalog = collect(&network, PostureGate { fuse: true });
+    let catalog = collect(&network, true);
     assert_eq!(catalog.home_groups(), 2);
 }

@@ -311,7 +311,7 @@ fn convolution_case() -> Case {
     let convolved = conv2d(image_value, weights_value, bias_value, 2, 1).symbol();
     let network = tape.into_network();
     let plan = network.compile(Request::roots([convolved]));
-    assert_eq!(plan.fusion_groups(), 1, "the forward plan fuses");
+    assert_eq!(plan.catalog().home_groups(), 1, "the forward plan fuses");
     let run = plan.forward(&network.parameters(), []);
     Case {
         name: "convolution",
@@ -362,7 +362,7 @@ fn probe_case() -> Case {
         .symbol();
     let network = tape.into_network();
     let plan = network.compile(Request::roots([scores]));
-    assert_eq!(plan.fusion_groups(), 1, "the conv chain fuses");
+    assert_eq!(plan.catalog().home_groups(), 1, "the conv chain fuses");
     let run = plan.forward(&network.parameters(), []);
     Case {
         name: "probe",

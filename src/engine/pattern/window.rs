@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 
 use crate::function::Function;
-use crate::{Differentiable, Shape};
+use crate::{Differentiable, Shape, Tensorial};
 
 use super::catalog::Candidate;
 use super::pattern::Pattern;
@@ -27,6 +27,27 @@ pub(crate) struct WindowProduct {
     pub(crate) kernel_width: usize,
     pub(crate) stride: usize,
     pub(crate) padding: usize,
+}
+
+impl WindowProduct {
+    /// Returns the slots the fused call reads past the root's operand
+    /// links; liveness must keep them alive until the call.
+    pub(crate) fn reads(&self) -> [usize; 2] {
+        [self.source, self.kernel]
+    }
+
+    /// Computes the fused call over the already-evaluated `values`:
+    /// one windowed product from the source and kernel, the im2col
+    /// chain between them never materialized.
+    pub(crate) fn apply<Data: Tensorial>(&self, values: &[Data]) -> Data {
+        values[self.source].windowed_product(
+            &values[self.kernel],
+            self.kernel_height,
+            self.kernel_width,
+            self.stride,
+            self.padding,
+        )
+    }
 }
 
 /// Matches the canonical im2col chain feeding a `matmul` rooted at

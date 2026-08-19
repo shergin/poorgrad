@@ -7,20 +7,20 @@ use super::catalog::Candidate;
 use super::pattern::Pattern;
 use super::view::View;
 
-/// A matched training-mode batch normalization: the recorded
-/// `BatchNorm::express` diamond — batch mean and biased variance,
+/// A matched batch normalization: the recorded normalization diamond —
 /// centering, the epsilon-stabilized deviation, the learned affine —
-/// rooted at the trailing shift `Add`. Emission raises the group to
-/// `stablehlo.batch_norm_training`, whose three results name the
-/// root, the mean, and the variance; forward runs execute the
-/// recorded formula unchanged — the motif is raise-only.
-///
-/// The mean and variance are named results: they may sit in the
-/// keep-set (training loops observe them for running estimates), and
-/// the raise writes their SSA names at the root instead of lowering
-/// their primitive reductions.
+/// rooted at the trailing shift `Add`. Both modes share the group;
+/// the mode lives on the `Pattern` variant wrapping it. In training
+/// the statistics are the batch's own reductions and become the
+/// raise's named results: they may sit in the keep-set (training
+/// loops observe them for running estimates), and
+/// `stablehlo.batch_norm_training` writes their SSA names at the
+/// root. In inference they are supplied values, ordinary extra reads
+/// of `stablehlo.batch_norm_inference`. Forward runs execute the
+/// recorded formula unchanged either way — both motifs are
+/// raise-only.
 #[derive(Debug, Clone)]
-pub(crate) struct BatchNormTraining {
+pub(crate) struct BatchNormalization {
     /// The rank-2 `[batch, features]` input.
     pub(crate) input: usize,
     /// The rank-1 `[features]` learned scale.
@@ -30,30 +30,11 @@ pub(crate) struct BatchNormTraining {
     /// The single-value epsilon leaf, rendered as the raised
     /// operation's attribute.
     pub(crate) epsilon: usize,
-    /// The `[features]` batch mean, a named result.
+    /// The `[features]` mean: a named result in training, a supplied
+    /// extra read in inference.
     pub(crate) mean: usize,
-    /// The `[features]` biased batch variance, a named result.
-    pub(crate) variance: usize,
-}
-
-/// A matched inference-mode batch normalization: the same recorded
-/// tail normalizing by supplied statistics (`BatchNorm::express_with`).
-/// Emission raises the group to `stablehlo.batch_norm_inference`; the
-/// statistics are ordinary arguments, not results.
-#[derive(Debug, Clone)]
-pub(crate) struct BatchNormInference {
-    /// The rank-2 `[batch, features]` input.
-    pub(crate) input: usize,
-    /// The rank-1 `[features]` learned scale.
-    pub(crate) scale: usize,
-    /// The rank-1 `[features]` learned shift.
-    pub(crate) shift: usize,
-    /// The single-value epsilon leaf, rendered as the raised
-    /// operation's attribute.
-    pub(crate) epsilon: usize,
-    /// The supplied `[features]` mean, an extra read.
-    pub(crate) mean: usize,
-    /// The supplied `[features]` variance, an extra read.
+    /// The `[features]` biased variance: a named result in training, a
+    /// supplied extra read in inference.
     pub(crate) variance: usize,
 }
 
@@ -61,16 +42,10 @@ pub(crate) struct BatchNormInference {
 /// shift `Add` down to the centering `Sub`, with the statistic
 /// operands left unclassified.
 struct Tail {
+    /// The group as matched so far, its statistics unclassified.
+    group: BatchNormalization,
     /// The tail's own nodes, all unnamed interiors.
     interiors: SmallVec<[usize; 8]>,
-    input: usize,
-    scale: usize,
-    shift: usize,
-    epsilon: usize,
-    /// The node the centering broadcast reads: the batch mean.
-    mean: usize,
-    /// The node the deviation reads: the batch variance.
-    variance: usize,
     /// The centering `Sub`, the diamond's fan-out point.
     centered: usize,
 }
@@ -159,6 +134,14 @@ fn match_tail<Data: Differentiable>(index: usize, view: &View<Data>) -> Option<T
     }
     let mean = view.operand(mean_bcast, 0);
     Some(Tail {
+        group: BatchNormalization {
+            input,
+            scale,
+            shift,
+            epsilon,
+            mean,
+            variance,
+        },
         interiors: smallvec![
             scaled,
             shift_bcast,
@@ -171,12 +154,6 @@ fn match_tail<Data: Differentiable>(index: usize, view: &View<Data>) -> Option<T
             centered,
             mean_bcast,
         ],
-        input,
-        scale,
-        shift,
-        epsilon,
-        mean,
-        variance,
         centered,
     })
 }
@@ -222,11 +199,11 @@ pub(crate) fn match_training<Data: Differentiable>(
     view: &View<Data>,
 ) -> Option<Candidate> {
     let mut tail = match_tail(index, view)?;
-    let (mean_source, mean_sum, mean_count) = mean_along_of(tail.mean, view)?;
-    if mean_source != tail.input {
+    let (mean_source, mean_sum, mean_count) = mean_along_of(tail.group.mean, view)?;
+    if mean_source != tail.group.input {
         return None;
     }
-    let (squared, var_sum, var_count) = mean_along_of(tail.variance, view)?;
+    let (squared, var_sum, var_count) = mean_along_of(tail.group.variance, view)?;
     let Some(Function::Mul(_)) = view.function(squared) else {
         return None;
     };
@@ -235,17 +212,11 @@ pub(crate) fn match_training<Data: Differentiable>(
     }
     tail.interiors
         .extend_from_slice(&[mean_sum, mean_count, squared, var_sum, var_count]);
+    let named = smallvec![tail.group.mean, tail.group.variance];
     Some(Candidate {
-        pattern: Pattern::BatchNormTraining(BatchNormTraining {
-            input: tail.input,
-            scale: tail.scale,
-            shift: tail.shift,
-            epsilon: tail.epsilon,
-            mean: tail.mean,
-            variance: tail.variance,
-        }),
+        pattern: Pattern::BatchNormTraining(tail.group),
         interiors: tail.interiors,
-        named: smallvec![tail.mean, tail.variance],
+        named,
     })
 }
 
@@ -261,14 +232,7 @@ pub(crate) fn match_inference<Data: Differentiable>(
 ) -> Option<Candidate> {
     let tail = match_tail(index, view)?;
     Some(Candidate {
-        pattern: Pattern::BatchNormInference(BatchNormInference {
-            input: tail.input,
-            scale: tail.scale,
-            shift: tail.shift,
-            epsilon: tail.epsilon,
-            mean: tail.mean,
-            variance: tail.variance,
-        }),
+        pattern: Pattern::BatchNormInference(tail.group),
         interiors: tail.interiors,
         named: SmallVec::new(),
     })

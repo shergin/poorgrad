@@ -16,7 +16,7 @@
 use std::error::Error;
 use std::fmt::{self, Display, Write};
 
-use crate::engine::{BatchNormInference, BatchNormTraining, Pattern, ReduceWindow, WindowProduct};
+use crate::engine::{BatchNormalization, Pattern, ReduceWindow, WindowProduct};
 use crate::function::Function;
 use crate::{Plan, Shape, Tensor};
 
@@ -129,7 +129,8 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
             // A pattern's emit interior is replaced wholesale by the
             // operation raised at its group's root, exactly as runs
             // replace home interiors with the fused call.
-            if !wanted_node || self.emit_interiors()[index] || emitter.names[index].is_some() {
+            if !wanted_node || self.catalog().emit_interior(index) || emitter.names[index].is_some()
+            {
                 continue;
             }
             self.lower(index, &mut emitter)?;
@@ -170,7 +171,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     /// carrying a catalog entry raises to its named operation instead
     /// of lowering primitives; the emitter never rematches.
     fn lower(&self, index: usize, emitter: &mut Emitter) -> Result<(), EmitError> {
-        if let Some(pattern) = self.pattern(index) {
+        if let Some(pattern) = self.catalog().at(index) {
             match pattern {
                 Pattern::WindowProduct(group) => {
                     self.raise_convolution(index, group, emitter);
@@ -809,7 +810,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     fn raise_batch_norm_training(
         &self,
         index: usize,
-        group: &BatchNormTraining,
+        group: &BatchNormalization,
         emitter: &mut Emitter,
     ) {
         let shapes = self.shapes();
@@ -839,7 +840,7 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
     fn raise_batch_norm_inference(
         &self,
         index: usize,
-        group: &BatchNormInference,
+        group: &BatchNormalization,
         emitter: &mut Emitter,
     ) {
         let shapes = self.shapes();

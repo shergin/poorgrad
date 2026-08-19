@@ -9,7 +9,7 @@ use crate::{Differentiable, Shape, Tensorial};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{Catalog, Pattern, PostureGate, View};
+use super::pattern::{Catalog, View};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -102,14 +102,8 @@ impl<Data: Differentiable> Plan<Data> {
         // materialize, so it is a forward-only move: engine-backward
         // plans keep their exact contract unfused, the reverse scan
         // reading what the recording named.
-        let view = View::new(
-            &structure.functions,
-            &structure.operands,
-            &structure.shapes,
-            &wanted,
-            &readable,
-        );
-        let catalog = Catalog::collect(&view, PostureGate::from_backward(training));
+        let view = View::new(&structure, &wanted, &readable);
+        let catalog = Catalog::collect(&view, !training);
 
         // Liveness: a slot may be freed by its highest consumer inside
         // the closure once nothing later can read its value — neither
@@ -235,23 +229,11 @@ impl<Data: Differentiable> Plan<Data> {
         &self.readable
     }
 
-    /// Returns how many window-GEMM fusion groups the plan matched.
-    pub(crate) fn fusion_groups(&self) -> usize {
-        self.catalog.home_groups()
-    }
-
-    /// Returns the pattern rooted at node `index`, if one matched:
-    /// the only read emission is allowed — the emitter consumes
-    /// catalog entries and never rematches.
-    pub(crate) fn pattern(&self, index: usize) -> Option<&Pattern> {
-        self.catalog.at(index)
-    }
-
-    /// Returns which nodes a raising consumer skips: the unnamed
-    /// interiors and named results of raising matches, replaced
-    /// wholesale by the raised operation at each group's root.
-    pub(crate) fn emit_interiors(&self) -> &[bool] {
-        self.catalog.emit_interiors()
+    /// Returns the compiled pattern catalog, for plan consumers such
+    /// as the StableHLO emitter — introspection siblings of
+    /// `describe`.
+    pub(crate) fn catalog(&self) -> &Catalog {
+        &self.catalog
     }
 
     /// Simulates a run's live volume under `releases`, returning the
@@ -370,15 +352,13 @@ impl<Data: Differentiable> Plan<Data> {
             self.readable.iter().filter(|&&readable| readable).count(),
         )
         .expect("writing to a string cannot fail");
-        let groups = self.fusion_groups();
+        let groups = self.catalog.home_groups();
         if groups > 0 {
             writeln!(
                 lines,
                 "fused {groups} window-gemm groups, {} interior nodes skipped",
-                self.catalog
-                    .home_interiors()
-                    .iter()
-                    .filter(|&&interior| interior)
+                (0..self.len())
+                    .filter(|&index| self.catalog.home_interior(index))
                     .count(),
             )
             .expect("writing to a string cannot fail");
@@ -473,10 +453,10 @@ impl<Data: Tensorial> Plan<Data> {
         for index in 0..self.len() {
             let value = if !self.wanted[index] || self.catalog.home_interior(index) {
                 Data::counted(self.structure.shapes[index].clone(), 0)
-            } else if let Some(fused) = self.catalog.home(index, &values) {
+            } else if let Some(group) = self.catalog.at(index).and_then(|pattern| pattern.fused()) {
                 // The fused call reads its sources directly; the chain
                 // between them was never materialized.
-                fused
+                group.apply(&values)
             } else {
                 let function = self
                     .structure

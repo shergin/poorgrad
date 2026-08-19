@@ -37,13 +37,7 @@ fn the_conv_chain_matches_with_its_geometry() {
     let length = structure.functions.len();
     let wanted = vec![true; length];
     let readable = vec![false; length];
-    let view = View::new(
-        &structure.functions,
-        &structure.operands,
-        &structure.shapes,
-        &wanted,
-        &readable,
-    );
+    let view = View::new(structure, &wanted, &readable);
     let matmul = matmul_index(&network);
 
     let candidate = match_at(matmul, &view).expect("the canonical chain matches");
@@ -78,12 +72,6 @@ fn a_kept_interior_bars_the_match() {
     let wanted = vec![true; length];
     let mut readable = vec![false; length];
     readable[patches] = true;
-    let view = View::new(
-        &structure.functions,
-        &structure.operands,
-        &structure.shapes,
-        &wanted,
-        &readable,
-    );
+    let view = View::new(structure, &wanted, &readable);
     assert!(match_at(matmul, &view).is_none());
 }

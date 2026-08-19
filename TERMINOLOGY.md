@@ -372,9 +372,9 @@ changing either.
 spirit as `Function` — matched once at `Network::compile` over the
 plan's frozen columns and stored as one column on the plan
 (`src/engine/pattern/`). A pattern is a compile-time match, not a
-tape rewrite and not itself a fuse or a raise: fusion at home and
-raising abroad are two optional actions on the same catalog entry,
-decided per variant. Matchers share one `View` (wanted, keep-set,
+tape rewrite: every entry raises abroad, and a variant may
+additionally fuse at home — the one policy point is `Pattern::fused`,
+gated by memory posture. Matchers share one `View` (wanted, keep-set,
 consumer counts), claim nodes first-wins in documented order, and
 require the claimed subgraph to be closed — unnamed interiors
 unreadable, every wanted consumer inside the match. Dispatch at both
