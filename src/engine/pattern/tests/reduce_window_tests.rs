@@ -110,7 +110,7 @@ fn a_kept_lanes_reshape_bars_the_match() {
 }
 
 #[test]
-fn the_posture_gate_does_not_gate_the_raise_only_motif() {
+fn the_posture_gate_does_not_gate_the_raise_only_pattern() {
     // Engine-backward plans store the pool match too: the home run
     // executes every node either way, and only emission consumes it.
     let (network, _root) = pool_network();

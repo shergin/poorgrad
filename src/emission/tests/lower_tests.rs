@@ -574,7 +574,7 @@ fn inference_batch_norms_raise_over_their_arguments() {
 
 #[test]
 fn engine_backward_plans_still_raise_the_pool() {
-    // The pool motif is raise-only, so its storage is not gated by
+    // The pool pattern is raise-only, so its storage is not gated by
     // memory posture: an engine-backward plan executes the recorded
     // fold at home and still raises it abroad.
     use crate::max_pool;

@@ -234,7 +234,7 @@ fn describe_reports_the_liveness_story() {
 
 #[test]
 fn training_liveness_matches_the_interpreter_on_a_convnet() {
-    // The real consumer motif: conv, relu, pool, flatten, dense,
+    // The real consumer shape: conv, relu, pool, flatten, dense,
     // cross-entropy. The read contract keeps what the derivative rules read
     // and frees the view chains and padded copies; the proof is
     // bitwise agreement of loss and every parameter gradient.

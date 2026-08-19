@@ -14,9 +14,9 @@ use super::view::View;
 ///
 /// Matching is structural and provenance-blind: any recording of the
 /// canonical im2col composition matches, whichever facade (or hand)
-/// wrote it. A keep-set node inside the chain is a barrier. The motif
-/// is stored only on forward-only plans; engine-backward stays
-/// unfused so the reverse scan reads what the recording named.
+/// wrote it. A keep-set node inside the chain is a barrier. The
+/// pattern is stored only on forward-only plans; engine-backward
+/// stays unfused so the reverse scan reads what the recording named.
 #[derive(Debug, Clone)]
 pub(crate) struct WindowProduct {
     /// The rank-4 `[batch, channels, height, width]` source.

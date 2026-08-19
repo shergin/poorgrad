@@ -11,7 +11,7 @@ use super::view::View;
 /// `maximum` over the window lanes, rooted at the facade's squeeze
 /// reshape. Emission raises the group to `stablehlo.reduce_window`
 /// over the rank-4 source; forward runs execute the recorded fold
-/// unchanged — the motif is raise-only.
+/// unchanged — the pattern is raise-only.
 ///
 /// Matching is structural and provenance-blind: any recording of the
 /// canonical `max_pool` composition matches — two square unfolds, the

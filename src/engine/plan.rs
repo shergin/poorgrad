@@ -59,7 +59,7 @@ pub struct Plan<Data> {
     /// small mid-run frees measured as an RSS regression — allocator
     /// fragmentation) and report this set as their release floor.
     releases: Vec<SmallVec<[usize; 2]>>,
-    /// The compiled pattern catalog: the motif rooted at each node,
+    /// The compiled pattern catalog: the pattern rooted at each node,
     /// if any, and the interior skip-masks its consumers read.
     catalog: Catalog,
     /// The engine-backward posture: `false` compiles forward liveness
@@ -97,7 +97,7 @@ impl<Data: Differentiable> Plan<Data> {
         }
 
         // Patterns: one structural match over the frozen columns, all
-        // motifs sharing the claim discipline. Home-fusing motifs are
+        // sharing the claim discipline. Home-fusing patterns are
         // gated by memory posture — fusing requires the chain to never
         // materialize, so it is a forward-only move: engine-backward
         // plans keep their exact contract unfused, the reverse scan

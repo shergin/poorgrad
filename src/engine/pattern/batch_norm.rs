@@ -17,7 +17,7 @@ use super::view::View;
 /// `stablehlo.batch_norm_training` writes their SSA names at the
 /// root. In inference they are supplied values, ordinary extra reads
 /// of `stablehlo.batch_norm_inference`. Forward runs execute the
-/// recorded formula unchanged either way — both motifs are
+/// recorded formula unchanged either way — both variants are
 /// raise-only.
 #[derive(Debug, Clone)]
 pub(crate) struct BatchNormalization {

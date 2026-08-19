@@ -23,14 +23,14 @@ The format is based on [Keep a Changelog], and this project adheres to
 - StableHLO emission raises the canonical `max_pool` window fold to
   `stablehlo.reduce_window`: the unfolded lanes and the recorded
   `maximum` fold no longer cross the boundary as a static gather.
-  The motif is raise-only — forward runs execute the recorded fold
+  The pattern is raise-only — forward runs execute the recorded fold
   unchanged, on every memory posture.
 
 ### Changed
 
 - The window-GEMM match moved from ad-hoc `Plan` columns into a
   pattern catalog (`src/engine/pattern/`): one compiled column any
-  number of motifs share, with home fusion and StableHLO raising as
+  number of patterns share, with home fusion and StableHLO raising as
   two actions on the same match. Same matches, same skips, same
   `describe` wording, same emitted modules, same bits.
 

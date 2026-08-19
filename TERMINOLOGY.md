@@ -368,7 +368,7 @@ while forward-only plans execute their releases, where the win is
 measured. Keeping a rule and its read set in step is part of
 changing either.
 
-**Pattern (catalog).** A closed, documented set of motifs — same
+**Pattern (catalog).** A closed, documented set of patterns — same
 spirit as `Function` — matched once at `Network::compile` over the
 plan's frozen columns and stored as one column on the plan
 (`src/engine/pattern/`). A pattern is a compile-time match, not a
@@ -381,7 +381,7 @@ unreadable, every wanted consumer inside the match. Dispatch at both
 consumers is a plain enum `match`; the tape and the backends never
 see a pattern.
 
-**Fusion (window-GEMM).** The pattern catalog's first motif: the
+**Fusion (window-GEMM).** The catalog's first pattern: the
 canonical im2col chain — pads, two unfolds, the permute, the patch
 reshape — feeding a `matmul`. The match lives in the catalog, and
 fusion and raising are its two actions: `Plan::forward` executes the
@@ -398,8 +398,8 @@ exact for the reverse scan. `describe` prints the groups;
 recognition proposes, payloads and backends dispose — neither ever
 sees graph structure.
 
-**Pool window (reduce_window).** The pattern catalog's first
-raise-only motif: the canonical `max_pool` spelling — two square
+**Pool window (reduce_window).** The catalog's first raise-only
+pattern: the canonical `max_pool` spelling — two square
 unfolds, the lane permute and reshape, the left-associated `maximum`
 fold in lane order, the trailing squeeze — rooted at the squeeze
 reshape. It has no home action: forward runs execute the recorded
@@ -411,7 +411,7 @@ order, or an omitted squeeze is a documented false negative;
 `describe` never mentions raise-only matches.
 
 **Batch-norm raise (batch_norm_training / batch_norm_inference).**
-Two raise-only catalog motifs over the recorded `BatchNorm` formulas,
+Two raise-only catalog patterns over the recorded `BatchNorm` formulas,
 rooted at the trailing shift `Add`. The training variant matches the
 batch's own statistics — each `mean_along` verified as
 `Div(SumAlong, counted leaf)` through `Differentiable::is_counted`,

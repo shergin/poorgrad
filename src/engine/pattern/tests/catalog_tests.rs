@@ -47,7 +47,7 @@ fn collect(network: &Network<Tensor<f64>>, fuse: bool) -> Catalog {
 }
 
 #[test]
-fn the_posture_gate_stores_no_homing_motif() {
+fn the_posture_gate_stores_no_homing_pattern() {
     let network = conv_network(1, false);
     let length = network.structure().len();
     let catalog = collect(&network, false);

@@ -26,7 +26,7 @@ pub(crate) struct Candidate {
     pub(crate) named: SmallVec<[usize; 4]>,
 }
 
-/// The compiled motif column of one plan: the pattern rooted at each
+/// The compiled pattern column of one plan: the pattern rooted at each
 /// node, if any, and the two interior skip-masks its consumers read.
 ///
 /// The masks diverge by design: every match skips its interiors (and
@@ -42,7 +42,7 @@ pub(crate) struct Catalog {
 
 impl Catalog {
     /// Runs every matcher over `view` and claims nodes first-wins.
-    /// `fuse` is the memory-posture gate: a homing motif is stored
+    /// `fuse` is the memory-posture gate: a homing pattern is stored
     /// only when it is true, which is exactly a forward-only request —
     /// fusing engine-backward would leave the reverse scan nothing to
     /// read. Raise-only matchers run un-gated, storing on every plan
@@ -50,7 +50,7 @@ impl Catalog {
     ///
     /// Matcher order in this body is the first priority axis; within
     /// one matcher, `collect_one` scans in recording order. Adding a
-    /// motif is one call here, in its documented overlap position.
+    /// pattern is one call here, in its documented overlap position.
     pub(crate) fn collect<Data: Differentiable>(view: &View<Data>, fuse: bool) -> Self {
         let length = view.len();
         let mut catalog = Self {
@@ -103,7 +103,7 @@ impl Catalog {
     }
 
     /// Pins `last_consumer` so the reads of a home-fusing match
-    /// outlive the skipped chain. Raise-only motifs pin nothing: their
+    /// outlive the skipped chain. Raise-only patterns pin nothing: their
     /// chains actually run, so ordinary last-consumer is correct.
     pub(crate) fn pin_liveness(&self, last_consumer: &mut [Option<usize>]) {
         for (index, pattern) in self.at.iter().enumerate() {
@@ -123,7 +123,7 @@ impl Catalog {
 ///
 /// A candidate is rejected wholesale if it is not closed or any of
 /// its root, interiors, or named results is already claimed. Extra
-/// reads are not claimed: two motifs may share an input.
+/// reads are not claimed: two patterns may share an input.
 fn collect_one<Data: Differentiable>(
     view: &View<Data>,
     catalog: &mut Catalog,
