@@ -381,6 +381,70 @@ fn forward_only_plans_fuse_and_agree() {
 }
 
 #[test]
+fn describe_snapshots_the_fused_forward_plan() {
+    // The full wording of a fused plan's schedule, so the catalog
+    // extract cannot silently reword what `contains` checks miss.
+    use crate::{conv2d, max_pool};
+
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
+        [2, 1, 4, 4],
+        (0..32).map(|v| (v as f64) / 10.0 - 1.5).collect::<Vec<_>>(),
+    ));
+    let weights = tape.leaf(Tensor::new(
+        [2, 1, 3, 3],
+        (0..18)
+            .map(|v| (v as f64) / 24.0 - 0.375)
+            .collect::<Vec<_>>(),
+    ));
+    let bias = tape.leaf(Tensor::new([2], [0.05, -0.05]));
+    let output = max_pool(conv2d(input, weights, bias, 1, 1).relu(), 2, 2).symbol();
+    let network = tape.into_network();
+
+    let forward = network.compile(Request::roots([output]));
+    let expected = "     0  Leaf           [2, 1, 4, 4]     freed after 11
+     1  Leaf           [2, 1, 3, 3]     freed after 9
+     2  Leaf           [2]              freed after 12
+     3  Pad            [2, 1, 6, 4]     fused (window-gemm)
+     4  Pad            [2, 1, 6, 6]     fused (window-gemm)
+     5  Unfold         [2, 1, 4, 3, 6]  fused (window-gemm)
+     6  Unfold         [2, 1, 4, 3, 4, 3] fused (window-gemm)
+     7  Permute        [2, 4, 4, 1, 3, 3] fused (window-gemm)
+     8  Reshape        [32, 9]          fused (window-gemm)
+     9  Permute        [1, 3, 3, 2]     freed after 10
+    10  Reshape        [9, 2]           freed after 11
+    11  MatMul         [32, 2]          freed after 13
+    12  BroadcastAlong [32, 2]          freed after 13
+    13  Add            [32, 2]          freed after 14
+    14  Reshape        [2, 4, 4, 2]     freed after 15
+    15  Permute        [2, 2, 4, 4]     freed after 16
+    16  Relu           [2, 2, 4, 4]     freed after 17
+    17  Unfold         [2, 2, 2, 2, 4]  freed after 18
+    18  Unfold         [2, 2, 2, 2, 2, 2] freed after 19
+    19  Permute        [2, 2, 2, 2, 2, 2] freed after 20
+    20  Reshape        [2, 2, 2, 2, 4]  freed after 26
+    21  Narrow         [2, 2, 2, 2, 1]  freed after 23
+    22  Narrow         [2, 2, 2, 2, 1]  freed after 23
+    23  Maximum        [2, 2, 2, 2, 1]  freed after 25
+    24  Narrow         [2, 2, 2, 2, 1]  freed after 25
+    25  Maximum        [2, 2, 2, 2, 1]  freed after 27
+    26  Narrow         [2, 2, 2, 2, 1]  freed after 27
+    27  Maximum        [2, 2, 2, 2, 1]  freed after 28
+    28  Reshape        [2, 2, 2, 2]     kept
+plan: forward; 29 of 29 nodes evaluated, 1 readable
+fused 1 window-gemm groups, 6 interior nodes skipped
+live volume: peak 192 elements at node 13, retain-all 856
+";
+    assert_eq!(forward.describe(), expected);
+
+    // The posture gate: the same tape compiled engine-backward stores
+    // no window-GEMM group.
+    assert_eq!(forward.fusion_groups(), 1);
+    let backward = network.compile(Request::roots([output]).backward());
+    assert_eq!(backward.fusion_groups(), 0);
+}
+
+#[test]
 fn kept_interiors_bar_fusion() {
     // Keeping the im2col matrix readable is a fusion barrier: the
     // chain must materialize so the keep-set can answer.

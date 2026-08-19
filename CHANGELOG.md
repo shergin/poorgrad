@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Changed
 
+- The window-GEMM match moved from ad-hoc `Plan` columns into a
+  pattern catalog (`src/engine/pattern/`): one compiled column any
+  number of motifs share, with home fusion and StableHLO raising as
+  two actions on the same match. Same matches, same skips, same
+  `describe` wording, same emitted modules, same bits.
+
 - The spec and the state are now separate types, and the whole
   identity protocol is gone. Recording happens on the new public
   `Tape` (the construction phase: `leaf`, `parameter`, `input`,

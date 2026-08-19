@@ -368,13 +368,28 @@ while forward-only plans execute their releases, where the win is
 measured. Keeping a rule and its read set in step is part of
 changing either.
 
-**Fusion (window-GEMM).** The plan tier's first pattern: the
+**Pattern (catalog).** A closed, documented set of motifs — same
+spirit as `Function` — matched once at `Network::compile` over the
+plan's frozen columns and stored as one column on the plan
+(`src/engine/pattern/`). A pattern is a compile-time match, not a
+tape rewrite and not itself a fuse or a raise: fusion at home and
+raising abroad are two optional actions on the same catalog entry,
+decided per variant. Matchers share one `View` (wanted, keep-set,
+consumer counts), claim nodes first-wins in documented order, and
+require the claimed subgraph to be closed — unnamed interiors
+unreadable, every wanted consumer inside the match. Dispatch at both
+consumers is a plain enum `match`; the tape and the backends never
+see a pattern.
+
+**Fusion (window-GEMM).** The pattern catalog's first motif: the
 canonical im2col chain — pads, two unfolds, the permute, the patch
-reshape — feeding a `matmul` executes as one
-`Tensorial::windowed_product` call, and the chain is never
-materialized. Matching is structural and provenance-blind (a
-hand-written chain identical to `conv2d`'s fuses identically), a
-keep-set node inside the chain is a fusion barrier, and fusion
+reshape — feeding a `matmul`. The match lives in the catalog, and
+fusion and raising are its two actions: `Plan::forward` executes the
+group as one `Tensorial::windowed_product` call with the chain never
+materialized, and `Plan::emit_stablehlo` raises the group to
+`stablehlo.convolution`. Matching is structural and provenance-blind
+(a hand-written chain identical to `conv2d`'s fuses identically), a
+keep-set node inside the chain is a fusion barrier, and home fusion
 follows the plan's memory posture: forward-only plans always fuse (a
 pure win — the chain simply never exists, and recorded-gradient
 training plans are forward-only, so they fuse too), while

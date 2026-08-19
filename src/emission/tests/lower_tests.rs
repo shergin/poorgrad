@@ -385,6 +385,28 @@ fn probe_networks_emit_end_to_end() {
 }
 
 #[test]
+fn a_convolution_plan_emits_the_golden_module() {
+    // The full raised module, so catalog plumbing changes cannot
+    // silently reshape the emitted text.
+    let expected = r#"module @topos {
+  func.func @main(%arg0: tensor<1x2x4x4xf32>, %arg1: tensor<2x2x2x2xf32>, %arg2: tensor<2xf32>) -> (tensor<1x2x3x3xf32>) {
+    %v9 = stablehlo.transpose %arg1, dims = [1, 2, 3, 0] : (tensor<2x2x2x2xf32>) -> tensor<2x2x2x2xf32>
+    %v10 = stablehlo.reshape %v9 : (tensor<2x2x2x2xf32>) -> tensor<8x2xf32>
+    %v11_kernel = stablehlo.reshape %v10 : (tensor<8x2xf32>) -> tensor<2x2x2x2xf32>
+    %v11_windows = stablehlo.convolution(%arg0, %v11_kernel) dim_numbers = [b, f, 0, 1]x[i, 0, 1, o]->[b, 0, 1, f], window = {stride = [2, 2], pad = [[1, 1], [1, 1]]} {batch_group_count = 1 : i64, feature_group_count = 1 : i64} : (tensor<1x2x4x4xf32>, tensor<2x2x2x2xf32>) -> tensor<1x3x3x2xf32>
+    %v11 = stablehlo.reshape %v11_windows : (tensor<1x3x3x2xf32>) -> tensor<9x2xf32>
+    %v12 = stablehlo.broadcast_in_dim %arg2, dims = [1] : (tensor<2xf32>) -> tensor<9x2xf32>
+    %v13 = stablehlo.add %v11, %v12 : tensor<9x2xf32>
+    %v14 = stablehlo.reshape %v13 : (tensor<9x2xf32>) -> tensor<1x3x3x2xf32>
+    %v15 = stablehlo.transpose %v14, dims = [0, 3, 1, 2] : (tensor<1x3x3x2xf32>) -> tensor<1x2x3x3xf32>
+    return %v15 : tensor<1x2x3x3xf32>
+  }
+}
+"#;
+    assert_eq!(convolution_case().module, expected);
+}
+
+#[test]
 fn fused_plans_raise_to_convolution() {
     let module = convolution_case().module;
     assert!(

@@ -3,6 +3,7 @@
 //! sealed spec. Everything here reads the graph tier; nothing below
 //! it depends on it.
 
+mod pattern;
 mod plan;
 mod request;
 mod run;
@@ -11,5 +12,5 @@ pub use plan::Plan;
 pub use request::Request;
 pub use run::Run;
 
-pub(crate) use plan::WindowProduct;
+pub(crate) use pattern::WindowProduct;
 pub(crate) use run::Posture;
