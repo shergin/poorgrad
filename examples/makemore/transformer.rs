@@ -27,7 +27,7 @@ mod corpus;
 use std::time::Instant;
 
 use topos::{
-    Compile, Dropout, RmsNorm, Shape, Tape, Tensor, Tensorial, Value, concat, cross_entropy, init,
+    Dropout, Request, RmsNorm, Shape, Tape, Tensor, Tensorial, Value, concat, cross_entropy, init,
 };
 
 use chart::loss_chart;
@@ -273,10 +273,10 @@ fn main() {
     let network = tape.into_network();
     let mut parameters = network.parameters();
 
-    // Compile once: training keeps only the loss, sampling is
+    // Request once: training keeps only the loss, sampling is
     // forward-only.
-    let training_plan = network.compile(Compile::roots([loss]).engine_backward());
-    let sampling_plan = network.compile(Compile::roots([sample_probabilities]));
+    let training_plan = network.compile(Request::roots([loss]).backward());
+    let sampling_plan = network.compile(Request::roots([sample_probabilities]));
 
     // The seeded mask factory: two draws per step, one per residual
     // write, deterministic in `(seed, step)` so runs replay bitwise.

@@ -9,7 +9,7 @@
 //! the routes train bit-identically; what changes is where the
 //! gradients come from and what the plan retains:
 //!
-//! - `engine`: `engine_backward()` + `backward` (retain-all).
+//! - `engine`: `backward()` + `backward` (retain-all).
 //! - `recorded`: `differentiate` + one forward-only plan over
 //!   `[loss, gradients...]` + `recorded_gradients` — no backward
 //!   pass executes at all.
@@ -28,7 +28,7 @@ mod dataset;
 use std::time::Instant;
 
 use topos::{
-    Compile, Conv2d, Linear, Module, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy,
+    Conv2d, Linear, Module, Request, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy,
     init, max_pool,
 };
 
@@ -168,11 +168,11 @@ fn main() {
     let network = tape.into_network();
     let mut parameters = network.parameters();
     let plan = if recorded {
-        network.compile(Compile::roots(
+        network.compile(Request::roots(
             std::iter::once(loss).chain(gradient_symbols.iter().copied()),
         ))
     } else {
-        network.compile(Compile::roots([loss]).engine_backward())
+        network.compile(Request::roots([loss]).backward())
     };
     for line in plan
         .describe()

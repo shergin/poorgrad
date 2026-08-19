@@ -40,6 +40,16 @@ The format is based on [Keep a Changelog], and this project adheres to
   entry points, which moved next to `compile`'s home in the planner).
   Purely internal: the crate root re-exports are unchanged.
 
+- The compile request is `Request`, and its posture flag is
+  `backward()`. `Compile` was the register's one verb-named type and
+  stuttered at 57 of its 60 call sites
+  (`network.compile(Compile::roots(...))`); the request now reads as
+  English — `network.compile(Request::roots([loss]).backward())` —
+  and the flag mirrors `Plan::can_backward` instead of leaning on
+  the internal engine-versus-recorded vocabulary. (`training()` was
+  rejected as the simplification because it would lie: the recorded
+  route trains through forward-only plans.)
+
 - Post-recording APIs speak `Symbol` only: `Run::of`,
   `Run::backward`, `Field::of`, `forward_for` targets, and
   `recorded_gradients` pairs take symbols, `Compile` is non-generic

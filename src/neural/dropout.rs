@@ -6,7 +6,7 @@ use crate::{Differentiable, Shape, Symbol, Tape, Tensorial, Value};
 
 use super::Module;
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Dropout<f64>: Send, Sync);
 

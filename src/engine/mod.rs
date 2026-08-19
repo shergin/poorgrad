@@ -1,14 +1,14 @@
 //! The executor tier: the interpreting [`Run`], the compiled [`Plan`]
-//! with its [`Compile`] request, and the forward entry points on the
+//! with its compile [`Request`], and the forward entry points on the
 //! sealed spec. Everything here reads the graph tier; nothing below
 //! it depends on it.
 
-mod compile;
 mod plan;
+mod request;
 mod run;
 
-pub use compile::Compile;
 pub use plan::Plan;
+pub use request::Request;
 pub use run::Run;
 
 pub(crate) use plan::WindowProduct;

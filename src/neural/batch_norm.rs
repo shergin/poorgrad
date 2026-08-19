@@ -4,7 +4,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Symbol, Tape, Tensorial, Value};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(BatchNorm<f64>: Send, Sync);
 

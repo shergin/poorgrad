@@ -33,7 +33,7 @@ use std::time::Instant;
 use malevich::stat::Window;
 use malevich::{Frame, Line, Plot, Rule};
 use topos::{
-    Adam, Compile, Optimizer, Sgd, Shape, Symbol, Tape, Tensor, Value, cross_entropy, init,
+    Adam, Optimizer, Request, Sgd, Shape, Symbol, Tape, Tensor, Value, cross_entropy, init,
 };
 
 use corpus::{VOCABULARY_LEN, load_names, shuffle, training_samples};
@@ -153,7 +153,7 @@ fn train(
     };
     let network = tape.into_network();
     let plan = recorded.then(|| {
-        network.compile(Compile::roots(
+        network.compile(Request::roots(
             std::iter::once(loss).chain(gradient_symbols.iter().copied()),
         ))
     });

@@ -20,7 +20,7 @@ mod corpus;
 
 use std::time::Instant;
 
-use topos::{Compile, Shape, Tape, Tensor, Tensorial, Value, cross_entropy, init};
+use topos::{Request, Shape, Tape, Tensor, Tensorial, Value, cross_entropy, init};
 
 use chart::loss_chart;
 use corpus::{VOCABULARY_LEN, draw, from_token, load_names, shuffle, training_samples};
@@ -147,7 +147,7 @@ fn main() {
     );
     let network = tape.into_network();
     let mut parameters = network.parameters();
-    let plan = network.compile(Compile::roots(
+    let plan = network.compile(Request::roots(
         std::iter::once(loss).chain(gradient_symbols.iter().copied()),
     ));
 

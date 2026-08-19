@@ -318,12 +318,12 @@ tape: the ancestor closure of declared roots (dead-node
 elimination), the readable set (roots plus observes), per-node free
 lists (buffer liveness), and captured shapes. Produced by
 [`Network::compile`](src/engine/plan.rs) from one explicit
-[`Compile`](src/engine/compile.rs) request: roots (what a run must
+[`Request`](src/engine/request.rs): roots (what a run must
 compute; recorded gradient symbols enter as ordinary roots),
-observes (extra readable interiors), and an optional engine-backward
-posture, which holds every closure value `backward` reads — a
-request without it compiles forward liveness, whose runs refuse
-`backward`, and recorded gradient symbols enter as ordinary roots;
+observes (extra readable interiors), and the optional `backward`
+posture, which holds every closure value the engine's reverse scan
+reads — a request without it compiles forward liveness, whose runs
+refuse `backward`;
 run by `Plan::forward`, whose results
 are bit-identical to the interpreter's — a plan changes what is
 *stored*, never what is *computed*. Plans are graph-structural and

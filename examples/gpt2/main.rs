@@ -49,7 +49,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Bf16, Compile, Differentiable, Elementary, Emittable, Module, Plan, Symbol, Tape, Tensor,
+    Bf16, Differentiable, Elementary, Emittable, Module, Plan, Request, Symbol, Tape, Tensor,
     checkpoint,
 };
 
@@ -250,7 +250,7 @@ where
     );
 
     let compiling = Instant::now();
-    let plan: Plan<Tensor<E>> = network.compile(Compile::roots([sampler.logits]));
+    let plan: Plan<Tensor<E>> = network.compile(Request::roots([sampler.logits]));
     println!(
         "recorded {} nodes and compiled the plan in {:.1}s",
         network.len(),

@@ -1,4 +1,4 @@
-use crate::{Compile, Symbol, Tape, Tensor};
+use crate::{Request, Symbol, Tape, Tensor};
 
 /// The empty feed set, typed for the scalar tests.
 fn no_feeds() -> std::iter::Empty<(Symbol, f64)> {
@@ -14,7 +14,7 @@ fn plan_forward_matches_the_interpreter_bitwise() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
 
@@ -29,7 +29,7 @@ fn plan_skips_what_the_targets_cannot_observe() {
     let _unwanted = x + x;
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([wanted]));
+    let plan = network.compile(Request::roots([wanted]));
     let run = plan.forward(&network.parameters(), no_feeds());
     assert_eq!(*run.of(wanted), 4.0);
 }
@@ -46,7 +46,7 @@ fn plan_reads_outside_the_readable_set_are_rejected() {
     let interior = interior.symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
     let run = plan.forward(&network.parameters(), no_feeds());
     run.of(interior);
 }
@@ -60,7 +60,7 @@ fn keep_makes_an_interior_value_readable() {
     let interior = interior.symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([target]).observe([interior]));
+    let plan = network.compile(Request::roots([target]).observe([interior]));
     let run = plan.forward(&network.parameters(), no_feeds());
     assert_eq!(*run.of(target), 6.0);
     assert_eq!(*run.of(interior), 4.0);
@@ -74,7 +74,7 @@ fn forward_only_plans_refuse_backward() {
     let target = (x * x).symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
     let run = plan.forward(&network.parameters(), no_feeds());
     run.backward(target);
 }
@@ -89,7 +89,7 @@ fn training_plans_differentiate_like_the_interpreter() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]).engine_backward());
+    let plan = network.compile(Request::roots([loss]).backward());
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
 
@@ -102,7 +102,7 @@ fn training_plans_differentiate_like_the_interpreter() {
 
 #[test]
 fn one_plan_serves_every_training_step() {
-    // Compile once, train for several steps: the plan's runs must
+    // Request once, train for several steps: the plan's runs must
     // match a freshly interpreted run at every step, bitwise — the
     // plan holds no state, so there is nothing for a step to
     // invalidate.
@@ -115,7 +115,7 @@ fn one_plan_serves_every_training_step() {
     let w = w.symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([loss]).engine_backward());
+    let plan = network.compile(Request::roots([loss]).backward());
     let mut parameters = network.parameters();
     for _ in 0..5 {
         let planned = plan.forward(&parameters, std::iter::empty());
@@ -142,7 +142,7 @@ fn liveness_frees_only_after_the_last_consumer() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([late]));
+    let plan = network.compile(Request::roots([late]));
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
     assert_eq!(planned.of(late).to_vec(), interpreted.of(late).to_vec());
@@ -156,7 +156,7 @@ fn plan_forward_binds_feeds() {
     let x = x.symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([doubled]));
+    let plan = network.compile(Request::roots([doubled]));
     let run = plan.forward(&network.parameters(), [(x, Tensor::new([2], [4.0, 5.0]))]);
     assert_eq!(run.of(doubled).to_vec(), &[8.0, 10.0]);
 }
@@ -168,7 +168,7 @@ fn plans_reject_foreign_parameters() {
     let x = tape.leaf(2.0_f64);
     let target = (x * x).symbol();
     let network = tape.into_network();
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
 
     let other = Tape::<f64>::new();
     let foreign = other.into_network().parameters();
@@ -190,7 +190,7 @@ fn plans_reject_uncarried_parameters_after_extension() {
     let late = tape.parameter(2.0);
     let target = (late * late).symbol();
     let network = tape.into_network();
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
     plan.forward(&stale, no_feeds());
 }
 
@@ -204,7 +204,7 @@ fn plans_keep_serving_their_prefix_after_extension() {
     let target = (w * w).symbol();
     let network = tape.into_network();
     let parameters = network.parameters();
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
 
     let tape = network.into_tape();
     let late = tape.resolve(target) + tape.parameter(3.0);
@@ -224,7 +224,7 @@ fn describe_reports_the_liveness_story() {
     let target = (x.tanh() * x).sum().symbol();
     let network = tape.into_network();
 
-    let plan = network.compile(Compile::roots([target]));
+    let plan = network.compile(Request::roots([target]));
     let description = plan.describe();
     assert!(description.contains("plan: forward;"));
     assert!(description.contains("Tanh"));
@@ -267,7 +267,7 @@ fn training_liveness_matches_the_interpreter_on_a_convnet() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]).engine_backward());
+    let plan = network.compile(Request::roots([loss]).backward());
     // The release analysis must license releases here: the conv view
     // chains and output permutes are all shape-only. Engine runs hold
     // everything (the graded posture), so the licensed set is the
@@ -314,7 +314,7 @@ fn training_liveness_matches_the_interpreter_on_every_value_reader() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]).engine_backward());
+    let plan = network.compile(Request::roots([loss]).backward());
     let planned = plan.forward(&parameters, no_feeds());
     let interpreted = network.forward(&parameters, []);
 
@@ -341,7 +341,7 @@ fn training_liveness_retains_the_gather_selection() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]).engine_backward());
+    let plan = network.compile(Request::roots([loss]).backward());
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
 
@@ -372,7 +372,7 @@ fn forward_only_plans_fuse_and_agree() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([output]));
+    let plan = network.compile(Request::roots([output]));
     assert!(plan.describe().contains("fused 1 window-gemm"));
 
     let planned = plan.forward(&parameters, std::iter::empty());
@@ -403,14 +403,14 @@ fn kept_interiors_bar_fusion() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let fused = network.compile(Compile::roots([loss]));
+    let fused = network.compile(Request::roots([loss]));
     assert!(fused.describe().contains("window-gemm"));
     // Engine-backward plans do not fuse at all: their memory
     // contract stays exact for the reverse scan.
-    let engine = network.compile(Compile::roots([loss]).engine_backward());
+    let engine = network.compile(Request::roots([loss]).backward());
     assert!(!engine.describe().contains("window-gemm"));
 
-    let barred = network.compile(Compile::roots([loss]).observe([patches]));
+    let barred = network.compile(Request::roots([loss]).observe([patches]));
     assert!(!barred.describe().contains("window-gemm"));
     let run = barred.forward(&parameters, std::iter::empty());
     assert_eq!(
@@ -438,7 +438,7 @@ fn batched_products_do_not_fuse() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]));
+    let plan = network.compile(Request::roots([loss]));
     assert!(!plan.describe().contains("window-gemm"));
     let planned = plan.forward(&parameters, std::iter::empty());
     assert_eq!(
@@ -466,7 +466,7 @@ fn shared_windows_bar_fusion() {
     let network = tape.into_network();
     let parameters = network.parameters();
 
-    let plan = network.compile(Compile::roots([loss]));
+    let plan = network.compile(Request::roots([loss]));
     assert!(!plan.describe().contains("window-gemm"));
 
     let planned = plan.forward(&parameters, std::iter::empty());

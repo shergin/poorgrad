@@ -9,7 +9,7 @@ use crate::{Differentiable, Shape, Tensorial};
 use super::trace::Trace;
 use super::{Network, Operands, Origin, SlotStore, Structure, Symbol, Value, ValueId};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`. The tape is the root every other guarantee rests on.
 assert_impl_all!(Tape<f64>: Send, Sync);
 

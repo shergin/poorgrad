@@ -3,7 +3,7 @@ use std::fmt;
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Shape: Send, Sync);
 

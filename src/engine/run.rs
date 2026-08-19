@@ -8,7 +8,7 @@ use crate::{Differentiable, Tensorial};
 use crate::function::{Function, SlotId};
 use crate::graph::{Field, Gradients, Network, Origin, Parameters, Structure, Symbol, ValueId};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Run<f64>: Send, Sync);
 
@@ -233,7 +233,7 @@ impl<Data: Tensorial> Run<Data> {
         assert!(
             self.posture.differentiable(),
             "this run came from a forward-only plan, whose liveness pass freed \
-             the buffers backward reads; compile with `engine_backward` to differentiate"
+             the buffers backward reads; compile with `Request::backward` to differentiate"
         );
         assert_eq!(
             values[output_index].shape().rank(),

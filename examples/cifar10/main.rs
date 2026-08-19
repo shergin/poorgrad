@@ -20,7 +20,7 @@ mod dataset;
 use std::time::Instant;
 
 use topos::{
-    Compile, Conv2d, Linear, Module, Parameters, Plan, Shape, Symbol, Tape, Tensor, Tensorial,
+    Conv2d, Linear, Module, Parameters, Plan, Request, Shape, Symbol, Tape, Tensor, Tensorial,
     Value, cross_entropy, init, max_pool,
 };
 
@@ -199,9 +199,9 @@ fn main() {
     let network = tape.into_network();
     let mut parameters = network.parameters();
 
-    // Compile once, run every step.
-    let training_plan = network.compile(Compile::roots([loss]).engine_backward());
-    let probe_plan = network.compile(Compile::roots([probe_logits]));
+    // Request once, run every step.
+    let training_plan = network.compile(Request::roots([loss]).backward());
+    let probe_plan = network.compile(Request::roots([probe_logits]));
     for line in probe_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")
     }) {

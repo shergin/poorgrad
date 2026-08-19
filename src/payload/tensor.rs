@@ -10,7 +10,7 @@ use super::storage::Storage;
 use super::tensorial::composed_windowed_patches;
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Tensor<f64>: Send, Sync);
 

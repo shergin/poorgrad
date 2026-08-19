@@ -9,9 +9,9 @@ use crate::{Differentiable, Shape, Tensorial};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::{Compile, Posture, Run};
+use super::{Posture, Request, Run};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Plan<f64>: Send, Sync);
 
@@ -88,7 +88,7 @@ pub struct Plan<Data> {
     /// The engine-backward posture: `false` compiles forward liveness
     /// (runs refuse `backward`), `true` retains what the engine
     /// reverse scan reads.
-    engine_backward: bool,
+    backward: bool,
 }
 
 /// Scans for the canonical im2col chain feeding each `matmul` —
@@ -234,13 +234,8 @@ fn match_window_products<Data: Differentiable>(
 impl<Data: Differentiable> Plan<Data> {
     /// Compiles the plan for `network`: reachability from the roots,
     /// the readable set, and the release analysis.
-    fn new(
-        network: &Network<Data>,
-        roots: &[Symbol],
-        observe: &[Symbol],
-        engine_backward: bool,
-    ) -> Self {
-        let training = engine_backward;
+    fn new(network: &Network<Data>, roots: &[Symbol], observe: &[Symbol], backward: bool) -> Self {
+        let training = backward;
         let structure = network.structure().clone();
         let length = structure.len();
 
@@ -366,7 +361,7 @@ impl<Data: Differentiable> Plan<Data> {
             releases,
             fused,
             fused_interior,
-            engine_backward,
+            backward,
         }
     }
 
@@ -385,7 +380,7 @@ impl<Data: Differentiable> Plan<Data> {
     /// request asked for engine reverse mode; `describe` prints the
     /// posture.
     pub fn can_backward(&self) -> bool {
-        self.engine_backward
+        self.backward
     }
 
     /// Returns the plan's function column, for plan consumers such as
@@ -506,7 +501,7 @@ impl<Data: Differentiable> Plan<Data> {
         // Forward-only runs execute the analysis; engine-backward
         // runs hold everything, so the wording distinguishes what
         // happens from what the analysis licenses.
-        let release_word = if self.engine_backward {
+        let release_word = if self.backward {
             "releasable after"
         } else {
             "freed after"
@@ -541,11 +536,7 @@ impl<Data: Differentiable> Plan<Data> {
             )
             .expect("writing to a string cannot fail");
         }
-        let mode = if self.engine_backward {
-            "retain"
-        } else {
-            "forward"
-        };
+        let mode = if self.backward { "retain" } else { "forward" };
         writeln!(
             lines,
             "plan: {mode}; {evaluated} of {} nodes evaluated, {} readable",
@@ -566,7 +557,7 @@ impl<Data: Differentiable> Plan<Data> {
             .expect("writing to a string cannot fail");
         }
         let (floor, floor_at, total) = self.live_story(&self.releases);
-        if self.engine_backward {
+        if self.backward {
             writeln!(
                 lines,
                 "live volume: retain-all {total}, release floor {floor} at node {floor_at}",
@@ -697,14 +688,14 @@ impl<Data: Tensorial> Plan<Data> {
             // slots, and the caller may not read them — a forward-only
             // run releases now; an engine run holds everything its
             // backward reads.
-            if !self.engine_backward {
+            if !self.backward {
                 for &slot in &self.releases[index] {
                     values[slot] = Data::counted(self.structure.shapes[slot].clone(), 0);
                 }
             }
         }
 
-        let posture = if self.engine_backward {
+        let posture = if self.backward {
             Posture::Training {
                 readable: Arc::clone(&self.readable),
             }
@@ -723,19 +714,14 @@ impl<Data: Differentiable> Network<Data> {
     /// memory posture.
     ///
     /// Forward-only requests (never calling
-    /// [`Compile::engine_backward`]) free every non-readable buffer
+    /// [`Request::backward`]) free every non-readable buffer
     /// after its last consumer, so their runs refuse `backward`;
     /// recorded gradient symbols compile as ordinary roots.
     ///
     /// # Panics
     /// Panics if a root or observe does not resolve in this network.
-    pub fn compile(&self, request: Compile) -> Plan<Data> {
-        Plan::new(
-            self,
-            &request.roots,
-            &request.observe,
-            request.engine_backward,
-        )
+    pub fn compile(&self, request: Request) -> Plan<Data> {
+        Plan::new(self, &request.roots, &request.observe, request.backward)
     }
 }
 

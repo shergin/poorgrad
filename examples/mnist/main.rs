@@ -21,7 +21,7 @@ mod dataset;
 use std::time::Instant;
 
 use topos::{
-    Compile, Conv2d, Linear, Module, Parameters, Plan, Shape, Symbol, Tape, Tensor, Tensorial,
+    Conv2d, Linear, Module, Parameters, Plan, Request, Shape, Symbol, Tape, Tensor, Tensorial,
     Value, cross_entropy, init, max_pool,
 };
 
@@ -183,12 +183,12 @@ fn main() {
     let network = tape.into_network();
     let mut parameters = network.parameters();
 
-    // Compile once, run every step. The engine plan retains what
+    // Request once, run every step. The engine plan retains what
     // `backward` reads; the probe plan frees as it goes. The
     // `mnist_grading` example measures this route against recorded
     // gradients.
-    let training_plan = network.compile(Compile::roots([loss]).engine_backward());
-    let probe_plan = network.compile(Compile::roots([probe_logits]));
+    let training_plan = network.compile(Request::roots([loss]).backward());
+    let probe_plan = network.compile(Request::roots([probe_logits]));
     for line in training_plan.describe().lines().filter(|line| {
         line.starts_with("plan:") || line.starts_with("live volume:") || line.starts_with("fused")
     }) {

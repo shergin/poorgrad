@@ -32,7 +32,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Compile, Differentiable, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy, init,
+    Differentiable, Request, Shape, Symbol, Tape, Tensor, Tensorial, Value, cross_entropy, init,
 };
 
 use corpus::{VOCABULARY_LEN, load_names, shuffle, training_samples};
@@ -222,7 +222,7 @@ fn main() {
         })
         .collect();
     let network = tape.into_network();
-    let plan = network.compile(Compile::roots(
+    let plan = network.compile(Request::roots(
         std::iter::once(loss).chain(aliases.iter().copied()),
     ));
     let module = plan.emit_stablehlo().expect("the joint step emits");

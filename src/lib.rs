@@ -63,7 +63,7 @@ mod payload;
 
 pub use backend::{Backend, BackendUnavailable};
 pub use emission::{EmitError, Emittable};
-pub use engine::{Compile, Plan, Run};
+pub use engine::{Plan, Request, Run};
 pub use graph::{Field, Gradients, Network, Parameters, Symbol, Tape, Value, concat, stack};
 pub use neural::{
     Activation, Adam, AdamW, BatchNorm, Conv2d, Dropout, LayerNorm, Linear, Mlp, Module,

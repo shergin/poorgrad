@@ -2,7 +2,7 @@ use static_assertions::assert_impl_all;
 
 use super::{Origin, ValueId};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Symbol: Send, Sync, Copy);
 

@@ -4,7 +4,7 @@ use crate::{Differentiable, Shape, Symbol, Tape, Tensorial, Value};
 
 use super::{Activation, Linear, Module, Segment, Visitor};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Mlp<f64>: Send, Sync);
 

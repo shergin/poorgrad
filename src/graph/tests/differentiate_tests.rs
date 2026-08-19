@@ -1,4 +1,4 @@
-use crate::{Compile, Differentiable, Symbol, Tape, Tensor};
+use crate::{Differentiable, Request, Symbol, Tape, Tensor};
 
 /// Asserts the closure contract for one recorded graph: the gradients
 /// `differentiate` records must reproduce `Run::backward`
@@ -394,7 +394,7 @@ fn a_composed_loss_closes_through_a_plan() {
     let loss = loss.symbol();
     let network = tape.into_network();
     let parameters = network.parameters();
-    let plan = network.compile(Compile::roots(
+    let plan = network.compile(Request::roots(
         std::iter::once(loss).chain(gradients.iter().copied()),
     ));
     let planned = plan.forward(&parameters, []);
@@ -545,7 +545,7 @@ fn a_recorded_training_loop_matches_the_engine_bitwise() {
     let (recorded_x, recorded_params, recorded_loss) = build(&recorded_tape);
     let gradients = recorded_tape.differentiate(recorded_loss, recorded_params.iter().copied());
     let recorded_network = recorded_tape.into_network();
-    let plan = recorded_network.compile(Compile::roots(
+    let plan = recorded_network.compile(Request::roots(
         std::iter::once(recorded_loss).chain(gradients.iter().copied()),
     ));
 

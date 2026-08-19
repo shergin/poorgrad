@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 
 use static_assertions::assert_impl_all;
 
-// Compile-time thread-safety contract; the anchor rationale is
+// Request-time thread-safety contract; the anchor rationale is
 // documented in `network.rs`.
 assert_impl_all!(Backend: Send, Sync);
 assert_impl_all!(BackendUnavailable: Send, Sync);

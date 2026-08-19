@@ -26,7 +26,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Compile, Differentiable, RmsNorm, Shape, Symbol, Tape, Tensor, Value, concat, cross_entropy,
+    Differentiable, Request, RmsNorm, Shape, Symbol, Tape, Tensor, Value, concat, cross_entropy,
     init, stack,
 };
 
@@ -227,7 +227,7 @@ fn recorded(
     let (tokens, targets, loss) = (tokens.symbol(), targets.symbol(), loss.symbol());
     let network = tape.into_network();
     let parameters = network.parameters();
-    let plan = network.compile(Compile::roots(
+    let plan = network.compile(Request::roots(
         std::iter::once(loss).chain(aliases.iter().copied()),
     ));
     let run = plan.forward(

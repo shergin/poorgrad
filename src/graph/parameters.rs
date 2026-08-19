@@ -6,7 +6,7 @@ use super::Field;
 
 use super::{Network, Origin, SlotStore, Symbol};
 
-// Compile-time thread-safety contract; the anchor rationale is documented
+// Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Parameters<f64>: Send, Sync);
 
