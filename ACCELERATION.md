@@ -100,8 +100,10 @@ cargo run --release --features accelerate,metal --example throughput
 
 There is nothing to call, configure, or detect: dispatch happens
 inside the payload's operations, above per-task thresholds, with
-silent fallback to the built-in paths. Two optional touch points
-exist, both diagnostics rather than switches:
+silent fallback to the built-in paths. One labeled choice exists —
+the `Numerics` posture on a compile request, documented under
+Routing — and two optional touch points, both diagnostics rather
+than switches:
 
 ```rust
 // Loud mode: refuse to run slow instead of falling back silently.
@@ -188,10 +190,21 @@ then `Metal`, then `Cuda`, then `Simd`; elementwise maps try
 decline any task: below its threshold, outside its stride mapping,
 beyond its integer range, or with its device gone. Whatever the whole chain declines
 lands on the built-in paths, so every task computes correctly in
-every build; features change speed, never behavior classes. There
-is deliberately no runtime switch: selection is per-build
-(features) and per-task (thresholds, dtype — `f64` never reaches
-Metal), never per-call-site.
+every build; features change speed, never behavior classes.
+Selection is per-build (features) and per-task (thresholds, dtype —
+`f64` never reaches Metal), never per-call-site. The one run-scoped
+control is a posture, not a router: `Numerics::Exact` on a compile
+request makes every chain entry decline, so those runs compute on
+the reference paths — the same bits as the default build, reachable
+in every build — while `Numerics::Fast` (the default) is the chain
+exactly as described above, its thresholds serving as cost
+heuristics inside the posture rather than correctness boundaries.
+
+```rust
+// One process, both answers: the oracle and the fast path.
+let exact = network.compile(Request::roots([loss]).numerics(Numerics::Exact));
+let fast = network.compile(Request::roots([loss]));
+```
 
 ## Past the boundary: emitted plans on XLA
 
@@ -238,18 +251,23 @@ the ordinary test suite whenever the toolchain (any Python with
 ## Determinism
 
 Results are a pure function of the payloads, the compiled features,
-and the machine. Within one binary, two identical runs can never
-disagree — there is nothing that could change between them, and the
-test suite verifies the hardware paths down to the bit (repeated
-products compare bitwise). What a backend build forfeits is
-bit-identity *with the built-in paths*: hardware sums and rounds in
-its own order (AMX partitions sums, vForce rounds differently than
-libm, the simd kernels pack and re-associate — though
-single-threaded, so nothing varies between runs), the same way any
-BLAS differs from a textbook loop. One
-cargo caveat: features unify across a dependency graph, so any
-dependency enabling `topos/accelerate` enables it for the whole
-binary.
+the numerics posture, and the machine. Within one binary, two
+identical runs can never disagree — there is nothing that could
+change between them, and the test suite verifies the hardware paths
+down to the bit (repeated products compare bitwise). What a backend
+build's `Fast` runs forfeit is bit-identity *with the built-in
+paths*: hardware sums and rounds in its own order (AMX partitions
+sums, vForce rounds differently than libm, the simd kernels pack
+and re-associate — though single-threaded, so nothing varies
+between runs), the same way any BLAS differs from a textbook loop.
+`Numerics::Exact` restores the built-in bits inside the same binary
+— a labeled per-request choice, so the reference result is always
+one compile away and comparable to the fast one in one process (the
+test suite asserts exactly this over a supra-threshold product).
+This also defuses the one cargo caveat: features unify across a
+dependency graph, so any dependency enabling `topos/accelerate`
+enables it for the whole binary — but an `Exact` request computes
+reference bits regardless of what the build unified.
 
 ## Safety
 

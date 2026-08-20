@@ -9,6 +9,13 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- `Numerics`, the two-valued numerics posture on compile requests:
+  `Request::numerics(Numerics::Exact)` makes the backend chain
+  decline every task, so those runs compute on the built-in reference
+  paths — the same bits as the default build, in every build — while
+  `Fast` (the default) keeps the chain with its thresholds as cost
+  heuristics. Runs carry the posture into `backward`, and an exact
+  and a fast result are comparable in one process.
 - StableHLO emission raises the recorded `BatchNorm` formulas to
   `stablehlo.batch_norm_training` / `batch_norm_inference`. The
   training raise returns the batch statistics as its own results, so

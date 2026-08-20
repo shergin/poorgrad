@@ -4,8 +4,9 @@ use cow_vec::CowVec;
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Shape, Tensorial};
+use crate::{Differentiable, Numerics, Shape, Tensorial};
 
+use crate::backend::NumericsScope;
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
@@ -85,12 +86,22 @@ pub struct Plan<Data> {
     /// (runs refuse `backward`), `true` retains what the engine
     /// reverse scan reads.
     backward: bool,
+    /// The numerics posture of this plan's runs: `Fast` engages the
+    /// compiled backend chain, `Exact` computes on the reference
+    /// paths — the same bits as the default build, in every build.
+    numerics: Numerics,
 }
 
 impl<Data: Differentiable> Plan<Data> {
     /// Compiles the plan for `network`: reachability from the roots,
     /// the readable set, and the release analysis.
-    fn new(network: &Network<Data>, roots: &[Symbol], observe: &[Symbol], backward: bool) -> Self {
+    fn new(
+        network: &Network<Data>,
+        roots: &[Symbol],
+        observe: &[Symbol],
+        backward: bool,
+        numerics: Numerics,
+    ) -> Self {
         let training = backward;
         let structure = network.structure().clone();
         let length = structure.len();
@@ -214,6 +225,7 @@ impl<Data: Differentiable> Plan<Data> {
             candidates,
             home,
             backward,
+            numerics,
         }
     }
 
@@ -233,6 +245,12 @@ impl<Data: Differentiable> Plan<Data> {
     /// posture.
     pub fn can_backward(&self) -> bool {
         self.backward
+    }
+
+    /// Returns the numerics posture this plan's runs execute under,
+    /// as chosen by [`Request::numerics`](crate::Request::numerics).
+    pub fn numerics(&self) -> Numerics {
+        self.numerics
     }
 
     /// Returns the plan's function column, for plan consumers such as
@@ -454,6 +472,11 @@ impl<Data: Tensorial> Plan<Data> {
             "parameters do not cover the plan's parameter slots; \
              carry them across a reopen with `Parameters::carried`"
         );
+        // The plan's numerics posture holds for the whole run: the
+        // backend chain consults it per task, and `Exact` makes every
+        // entry decline. The guard restores the previous posture on
+        // any exit.
+        let _numerics = NumericsScope::enter(self.numerics);
 
         let mut bindings = Vec::new();
         for (symbol, payload) in feeds {
@@ -543,7 +566,13 @@ impl<Data: Tensorial> Plan<Data> {
                 readable: Arc::clone(&self.readable),
             }
         };
-        Run::new(self.structure.clone(), self.origin, values, posture)
+        Run::new(
+            self.structure.clone(),
+            self.origin,
+            values,
+            posture,
+            self.numerics,
+        )
     }
 }
 
@@ -560,7 +589,13 @@ impl<Data: Differentiable> Network<Data> {
     /// # Panics
     /// Panics if a root or observe does not resolve in this network.
     pub fn compile(&self, request: Request) -> Plan<Data> {
-        Plan::new(self, &request.roots, &request.observe, request.backward)
+        Plan::new(
+            self,
+            &request.roots,
+            &request.observe,
+            request.backward,
+            request.numerics,
+        )
     }
 }
 

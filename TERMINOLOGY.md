@@ -645,9 +645,11 @@ behind a cargo feature and tried in declaration order by the chain
 in [`backend`](src/backend/mod.rs); every backend may decline any
 task (wrong size, wrong platform, unavailable device), and the
 built-in paths answer when the whole chain declines. The chain is
-compile-time: enabling a feature is the activation, and no runtime
-switch exists, so within one binary two identical runs can never
-disagree. The chain has four residents, tried in order.
+compile-time: enabling a feature is the activation, no per-call-site
+routing exists, and within one binary two identical runs can never
+disagree; the one run-scoped control is the `Numerics` posture
+below, which can only make the chain decline, never re-route it.
+The chain has four residents, tried in order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
 dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
@@ -678,6 +680,21 @@ result, not a compile error — and the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
 build confines `unsafe` to the backend's module under a crate-wide
 `deny` with one scoped allow.
+
+**Numerics (Exact / Fast).** The two-valued numerics posture of a
+plan's runs, chosen on the compile request and carried by the plan
+and its runs (`Request::numerics`, `Plan::numerics`). `Fast` — the
+default, and the fixed posture of interpreter runs and host-side
+payload calls — is the backend chain as compiled, its per-task flop
+thresholds serving as cost heuristics inside the posture. `Exact`
+makes every chain entry decline, so the run computes on the built-in
+reference paths: the same bits as the default build, in every build
+— the oracle, always one compile away, which makes an exact and a
+fast result comparable in one process. Reordering float math is
+always this labeled choice, never a silent effect of a feature flag;
+a run's `backward` re-enters its forward posture, so gradients
+follow the same paths. In topos:
+[`Numerics`](src/backend/numerics.rs).
 
 ## Neural building blocks
 

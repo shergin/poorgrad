@@ -22,6 +22,7 @@ mod cuda;
 #[cfg(all(feature = "metal", target_os = "macos"))]
 #[allow(unsafe_code)]
 mod metal;
+mod numerics;
 // Safe stride classification shared by the BLAS-shaped backends;
 // compiled exactly where one of them is.
 #[cfg(any(
@@ -36,12 +37,20 @@ mod operand;
 mod simd;
 
 pub use backend::{Backend, BackendUnavailable};
+pub use numerics::Numerics;
+
+pub(crate) use numerics::NumericsScope;
 
 use crate::{GemmTask, MapOperation};
 
 /// It offers an `f32` task to every compiled backend, hardware-greediest
 /// first, answering `None` when none accepts.
 pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
+    // The numerics posture outranks the whole chain: `Exact` declines
+    // everything, so the built-in reference paths compute.
+    if numerics::current() == Numerics::Exact {
+        return None;
+    }
     // Accelerate leads: the measured crossover has AMX ahead of the
     // current Metal kernel at every size, so Metal serves what BLAS
     // declines (stride patterns like broadcasts) and metal-only
@@ -69,6 +78,9 @@ pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
 /// It offers an `f64` task to every compiled backend, answering `None`
 /// when none accepts.
 pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
+    if numerics::current() == Numerics::Exact {
+        return None;
+    }
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if let Some(product) = accelerate::gemm_f64(task) {
         return Some(product);
@@ -88,6 +100,9 @@ pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 /// It offers an `f32` elementwise map to every compiled backend,
 /// answering `None` when none accepts.
 pub(crate) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
+    if numerics::current() == Numerics::Exact {
+        return None;
+    }
     // Metal leads the map chain, the reverse of the gemm order: the
     // measured map crossover has the GPU ahead of vForce from 512k
     // elements, and its size gate hands everything smaller to the
@@ -107,6 +122,9 @@ pub(crate) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f
 /// It offers an `f64` elementwise map to every compiled backend,
 /// answering `None` when none accepts.
 pub(crate) fn map_f64(operation: MapOperation, elements: &[f64]) -> Option<Vec<f64>> {
+    if numerics::current() == Numerics::Exact {
+        return None;
+    }
     #[cfg(all(feature = "accelerate", target_os = "macos"))]
     if let Some(mapped) = accelerate::map_f64(operation, elements) {
         return Some(mapped);

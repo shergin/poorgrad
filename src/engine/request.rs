@@ -1,3 +1,4 @@
+use crate::Numerics;
 use crate::graph::Symbol;
 
 /// A compile request: the explicit product of what a plan computes.
@@ -36,6 +37,7 @@ pub struct Request {
     pub(crate) roots: Vec<Symbol>,
     pub(crate) observe: Vec<Symbol>,
     pub(crate) backward: bool,
+    pub(crate) numerics: Numerics,
 }
 
 impl Request {
@@ -46,6 +48,7 @@ impl Request {
             roots: roots.into_iter().map(Into::into).collect(),
             observe: Vec::new(),
             backward: false,
+            numerics: Numerics::Fast,
         }
     }
 
@@ -66,6 +69,20 @@ impl Request {
     /// answers which kind a plan is.
     pub fn backward(mut self) -> Self {
         self.backward = true;
+        self
+    }
+
+    /// Chooses the numerics posture of the plan's runs.
+    /// [`Numerics::Fast`] — the default — engages the compiled backend
+    /// chain above its cost thresholds; [`Numerics::Exact`] makes the
+    /// chain decline every task, so runs compute on the built-in
+    /// reference paths, bit-identical to the default build in every
+    /// build. Reordering float math is always this labeled choice,
+    /// never a silent effect of a feature flag — and an `Exact` and a
+    /// `Fast` plan over the same network make the two results
+    /// comparable in one process.
+    pub fn numerics(mut self, numerics: Numerics) -> Self {
+        self.numerics = numerics;
         self
     }
 }

@@ -1,4 +1,4 @@
-use crate::{Request, Symbol, Tape, Tensor};
+use crate::{Numerics, Request, Symbol, Tape, Tensor};
 
 /// The empty feed set, typed for the scalar tests.
 fn no_feeds() -> std::iter::Empty<(Symbol, f64)> {
@@ -536,4 +536,56 @@ fn shared_windows_bar_fusion() {
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
     assert_eq!(planned.of(loss).to_vec(), interpreted.of(loss).to_vec());
+}
+
+#[test]
+fn the_numerics_posture_is_a_value_on_the_plan() {
+    // A 32 x 32 x 32 product (32768 flops) sits above every backend
+    // threshold, so a backend build exercises the Exact branch for
+    // real; the default build's chain is empty and both postures
+    // agree trivially. The reference below is the naive in-order
+    // definition the built-in path is bit-identical to.
+    let a_data: Vec<f32> = (0..1024).map(|v| (v % 37) as f32 * 0.21 - 3.7).collect();
+    let b_data: Vec<f32> = (0..1024).map(|v| (v % 29) as f32 * 0.17 - 2.3).collect();
+    let tape = Tape::new();
+    let a = tape.parameter(Tensor::new([32, 32], a_data.clone()));
+    let b = tape.parameter(Tensor::new([32, 32], b_data.clone()));
+    let product = a.matmul(b).symbol();
+    let network = tape.into_network();
+
+    let fast = network.compile(Request::roots([product]));
+    let exact = network.compile(Request::roots([product]).numerics(Numerics::Exact));
+    assert_eq!(fast.numerics(), Numerics::Fast);
+    assert_eq!(exact.numerics(), Numerics::Exact);
+
+    // The Exact run reproduces the reference definition bit for bit,
+    // in every build: the one-process oracle.
+    let exact_values = exact
+        .forward(&network.parameters(), [])
+        .of(product)
+        .to_vec();
+    for row in 0..32 {
+        for column in 0..32 {
+            let mut total = 0.0_f32;
+            for inner in 0..32 {
+                total += a_data[row * 32 + inner] * b_data[inner * 32 + column];
+            }
+            assert_eq!(
+                exact_values[row * 32 + column].to_bits(),
+                total.to_bits(),
+                "exact runs must reproduce the reference product bitwise"
+            );
+        }
+    }
+
+    // The Fast run stays within a reassociation envelope of Exact —
+    // and equals it bitwise wherever the chain is empty or declines.
+    let fast_values = fast.forward(&network.parameters(), []).of(product).to_vec();
+    for (fast_value, exact_value) in fast_values.iter().zip(&exact_values) {
+        let envelope = 1e-4 * exact_value.abs().max(1.0);
+        assert!(
+            (fast_value - exact_value).abs() <= envelope,
+            "fast {fast_value} strays past the envelope around exact {exact_value}"
+        );
+    }
 }

@@ -3,8 +3,9 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 use static_assertions::assert_impl_all;
 
-use crate::{Differentiable, Tensorial};
+use crate::{Differentiable, Numerics, Tensorial};
 
+use crate::backend::NumericsScope;
 use crate::function::{Function, SlotId};
 use crate::graph::{Field, Gradients, Network, Origin, Parameters, Structure, Symbol, ValueId};
 
@@ -74,6 +75,9 @@ pub struct Run<Data> {
     structure: Structure<Data>,
     field: Field<Data>,
     posture: Posture,
+    /// The numerics posture the forward producer executed under;
+    /// `backward` re-enters it so gradients follow the same paths.
+    numerics: Numerics,
 }
 
 impl<Data: Differentiable> Run<Data> {
@@ -82,6 +86,7 @@ impl<Data: Differentiable> Run<Data> {
         origin: Origin,
         values: Vec<Data>,
         posture: Posture,
+        numerics: Numerics,
     ) -> Self {
         debug_assert_eq!(structure.len(), values.len());
         if let Some(mask) = posture.mask() {
@@ -91,6 +96,7 @@ impl<Data: Differentiable> Run<Data> {
             structure,
             field: Field::new(origin, values),
             posture,
+            numerics,
         }
     }
 
@@ -253,6 +259,9 @@ impl<Data: Tensorial> Run<Data> {
             "backward requires a scalar target; reduce it with `sum` first"
         );
 
+        // Gradients follow the forward pass's numerics posture, so an
+        // exact run differentiates exactly.
+        let _numerics = NumericsScope::enter(self.numerics);
         let mut gradients: Vec<Data> = values.iter().map(|value| value.zero_like()).collect();
         gradients[output_index] = values[output_index].one_like();
         // The single reverse scan doubles as reachability marking: every
@@ -505,6 +514,14 @@ impl<Data: Tensorial> Network<Data> {
             Some(computed) => Posture::Sliced { computed },
             None => Posture::Complete,
         };
-        Run::new(structure.clone(), self.origin(), values, posture)
+        // Interpreter runs execute under the ambient default posture;
+        // a chosen posture is a plan affair, carried by the request.
+        Run::new(
+            structure.clone(),
+            self.origin(),
+            values,
+            posture,
+            Numerics::Fast,
+        )
     }
 }
