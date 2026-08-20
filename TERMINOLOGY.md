@@ -383,7 +383,10 @@ emission raises its elected groups with a total repertoire, on every
 memory posture. Electing is claiming, first-wins; unsupported
 candidates never claim, so their regions stay free, and an unelected
 region simply runs or lowers its recorded primitives — a pattern is
-an offer, never an obligation. Matchers share one `View` (wanted,
+an offer, never an obligation. A repertoire is a kernel library with
+an admission bar: a home kernel must reproduce the recorded chain
+bit for bit under the run's `Numerics` posture, while a raise needs
+only emission's conformance envelope. Matchers share one `View` (wanted,
 keep-set, consumer counts); dispatch everywhere is a plain enum
 `match`; the tape and the backends never see a pattern.
 
