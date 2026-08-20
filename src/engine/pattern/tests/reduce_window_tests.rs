@@ -119,7 +119,9 @@ fn the_home_repertoire_never_elects_the_raise_only_pattern() {
     assert!(total.at(root).is_some());
     assert!((0..length).any(|index| total.interior(index)));
 
-    let home = Catalog::elect(&candidates, |pattern| pattern.fused().is_some());
+    let home = Catalog::elect(&candidates, |pattern| {
+        matches!(pattern, Pattern::WindowProduct(_))
+    });
     assert_eq!(home.groups(), 0);
     assert!((0..length).all(|index| !home.interior(index)));
 }

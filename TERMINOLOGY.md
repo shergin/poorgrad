@@ -376,8 +376,9 @@ tape rewrite. Compilation *discovers* once: every closed candidate
 match) pools in priority order, posture-blind and
 consumer-independent. Each consumer then *elects* its own catalog
 from the pool under its repertoire — the patterns it can act on: a
-forward run fuses its elected groups (`Pattern::fused`; the home
-repertoire is empty on engine-backward plans), and StableHLO
+forward run fuses its elected groups (its kernel table lives beside
+the plan; the home repertoire is empty on engine-backward plans), and
+StableHLO
 emission raises its elected groups with a total repertoire, on every
 memory posture. Electing is claiming, first-wins; unsupported
 candidates never claim, so their regions stay free, and an unelected

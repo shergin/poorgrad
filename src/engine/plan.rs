@@ -9,12 +9,27 @@ use crate::{Differentiable, Shape, Tensorial};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{Candidates, Catalog, View};
+use super::pattern::{Candidates, Catalog, Pattern, View, WindowProduct};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Plan<f64>: Send, Sync);
+
+/// The home consumer's kernel table: the patterns a forward run
+/// replaces with payload calls, and the group each replacement reads.
+/// Admission is stricter than emission's envelope bar — a home kernel
+/// must be bit-identical to the recorded chain — so the table grows
+/// only with graded kernels. The return type widens to an enum when a
+/// second entry lands.
+fn fusable(pattern: &Pattern) -> Option<&WindowProduct> {
+    match pattern {
+        Pattern::WindowProduct(group) => Some(group),
+        Pattern::ReduceWindow(_)
+        | Pattern::BatchNormTraining(_)
+        | Pattern::BatchNormInference(_) => None,
+    }
+}
 
 /// A compiled lowering of a recorded graph prefix: which nodes a run
 /// must evaluate, which values the caller may read, and which buffers
@@ -110,7 +125,7 @@ impl<Data: Differentiable> Plan<Data> {
         let view = View::new(&structure, &wanted, &readable);
         let candidates = Candidates::discover(&view);
         let home = Catalog::elect(&candidates, |pattern| {
-            !training && pattern.fused().is_some()
+            !training && fusable(pattern).is_some()
         });
 
         // Liveness: a slot may be freed by its highest consumer inside
@@ -160,8 +175,17 @@ impl<Data: Differentiable> Plan<Data> {
         }
         // A home-fusing root reads values directly, past the skipped
         // chain the operand links describe: liveness must not release
-        // them before the fused call.
-        home.pin_liveness(&mut last_consumer);
+        // them before the fused call. Raise-only consumers never touch
+        // liveness — their chains actually run.
+        for (index, pattern) in home.entries() {
+            let Some(group) = fusable(pattern) else {
+                continue;
+            };
+            for slot in group.reads() {
+                let latest = last_consumer[slot].unwrap_or(0).max(index);
+                last_consumer[slot] = Some(latest);
+            }
+        }
         for slot in 0..length {
             if !wanted[slot] || readable[slot] || required[slot] {
                 continue;
@@ -467,7 +491,7 @@ impl<Data: Tensorial> Plan<Data> {
         for index in 0..self.len() {
             let value = if !self.wanted[index] || self.home.interior(index) {
                 Data::counted(self.structure.shapes[index].clone(), 0)
-            } else if let Some(group) = self.home.at(index).and_then(|pattern| pattern.fused()) {
+            } else if let Some(group) = self.home.at(index).and_then(fusable) {
                 // The fused call reads its sources directly; the chain
                 // between them was never materialized.
                 group.apply(&values)

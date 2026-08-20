@@ -73,20 +73,13 @@ impl Catalog {
         self.at.iter().flatten().count()
     }
 
-    /// Pins `last_consumer` so the reads of a fusing entry outlive the
-    /// skipped chain. Only the home catalog needs this: raising
-    /// consumers never touch liveness, since their chains actually
-    /// run.
-    pub(crate) fn pin_liveness(&self, last_consumer: &mut [Option<usize>]) {
-        for (index, pattern) in self.at.iter().enumerate() {
-            let Some(group) = pattern.as_ref().and_then(Pattern::fused) else {
-                continue;
-            };
-            for slot in group.reads() {
-                let latest = last_consumer[slot].unwrap_or(0).max(index);
-                last_consumer[slot] = Some(latest);
-            }
-        }
+    /// Returns the elected entries in root order: each root and the
+    /// pattern this consumer acts on there.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (usize, &Pattern)> {
+        self.at
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pattern)| pattern.as_ref().map(|pattern| (index, pattern)))
     }
 }
 

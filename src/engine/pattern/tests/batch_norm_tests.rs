@@ -184,9 +184,9 @@ fn the_inference_formula_matches_supplied_statistics() {
     assert_eq!(group.variance, variance);
     assert!(!catalog.interior(mean));
     assert!(!catalog.interior(variance));
-    // Raise-only: the home repertoire never elects a batch norm.
+    // Raise-only: a fusing repertoire never elects a batch norm.
     let home = Catalog::elect(&Candidates::discover(&view), |pattern| {
-        pattern.fused().is_some()
+        matches!(pattern, Pattern::WindowProduct(_))
     });
     assert_eq!(home.groups(), 0);
 }
