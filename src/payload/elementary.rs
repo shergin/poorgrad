@@ -1,4 +1,4 @@
-use crate::backend;
+use crate::backend::{MapTask, offered};
 
 use super::Differentiable;
 use super::gemm::GemmTask;
@@ -124,11 +124,11 @@ impl Elementary for f32 {
     }
 
     fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
-        backend::gemm_f32(task)
+        offered(task)
     }
 
     fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
-        backend::map_f32(operation, elements)
+        offered(&MapTask::new(operation, elements))
     }
 }
 
@@ -162,10 +162,10 @@ impl Elementary for f64 {
     }
 
     fn gemm(task: &GemmTask<'_, Self>) -> Option<Vec<Self>> {
-        backend::gemm_f64(task)
+        offered(task)
     }
 
     fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
-        backend::map_f64(operation, elements)
+        offered(&MapTask::new(operation, elements))
     }
 }

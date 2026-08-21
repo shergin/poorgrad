@@ -271,7 +271,7 @@ impl Elementary for Bf16 {
             task.k(),
             task.n(),
         );
-        let product = backend::gemm_f32(&expanded).unwrap_or_else(|| gemm::multiply(&expanded));
+        let product = backend::offered(&expanded).unwrap_or_else(|| gemm::multiply(&expanded));
         Some(product.into_iter().map(Self::from_f32).collect())
     }
 }

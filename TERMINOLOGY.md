@@ -654,7 +654,11 @@ unavailable device), and the built-in paths answer when the whole
 chain declines. The chain's structure is declared data: `TaskKind`
 names the task vocabulary, each kind's chain constant is the offer
 order, and membership in it is the coverage claim `Backend::serves`
-answers — so coverage cannot drift from dispatch. The chain is
+answers — so coverage cannot drift from dispatch. Each task type
+carries its kind and its per-backend entry (the crate-internal
+`Chained` contract), so the chain has one entry point and a task
+can only walk its own chain — the kind-to-dispatch link holds by
+construction, not by convention. The chain is
 compile-time: enabling a feature is the activation, no per-call-site
 routing exists, and within one binary two identical runs can never
 disagree; the one run-scoped control is the `Numerics` posture

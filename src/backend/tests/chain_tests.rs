@@ -1,6 +1,6 @@
 use crate::{GemmTask, MapOperation};
 
-use super::{Numerics, NumericsScope, TaskKind, gemm_f32, gemm_f64, map_f32, map_f64};
+use super::{MapTask, Numerics, NumericsScope, TaskKind, offered};
 
 /// A square extent whose product's `2 * m * n * k` flops reach every
 /// backend's gemm threshold (the highest is metal's `1 << 25`,
@@ -37,7 +37,7 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
         GEMM_EXTENT,
     );
     assert_eq!(
-        gemm_f32(&task32).is_some(),
+        offered(&task32).is_some(),
         a_member_is_available(TaskKind::GemmF32)
     );
 
@@ -53,19 +53,19 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
         GEMM_EXTENT,
     );
     assert_eq!(
-        gemm_f64(&task64).is_some(),
+        offered(&task64).is_some(),
         a_member_is_available(TaskKind::GemmF64)
     );
 
     let elements32 = vec![0.5_f32; MAP_LENGTH];
     assert_eq!(
-        map_f32(MapOperation::Tanh, &elements32).is_some(),
+        offered(&MapTask::new(MapOperation::Tanh, &elements32)).is_some(),
         a_member_is_available(TaskKind::MapF32)
     );
 
     let elements64 = vec![0.5_f64; MAP_LENGTH];
     assert_eq!(
-        map_f64(MapOperation::Tanh, &elements64).is_some(),
+        offered(&MapTask::new(MapOperation::Tanh, &elements64)).is_some(),
         a_member_is_available(TaskKind::MapF64)
     );
 }
@@ -84,7 +84,7 @@ fn the_exact_posture_declines_the_whole_chain() {
         GEMM_EXTENT,
         GEMM_EXTENT,
     );
-    assert_eq!(gemm_f32(&task), None);
+    assert_eq!(offered(&task), None);
     let elements = vec![0.5_f32; MAP_LENGTH];
-    assert_eq!(map_f32(MapOperation::Tanh, &elements), None);
+    assert_eq!(offered(&MapTask::new(MapOperation::Tanh, &elements)), None);
 }

@@ -146,7 +146,7 @@ fn the_chain_routes_large_products_here() {
     let right = varied(size, size, 6);
     let task = GemmTask::new(&left, [size, 1], &right, [size, 1], size, size, size);
     let Some(context) = device() else { return };
-    let through_chain = crate::backend::gemm_f32(&task).expect("the chain accepts a 1024-cube");
+    let through_chain = crate::backend::offered(&task).expect("the chain accepts a 1024-cube");
     let direct = executed(context, &task, Kernel::Specialized).expect("the dispatch succeeds");
     let chain_bits: Vec<u32> = through_chain.iter().map(|value| value.to_bits()).collect();
     let direct_bits: Vec<u32> = direct.iter().map(|value| value.to_bits()).collect();
