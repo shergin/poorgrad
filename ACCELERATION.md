@@ -110,11 +110,12 @@ than switches:
 topos::Backend::Metal.status().expect("metal backend unavailable");
 ```
 
-`Backend::ALL` lists every defined backend, `TaskKind::chain` each
-task kind's offer order, and `serves` and `status` answer in every
-build — coverage as declared and `NotCompiled` as an ordinary
-answer, not a compile error, so interrogating the chain never needs
-a `cfg`. For the `metal` feature, `status` doubles as warmup: it
+`Backend::ALL` lists every implementer, `Backend::coverage` the
+full matrix — formula by implementer, each cell carrying its
+certification bar and forwarding precisions — `Formula::chain` each
+offer order, and `serves`, `compiled`, and `status` answer in every
+build; `NotCompiled` is an ordinary answer, not a compile error, so
+interrogating the stack never needs a `cfg`. For the `metal` feature, `status` doubles as warmup: it
 forces the one-time kernel compilation so the first large product
 does not pay it.
 
@@ -184,25 +185,28 @@ a numerics library degrades to slow, never to wrong.
 
 ## Routing
 
-Backends form a compile-time chain whose per-task order is declared
-data: `TaskKind::chain` lists each kind's members
+Backends form a compile-time chain whose per-formula order is
+declared data: `Formula::chain` lists each formula's members
 hardware-greediest first, by measurement — products try
 `Accelerate`, then `Metal`, then `Cuda`, then `Simd`; elementwise
 maps try `Metal`, then `Accelerate`, the measured crossover — and
-membership in a chain is the coverage claim `Backend::serves`
-answers. Each member may decline any task: below its threshold,
-outside its stride mapping, beyond its integer range, or with its
-device gone. Whatever the whole chain declines
-lands on the built-in paths, so every task computes correctly in
-every build; features change speed, never behavior classes.
-Selection is per-build (features) and per-task (thresholds, dtype —
-`f64` never reaches Metal), never per-call-site. The one run-scoped
-control is a posture, not a router: `Numerics::Exact` on a compile
-request makes every chain entry decline, so those runs compute on
-the reference paths — the same bits as the default build, reachable
-in every build — while `Numerics::Fast` (the default) is the chain
-exactly as described above, its thresholds serving as cost
-heuristics inside the posture rather than correctness boundaries.
+membership agrees with the `Backend::coverage` matrix, whose cells
+also carry each kernel's certification bar and forwarding
+precisions. Coverage declares *may*; the offer decides *will*: each
+member may decline any job — below its threshold, outside its
+stride mapping, beyond its integer range, or with its device gone —
+and whatever the whole chain declines lands on the built-in paths,
+so every job computes correctly in every build; features change
+speed, never behavior classes. Selection is per-build (features)
+and per-job (thresholds, precision — `f64` never reaches Metal),
+never per-call-site. The one run-scoped control is a posture, not a
+router: `Numerics::Exact` demands the bit-identity bar, which no
+offer-dispatched kernel clears today, so those runs compute on the
+reference paths — the same bits as the default build, reachable in
+every build — while `Numerics::Fast` (the default) demands only the
+envelope bar: the chain exactly as described above, its thresholds
+serving as cost heuristics inside the posture rather than
+correctness boundaries.
 
 ```rust
 // One process, both answers: the oracle and the fast path.

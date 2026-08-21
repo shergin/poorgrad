@@ -1,3 +1,5 @@
+use crate::backend::Formula;
+
 use super::batch_norm::BatchNormalization;
 use super::reduce_window::ReduceWindow;
 use super::window::WindowProduct;
@@ -23,4 +25,17 @@ pub(crate) enum Pattern {
     BatchNormTraining(BatchNormalization),
     /// Batch normalization by supplied statistics.
     BatchNormInference(BatchNormalization),
+}
+
+impl Pattern {
+    /// The vocabulary entry this pattern is the graph face of; the
+    /// consumers look its coverage up under this name.
+    pub(crate) fn formula(&self) -> Formula {
+        match self {
+            Pattern::WindowProduct(_) => Formula::WindowProduct,
+            Pattern::ReduceWindow(_) => Formula::ReduceWindow,
+            Pattern::BatchNormTraining(_) => Formula::BatchNormTraining,
+            Pattern::BatchNormInference(_) => Formula::BatchNormInference,
+        }
+    }
 }

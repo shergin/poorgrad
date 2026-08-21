@@ -6,7 +6,7 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Numerics, Shape, Tensorial};
 
-use crate::backend::NumericsScope;
+use crate::backend::{Backend, NumericsScope};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
@@ -19,10 +19,11 @@ assert_impl_all!(Plan<f64>: Send, Sync);
 
 /// The home consumer's kernel table: the patterns a forward run
 /// replaces with payload calls, and the group each replacement reads.
-/// Admission is stricter than emission's envelope bar — a home kernel
-/// must be bit-identical to the recorded chain — so the table grows
-/// only with graded kernels. The return type widens to an enum when a
-/// second entry lands.
+/// Admission is not decided here — election reads the `Fused`
+/// implementer's coverage column under the request's bar — so this
+/// table holds only the actions, and it agrees with that column by
+/// test. The return type widens to an enum when a second entry
+/// lands.
 fn fusable(pattern: &Pattern) -> Option<&WindowProduct> {
     match pattern {
         Pattern::WindowProduct(group) => Some(group),
@@ -128,15 +129,22 @@ impl<Data: Differentiable> Plan<Data> {
 
         // Patterns: discovery pools every closed candidate over the
         // frozen columns, posture-blind; each consumer then elects
-        // what its repertoire supports. The home repertoire is gated
-        // by memory posture — fusing requires the chain to never
-        // materialize, so it is a forward-only move: engine-backward
-        // plans keep their exact contract unfused, the reverse scan
-        // reading what the recording named.
+        // what its repertoire supports. The home repertoire reads
+        // the `Fused` implementer's coverage column under the bar
+        // the request's numerics demands — build facts only, so the
+        // plan's shape depends on the binary, never the machine —
+        // and is additionally gated by memory posture: fusing
+        // requires the chain to never materialize, so it is a
+        // forward-only move, and engine-backward plans keep their
+        // exact contract unfused, the reverse scan reading what the
+        // recording named.
+        let bar = numerics.bar();
         let view = View::new(&structure, &wanted, &readable);
         let candidates = Candidates::discover(&view);
         let home = Catalog::elect(&candidates, |pattern| {
-            !training && fusable(pattern).is_some()
+            !training
+                && fusable(pattern).is_some()
+                && Backend::Fused.coverage(pattern.formula()).serves_at(bar)
         });
 
         // Liveness: a slot may be freed by its highest consumer inside

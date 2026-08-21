@@ -638,32 +638,42 @@ two hooks — `Elementary::gemm` for one dense product, consulted
 first by `Tensor`'s `matmul`, and `Elementary::map` for one
 whole-buffer transcendental (a `MapOperation`: `exp`, `ln`, `sqrt`,
 `tanh`), consulted by the tensor's elementwise operations for
-contiguous dense buffers. The hooks crossed with the two forwarding
-element types are the chain's task vocabulary,
-[`TaskKind`](src/backend/task.rs). Both live in the payload tier, so
+contiguous dense buffers. The hooks crossed with the forwarding
+precisions are the leaf entries of the acceleration vocabulary,
+[`Formula`](src/backend/formula.rs). Both live in the payload tier, so
 `Operation` rules stay backend-blind (the columns-as-IR rule) and
 custom payload implementations keep the defaults. In topos:
 [`Elementary`](src/payload/elementary.rs).
 
-**Backend.** A provider of GEMM kernels compiled into the crate
-behind a cargo feature and tried by the chain in
-[`backend`](src/backend/mod.rs) in the order
-[`TaskKind::chain`](src/backend/task.rs) declares per task kind;
-every backend may decline any task (wrong size, wrong platform,
-unavailable device), and the built-in paths answer when the whole
-chain declines. The chain's structure is declared data: `TaskKind`
-names the task vocabulary, each kind's chain constant is the offer
-order, and membership in it is the coverage claim `Backend::serves`
-answers — so coverage cannot drift from dispatch. Each task type
-carries its kind and its per-backend entry (the crate-internal
-`Chained` contract), so the chain has one entry point and a task
-can only walk its own chain — the kind-to-dispatch link holds by
-construction, not by convention. The chain is
-compile-time: enabling a feature is the activation, no per-call-site
-routing exists, and within one binary two identical runs can never
-disagree; the one run-scoped control is the `Numerics` posture
-below, which can only make the chain decline, never re-route it.
-The chain has four residents, tried in order.
+**Backend.** An implementer of named formulas, in LLVM's sense of
+the word: the hardware kernel providers, the crate's own fused
+kernels (`Backend::Fused`), and the StableHLO translation library
+(`Backend::StableHlo`) are one axis, in
+[`backend`](src/backend/mod.rs). What an implementer can do is the
+coverage matrix (`Backend::coverage`): one cell per
+[`Formula`](src/backend/formula.rs), declaring the certification
+bar (`Bar::BitIdentical` or `Bar::Envelope`) and the forwarding
+precisions its kernels accept — the single declared truth that
+offer chains agree with by test, that the plan's election reads
+(the `Fused` column, under the bar the request's numerics demands),
+and that emission reads (the `StableHlo` column, total). How
+kernels are reached is the `Dispatch` attribute: offered buffer
+jobs down `Formula::chain` at run time (the four hardware
+implementers), elected onto plans at compile time (`Fused`), or
+translated into a foreign module (`StableHlo`). Every offered
+member may decline any job (wrong size, wrong platform, unavailable
+device), and the built-in paths answer when the whole chain
+declines: coverage declares *may*, the offer decides *will*, the
+reference paths define *is*. Each job type carries its formula and
+precision (the crate-internal `Job` contract), so a job can only
+walk its own chain. The chain is compile-time: enabling a feature
+is the activation, no per-call-site routing exists, and within one
+binary two identical runs can never disagree; election keys on
+`Backend::compiled` (build facts), never on device presence, so a
+plan's shape depends only on the binary. The one run-scoped control
+is the `Numerics` posture below — admission by bar, never
+re-routing. The offer chains have four hardware residents, tried in
+order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
 dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
@@ -688,10 +698,16 @@ microkernels with runtime instruction-set dispatch (AVX-512F,
 AVX2+FMA, AVX, NEON) for both `f32` and `f64` — the portable rung,
 real on every platform where the Apple backends are macOS-only, and
 mop-up behind them on macOS. Whatever the whole chain declines
-lands on the built-in paths. `Backend::serves` and
-[`Backend::status`] answer for every defined backend in every
-build — coverage as declared, and `NotCompiled` as an ordinary
-result, not a compile error — and the default build still compiles
+lands on the built-in paths. The two in-process implementers stand
+outside the offer chains: `Backend::Fused` holds the crate's fused
+kernels for composed formulas (`windowed_product` today, the one
+cell at the bit-identity bar, since the oracle's bits live in this
+process), and `Backend::StableHlo` holds the total translation
+column emission elects by. `Backend::coverage`,
+`Backend::serves`, `Backend::compiled`, and [`Backend::status`]
+answer for every implementer in every build — coverage as declared,
+and `NotCompiled` as an ordinary result, not a compile error — and
+the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
 build confines `unsafe` to the backend's module under a crate-wide
 `deny` with one scoped allow.
@@ -702,10 +718,13 @@ and its runs (`Request::numerics`, `Plan::numerics`). `Fast` — the
 default, and the fixed posture of interpreter runs and host-side
 payload calls — is the backend chain as compiled, its per-task flop
 thresholds serving as cost heuristics inside the posture. `Exact`
-makes every chain entry decline, so the run computes on the built-in
-reference paths: the same bits as the default build, in every build
-— the oracle, always one compile away, which makes an exact and a
-fast result comparable in one process. Reordering float math is
+demands the bit-identity bar (`Numerics::bar`): only kernels
+certified bit-identical to the reference may serve — today the
+fused window kernel and nothing offer-dispatched — so chain work
+computes on the built-in reference paths: the same bits as the
+default build, in every build — the oracle, always one compile
+away, which makes an exact and a fast result comparable in one
+process. Reordering float math is
 always this labeled choice, never a silent effect of a feature flag;
 a run's `backward` re-enters its forward posture, so gradients
 follow the same paths. In topos:

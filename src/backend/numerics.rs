@@ -1,13 +1,18 @@
 use std::cell::Cell;
 
-/// The numerics posture of an execution scope: whether the compiled
-/// backend chain may take tasks.
+use super::coverage::Bar;
+
+/// The numerics posture of an execution scope: which certification
+/// bar a kernel must clear to serve.
 ///
-/// `Exact` makes every chain entry decline, so all work computes on
-/// the built-in reference paths — bit-identical to the default build,
-/// in every build. `Fast` is the chain as compiled: backends engage
-/// above their per-task thresholds, which are cost heuristics inside
-/// this posture, never correctness boundaries.
+/// `Exact` demands the bit-identity bar — the reference *bits*, in
+/// every build. Today no offer-dispatched kernel clears it, so chain
+/// work computes on the built-in reference paths, and the one
+/// bit-certified kernel (the fused window product) serves under both
+/// postures. `Fast` demands only the envelope bar: the chain as
+/// compiled, backends engaging above their per-task thresholds,
+/// which are cost heuristics inside this posture, never correctness
+/// boundaries.
 ///
 /// The posture is a value, not a build flag: it rides a
 /// [`Request`](crate::Request) onto the plan and its runs, so an
@@ -18,12 +23,22 @@ use std::cell::Cell;
 /// classes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Numerics {
-    /// The backend chain declines every task: reference kernels only,
-    /// the same bits as the default build.
+    /// Only bit-certified kernels serve: the reference bits, the
+    /// same in every build.
     Exact,
     /// The compiled backend chain above its cost thresholds.
     #[default]
     Fast,
+}
+
+impl Numerics {
+    /// The certification bar this posture demands of every kernel.
+    pub fn bar(self) -> Bar {
+        match self {
+            Numerics::Exact => Bar::BitIdentical,
+            Numerics::Fast => Bar::Envelope,
+        }
+    }
 }
 
 thread_local! {

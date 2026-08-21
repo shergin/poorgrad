@@ -18,7 +18,7 @@ use std::fmt::{self, Display, Write};
 
 use crate::engine::{BatchNormalization, Catalog, Pattern, ReduceWindow, WindowProduct};
 use crate::function::Function;
-use crate::{Plan, Shape, Tensor};
+use crate::{Backend, Plan, Shape, Tensor};
 
 use super::builder::{
     Emittable, dense_index_literal, dense_literal, index_tensor_type, named_tensor_type,
@@ -106,9 +106,12 @@ impl<Element: Emittable> Plan<Tensor<Element>> {
         let tensor = |index: usize| tensor_type::<Element>(&shapes[index]);
 
         // The emission consumer elects its catalog from the plan's
-        // candidate pool. Its repertoire is total — every pattern
-        // raises here, on every memory posture.
-        let catalog = Catalog::elect(self.candidates(), |_| true);
+        // candidate pool by reading the `StableHlo` implementer's
+        // coverage column, which is total — every pattern raises
+        // here, on every memory posture — and stays total by test.
+        let catalog = Catalog::elect(self.candidates(), |pattern| {
+            Backend::StableHlo.coverage(pattern.formula()).serves()
+        });
 
         // Arguments: parameters first, then inputs, in recording order.
         let mut emitter = Emitter {

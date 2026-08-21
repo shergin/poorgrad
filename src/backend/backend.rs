@@ -3,35 +3,40 @@ use std::fmt::{self, Display, Formatter};
 
 use static_assertions::assert_impl_all;
 
-use super::task::TaskKind;
-
 // Request-time thread-safety contract; the anchor rationale is
 // documented in `network.rs`.
 assert_impl_all!(Backend: Send, Sync);
 assert_impl_all!(BackendUnavailable: Send, Sync);
 
-/// The acceleration backends this crate can be built with.
+/// The implementers of named formulas: everything that can serve
+/// work faster than the reference paths, in LLVM's sense of the
+/// word — hardware kernel providers, the crate's own fused kernels,
+/// and the translation library alike.
 ///
-/// The backend chain tries backends in declaration order, so the
-/// order here is the documented priority. Variants
-/// name concrete implementations — what a build links — so a future
-/// backend arrives as a new variant, never as a broadening of an
-/// existing one. The enum exists in every build: whether a variant
-/// is compiled in is a [`status`](Backend::status) answer, not a
-/// compile error, so interrogating the chain never needs a `cfg`.
+/// Variants name concrete implementations, so a future implementer
+/// arrives as a new variant, never as a broadening of an existing
+/// one. What each implementer can do is the
+/// [`coverage`](Backend::coverage) matrix; how its kernels are
+/// reached is its [`dispatch`](Backend::dispatch) attribute; whether
+/// this build on this machine could run them is
+/// [`status`](Backend::status). The enum exists in every build:
+/// every question above is an answer, not a compile error, so
+/// interrogating the stack never needs a `cfg`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
     /// Apple's Accelerate framework: `cblas_sgemm`/`cblas_dgemm`,
     /// executing on the AMX/SME matrix units on Apple Silicon and
-    /// AVX kernels on Intel Macs. Behind the `accelerate` feature,
-    /// macOS only. Leads the chain: it measured ahead of the Metal
-    /// kernel at every size.
+    /// AVX kernels on Intel Macs, plus vForce for whole-buffer
+    /// transcendentals. Behind the `accelerate` feature, macOS only.
+    /// Leads the gemm chains: it measured ahead of the Metal kernel
+    /// at every size.
     Accelerate,
     /// Hand-written simdgroup-matrix GPU kernels for large `f32`
-    /// products (Metal has no `f64`), compiled from source at first
-    /// use. Behind the `metal` feature, macOS only; serves what
-    /// BLAS declines, and everything large in metal-only builds.
+    /// products and maps (Metal has no `f64`), compiled from source
+    /// at first use. Behind the `metal` feature, macOS only; serves
+    /// what BLAS declines, and everything large in metal-only
+    /// builds.
     Metal,
     /// cuBLAS on an NVIDIA GPU for large `f32`/`f64` products, its
     /// libraries bound at run time by `dlopen` so a machine without
@@ -45,33 +50,51 @@ pub enum Backend {
     /// platform — the portable rung for Linux and everyone else,
     /// and mop-up behind the Apple backends on macOS.
     Simd,
+    /// The crate's own fused kernels for composed formulas, elected
+    /// onto plans at compile time and executing in-process through
+    /// the payload seam — `windowed_product` today. Always compiled,
+    /// always resident; the only implementer that can clear the
+    /// bit-identity bar, because the oracle's bits live in this
+    /// process.
+    Fused,
+    /// The StableHLO translation library: elected groups and leaf
+    /// operations lower into a module a foreign runtime (XLA today)
+    /// executes. Always compiled, always able to emit; running the
+    /// module is that runtime's business, and its kernels answer
+    /// under the envelope bar only.
+    StableHlo,
 }
 
 impl Backend {
-    /// Every backend this crate version defines, in chain order.
+    /// Every implementer this crate version defines.
     pub const ALL: &'static [Backend] = &[
         Backend::Accelerate,
         Backend::Metal,
         Backend::Cuda,
         Backend::Simd,
+        Backend::Fused,
+        Backend::StableHlo,
     ];
 
-    /// Reports whether this backend has a kernel for the task kind:
-    /// designed coverage, answering the same in every build.
+    /// Reports whether this implementer is in this build at all:
+    /// the build-time half of [`status`](Backend::status), with no
+    /// lazy setup and no device probe.
     ///
-    /// Coverage derives from membership in the kind's
-    /// [`chain`](TaskKind::chain), so it cannot drift from dispatch.
-    /// [`status`](Backend::status) answers the orthogonal question —
-    /// whether this build on this machine could run the kernel — and
-    /// the two compose: a backend takes work exactly when it serves
-    /// the kind, its status is `Ok`, and the task clears its cost
-    /// thresholds.
-    pub fn serves(self, kind: TaskKind) -> bool {
-        kind.chain().contains(&self)
+    /// Plans key elections on this answer, never on `status`, so a
+    /// plan's shape depends only on the binary, not on which device
+    /// happens to be plugged in.
+    pub fn compiled(self) -> bool {
+        match self {
+            Backend::Accelerate => cfg!(all(feature = "accelerate", target_os = "macos")),
+            Backend::Metal => cfg!(all(feature = "metal", target_os = "macos")),
+            Backend::Cuda => cfg!(all(feature = "cuda", target_os = "linux")),
+            Backend::Simd => cfg!(feature = "simd"),
+            Backend::Fused | Backend::StableHlo => true,
+        }
     }
 
-    /// Reports whether this backend would accept work in this build
-    /// on this machine, forcing its lazy setup if it has one.
+    /// Reports whether this implementer would accept work in this
+    /// build on this machine, forcing its lazy setup if it has one.
     ///
     /// `NotCompiled` is an ordinary answer, which is what lets a
     /// build without the feature ask the question; a loud program
@@ -131,6 +154,9 @@ impl Backend {
                 // initialize and nothing to lose at run time.
                 Ok(())
             }
+            // In-process code compiled into every build: nothing to
+            // initialize, nothing to lose.
+            Backend::Fused | Backend::StableHlo => Ok(()),
         }
     }
 }

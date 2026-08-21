@@ -1,25 +1,28 @@
 use crate::{GemmTask, MapOperation};
 
-use super::{MapTask, Numerics, NumericsScope, TaskKind, offered};
+use super::{Formula, MapTask, Numerics, NumericsScope, Precision, offered};
 
 /// A square extent whose product's `2 * m * n * k` flops reach every
 /// backend's gemm threshold (the highest is metal's `1 << 25`,
-/// exactly this task's count), so any available chain member accepts.
+/// exactly this job's count), so any available chain member accepts.
 const GEMM_EXTENT: usize = 256;
 
 /// Enough elements to clear every backend's map gate (the highest is
 /// metal's `1 << 19` behind accelerate).
 const MAP_LENGTH: usize = 1 << 19;
 
-/// Returns whether any member of the kind's chain is available in
+/// Returns whether any member of the formula's chain is available in
 /// this build on this machine.
-fn a_member_is_available(kind: TaskKind) -> bool {
-    kind.chain().iter().any(|backend| backend.status().is_ok())
+fn a_member_is_available(formula: Formula, precision: Precision) -> bool {
+    formula
+        .chain(precision)
+        .iter()
+        .any(|backend| backend.status().is_ok())
 }
 
 #[test]
 fn the_chain_accepts_exactly_when_a_member_is_available() {
-    // The acceptance gate: the canonical tasks clear every member's
+    // The acceptance gate: the canonical jobs clear every member's
     // cost threshold, so an available member that failed to accept
     // would mean a chain entry with no kernel arm behind it — the
     // one drift the declared data cannot exclude by construction.
@@ -38,7 +41,7 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
     );
     assert_eq!(
         offered(&task32).is_some(),
-        a_member_is_available(TaskKind::GemmF32)
+        a_member_is_available(Formula::Gemm, Precision::F32)
     );
 
     let a64 = vec![0.5_f64; GEMM_EXTENT * GEMM_EXTENT];
@@ -54,24 +57,27 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
     );
     assert_eq!(
         offered(&task64).is_some(),
-        a_member_is_available(TaskKind::GemmF64)
+        a_member_is_available(Formula::Gemm, Precision::F64)
     );
 
     let elements32 = vec![0.5_f32; MAP_LENGTH];
     assert_eq!(
         offered(&MapTask::new(MapOperation::Tanh, &elements32)).is_some(),
-        a_member_is_available(TaskKind::MapF32)
+        a_member_is_available(Formula::Map, Precision::F32)
     );
 
     let elements64 = vec![0.5_f64; MAP_LENGTH];
     assert_eq!(
         offered(&MapTask::new(MapOperation::Tanh, &elements64)).is_some(),
-        a_member_is_available(TaskKind::MapF64)
+        a_member_is_available(Formula::Map, Precision::F64)
     );
 }
 
 #[test]
-fn the_exact_posture_declines_the_whole_chain() {
+fn the_exact_posture_admits_no_envelope_kernel() {
+    // Every chain member's cell is envelope-bar today, so under
+    // `Exact` the bar rule empties the chain and the reference paths
+    // compute — the old decline-by-fiat, now a consequence.
     let _scope = NumericsScope::enter(Numerics::Exact);
     let a = vec![0.5_f32; GEMM_EXTENT * GEMM_EXTENT];
     let b = a.clone();

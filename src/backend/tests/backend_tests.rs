@@ -1,16 +1,40 @@
 use super::{Backend, BackendUnavailable};
 
 #[test]
-fn all_lists_every_backend_in_chain_order() {
+fn all_lists_every_implementer() {
     assert_eq!(
         Backend::ALL,
         &[
             Backend::Accelerate,
             Backend::Metal,
             Backend::Cuda,
-            Backend::Simd
+            Backend::Simd,
+            Backend::Fused,
+            Backend::StableHlo
         ]
     );
+}
+
+#[test]
+fn compiled_is_the_build_time_half_of_status() {
+    // `compiled` answers from build facts alone, so it must agree
+    // with `status` exactly on the two build-fact errors and never
+    // consult a device.
+    for backend in Backend::ALL {
+        let build_absent = matches!(
+            backend.status(),
+            Err(BackendUnavailable::NotCompiled) | Err(BackendUnavailable::PlatformUnsupported)
+        );
+        assert_eq!(backend.compiled(), !build_absent, "{backend:?}");
+    }
+}
+
+#[test]
+fn the_in_process_implementers_are_always_resident() {
+    assert!(Backend::Fused.compiled());
+    assert!(Backend::StableHlo.compiled());
+    assert_eq!(Backend::Fused.status(), Ok(()));
+    assert_eq!(Backend::StableHlo.status(), Ok(()));
 }
 
 #[test]
