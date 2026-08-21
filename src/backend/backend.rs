@@ -3,6 +3,16 @@ use std::fmt::{self, Display, Formatter};
 
 use static_assertions::assert_impl_all;
 
+use super::accelerate::Accelerate;
+use super::coverage::{Cell, Dispatch};
+use super::cuda::Cuda;
+use super::formula::{Formula, Precision};
+use super::fused::Fused;
+use super::implementer::Implementer;
+use super::metal::Metal;
+use super::simd::Simd;
+use super::stablehlo::StableHlo;
+
 // Request-time thread-safety contract; the anchor rationale is
 // documented in `network.rs`.
 assert_impl_all!(Backend: Send, Sync);
@@ -15,13 +25,13 @@ assert_impl_all!(BackendUnavailable: Send, Sync);
 ///
 /// Variants name concrete implementations, so a future implementer
 /// arrives as a new variant, never as a broadening of an existing
-/// one. What each implementer can do is the
-/// [`coverage`](Backend::coverage) matrix; how its kernels are
-/// reached is its [`dispatch`](Backend::dispatch) attribute; whether
-/// this build on this machine could run them is
-/// [`status`](Backend::status). The enum exists in every build:
-/// every question above is an answer, not a compile error, so
-/// interrogating the stack never needs a `cfg`.
+/// one. The enum is the public axis; every answer delegates to the
+/// variant's descriptor — a unit struct implementing the
+/// crate-internal `Implementer` contract in the backend's own
+/// module, always compiled, while its kernels sit behind the
+/// feature `cfg`. The enum exists in every build: every question is
+/// an answer, not a compile error, so interrogating the stack never
+/// needs a `cfg`.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backend {
@@ -76,6 +86,45 @@ impl Backend {
         Backend::StableHlo,
     ];
 
+    /// The coverage matrix: whether this implementer has a kernel
+    /// for the formula, at what bar, for which precisions.
+    ///
+    /// Each row lives in its implementer's module and answers here
+    /// through the `Implementer` contract; offer chains agree with
+    /// the matrix by test, the plan's election reads
+    /// [`Backend::Fused`]'s column, and emission reads
+    /// [`Backend::StableHlo`]'s.
+    pub fn coverage(self, formula: Formula) -> Cell {
+        match self {
+            Backend::Accelerate => Accelerate::coverage(formula),
+            Backend::Metal => Metal::coverage(formula),
+            Backend::Cuda => Cuda::coverage(formula),
+            Backend::Simd => Simd::coverage(formula),
+            Backend::Fused => Fused::coverage(formula),
+            Backend::StableHlo => StableHlo::coverage(formula),
+        }
+    }
+
+    /// Whether this implementer has a kernel for the formula that
+    /// accepts jobs at this precision — designed coverage, the same
+    /// answer in every build; [`status`](Backend::status) answers
+    /// the orthogonal availability question.
+    pub fn serves(self, formula: Formula, precision: Precision) -> bool {
+        self.coverage(formula).admits(precision)
+    }
+
+    /// How this implementer's kernels are reached.
+    pub fn dispatch(self) -> Dispatch {
+        match self {
+            Backend::Accelerate => Accelerate::DISPATCH,
+            Backend::Metal => Metal::DISPATCH,
+            Backend::Cuda => Cuda::DISPATCH,
+            Backend::Simd => Simd::DISPATCH,
+            Backend::Fused => Fused::DISPATCH,
+            Backend::StableHlo => StableHlo::DISPATCH,
+        }
+    }
+
     /// Reports whether this implementer is in this build at all:
     /// the build-time half of [`status`](Backend::status), with no
     /// lazy setup and no device probe.
@@ -85,11 +134,12 @@ impl Backend {
     /// happens to be plugged in.
     pub fn compiled(self) -> bool {
         match self {
-            Backend::Accelerate => cfg!(all(feature = "accelerate", target_os = "macos")),
-            Backend::Metal => cfg!(all(feature = "metal", target_os = "macos")),
-            Backend::Cuda => cfg!(all(feature = "cuda", target_os = "linux")),
-            Backend::Simd => cfg!(feature = "simd"),
-            Backend::Fused | Backend::StableHlo => true,
+            Backend::Accelerate => Accelerate::compiled(),
+            Backend::Metal => Metal::compiled(),
+            Backend::Cuda => Cuda::compiled(),
+            Backend::Simd => Simd::compiled(),
+            Backend::Fused => Fused::compiled(),
+            Backend::StableHlo => StableHlo::compiled(),
         }
     }
 
@@ -102,61 +152,12 @@ impl Backend {
     /// `Backend::Accelerate.status().expect(..)`.
     pub fn status(self) -> Result<(), BackendUnavailable> {
         match self {
-            Backend::Metal => {
-                if !cfg!(feature = "metal") {
-                    return Err(BackendUnavailable::NotCompiled);
-                }
-                if !cfg!(target_os = "macos") {
-                    return Err(BackendUnavailable::PlatformUnsupported);
-                }
-                #[cfg(all(feature = "metal", target_os = "macos"))]
-                {
-                    super::metal::status()
-                }
-                #[cfg(not(all(feature = "metal", target_os = "macos")))]
-                {
-                    unreachable!("the cfg! guards above cover this build")
-                }
-            }
-            Backend::Accelerate => {
-                if !cfg!(feature = "accelerate") {
-                    return Err(BackendUnavailable::NotCompiled);
-                }
-                if !cfg!(target_os = "macos") {
-                    return Err(BackendUnavailable::PlatformUnsupported);
-                }
-                // Accelerate is a link-time dependency with nothing
-                // to initialize and nothing to lose at run time.
-                Ok(())
-            }
-            Backend::Cuda => {
-                if !cfg!(feature = "cuda") {
-                    return Err(BackendUnavailable::NotCompiled);
-                }
-                if !cfg!(target_os = "linux") {
-                    return Err(BackendUnavailable::PlatformUnsupported);
-                }
-                #[cfg(all(feature = "cuda", target_os = "linux"))]
-                {
-                    super::cuda::status()
-                }
-                #[cfg(not(all(feature = "cuda", target_os = "linux")))]
-                {
-                    unreachable!("the cfg! guards above cover this build")
-                }
-            }
-            Backend::Simd => {
-                if !cfg!(feature = "simd") {
-                    return Err(BackendUnavailable::NotCompiled);
-                }
-                // Pure CPU code with runtime instruction-set
-                // dispatch: no platform arm, no device, nothing to
-                // initialize and nothing to lose at run time.
-                Ok(())
-            }
-            // In-process code compiled into every build: nothing to
-            // initialize, nothing to lose.
-            Backend::Fused | Backend::StableHlo => Ok(()),
+            Backend::Accelerate => Accelerate::status(),
+            Backend::Metal => Metal::status(),
+            Backend::Cuda => Cuda::status(),
+            Backend::Simd => Simd::status(),
+            Backend::Fused => Fused::status(),
+            Backend::StableHlo => StableHlo::status(),
         }
     }
 }

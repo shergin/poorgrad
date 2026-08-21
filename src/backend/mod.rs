@@ -14,19 +14,18 @@
 //! so a job can only walk its own chain. Everything here exists in
 //! every build: interrogating the stack never needs a `cfg`.
 
-#[cfg(all(feature = "accelerate", target_os = "macos"))]
-#[allow(unsafe_code)]
+// Every implementer module is compiled in every build: it holds the
+// always-answering descriptor, and keeps its kernels (with their
+// scoped `unsafe` allow) behind the feature `cfg` internally.
 mod accelerate;
 #[allow(clippy::module_inception)]
 mod backend;
 mod coverage;
-#[cfg(all(feature = "cuda", target_os = "linux"))]
-#[allow(unsafe_code)]
 mod cuda;
 mod formula;
+mod fused;
+mod implementer;
 mod job;
-#[cfg(all(feature = "metal", target_os = "macos"))]
-#[allow(unsafe_code)]
 mod metal;
 mod numerics;
 // Safe stride classification shared by the BLAS-shaped backends;
@@ -36,11 +35,8 @@ mod numerics;
     all(feature = "cuda", target_os = "linux")
 ))]
 mod operand;
-// The one arm with no `target_os`: the simd backend is real on
-// every platform.
-#[cfg(feature = "simd")]
-#[allow(unsafe_code)]
 mod simd;
+mod stablehlo;
 
 pub use backend::{Backend, BackendUnavailable};
 pub use coverage::{Bar, Cell, Dispatch, Precisions};

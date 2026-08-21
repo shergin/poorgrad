@@ -656,7 +656,13 @@ bar (`Bar::BitIdentical` or `Bar::Envelope`) and the forwarding
 precisions its kernels accept — the single declared truth that
 offer chains agree with by test, that the plan's election reads
 (the `Fused` column, under the bar the request's numerics demands),
-and that emission reads (the `StableHlo` column, total). How
+and that emission reads (the `StableHlo` column, total). Each
+implementer answers for itself through the crate-internal
+`Implementer` contract: a descriptor in the backend's own module,
+always compiled — its coverage row, dispatch attribute, build
+facts, and status — with its kernels behind the feature `cfg` in a
+`kernels` submodule, so the enum stays the public axis and every
+answer is a plain-match delegation, no trait object anywhere. How
 kernels are reached is the `Dispatch` attribute: offered buffer
 jobs down `Formula::chain` at run time (the four hardware
 implementers), elected onto plans at compile time (`Fused`), or
@@ -709,8 +715,9 @@ answer for every implementer in every build — coverage as declared,
 and `NotCompiled` as an ordinary result, not a compile error — and
 the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
-build confines `unsafe` to the backend's module under a crate-wide
-`deny` with one scoped allow.
+build confines `unsafe` to the backend's `kernels` submodule under
+a crate-wide `deny` with one scoped allow — the always-compiled
+descriptor half sits outside the allow.
 
 **Numerics (Exact / Fast).** The two-valued numerics posture of a
 plan's runs, chosen on the compile request and carried by the plan

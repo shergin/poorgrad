@@ -1,6 +1,4 @@
-use crate::Numerics;
-
-use super::{Backend, Bar, Cell, Dispatch, Formula, Precision, Precisions};
+use crate::{Backend, Bar, Cell, Dispatch, Formula, Numerics, Precision, Precisions};
 
 #[test]
 fn the_matrix_pins_every_hardware_row() {

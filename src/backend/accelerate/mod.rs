@@ -1,0 +1,54 @@
+//! The Accelerate implementer: the always-compiled descriptor, and
+//! the BLAS/vForce kernels behind the `accelerate` feature.
+
+use super::backend::BackendUnavailable;
+use super::coverage::{Bar, Cell, Dispatch, Precisions};
+use super::formula::{Formula, Precision};
+use super::implementer::Implementer;
+
+#[cfg(all(feature = "accelerate", target_os = "macos"))]
+#[allow(unsafe_code)]
+mod kernels;
+
+#[cfg(all(feature = "accelerate", target_os = "macos"))]
+pub(super) use kernels::{gemm_f32, gemm_f64, map_f32, map_f64};
+
+/// Apple's Accelerate framework, described in every build.
+pub(super) struct Accelerate;
+
+impl Implementer for Accelerate {
+    const DISPATCH: Dispatch = Dispatch::Offered;
+
+    fn coverage(formula: Formula) -> Cell {
+        match formula {
+            // One cblas call per product on the AMX/SME matrix
+            // units, and vForce for whole-buffer transcendentals;
+            // both take either precision and reorder sums, so the
+            // bar is the envelope.
+            Formula::Gemm | Formula::Map => Cell::Serves {
+                bar: Bar::Envelope,
+                precisions: Precisions::Only(Precision::ALL),
+            },
+            Formula::WindowProduct
+            | Formula::ReduceWindow
+            | Formula::BatchNormTraining
+            | Formula::BatchNormInference => Cell::Absent,
+        }
+    }
+
+    fn compiled() -> bool {
+        cfg!(all(feature = "accelerate", target_os = "macos"))
+    }
+
+    fn status() -> Result<(), BackendUnavailable> {
+        if !cfg!(feature = "accelerate") {
+            return Err(BackendUnavailable::NotCompiled);
+        }
+        if !cfg!(target_os = "macos") {
+            return Err(BackendUnavailable::PlatformUnsupported);
+        }
+        // Accelerate is a link-time dependency with nothing to
+        // initialize and nothing to lose at run time.
+        Ok(())
+    }
+}

@@ -24,7 +24,7 @@ const FLOP_THRESHOLD: usize = 1 << 13;
 /// It runs a `f32` task through `matrixmultiply::sgemm`, or declines
 /// with `None` when the task is below the threshold or outside the
 /// mapping.
-pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
+pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
     if flops(task.m(), task.n(), task.k()) < FLOP_THRESHOLD {
         return None;
     }
@@ -33,7 +33,7 @@ pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
 
 /// It runs a `f64` task through `matrixmultiply::dgemm`, with the
 /// same decline rules as the `f32` twin.
-pub(super) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
+pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
     if flops(task.m(), task.n(), task.k()) < FLOP_THRESHOLD {
         return None;
     }
@@ -133,5 +133,5 @@ pub(super) fn executed_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 }
 
 #[cfg(test)]
-#[path = "tests/simd_tests.rs"]
+#[path = "../tests/simd_tests.rs"]
 mod tests;

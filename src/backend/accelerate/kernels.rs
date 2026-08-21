@@ -11,12 +11,12 @@
 //!
 //! This is the crate's only `unsafe` code in an accelerate-only
 //! build (every other backend feature carries its own); each
-//! backend module is scope-allowed under the crate-wide
-//! `deny(unsafe_code)`.
+//! backend's `kernels` submodule is scope-allowed under the
+//! crate-wide `deny(unsafe_code)`, while the descriptor half stays
+//! outside the allow.
 
+use crate::backend::operand::{Operand, classify};
 use crate::{GemmTask, MapOperation};
-
-use super::operand::{Operand, classify};
 
 // Row-major CBLAS constants.
 const ROW_MAJOR: i32 = 101;
@@ -91,7 +91,7 @@ unsafe extern "C" {
 /// It runs a `f32` task through `cblas_sgemm`, or declines with
 /// `None` when the task is below the threshold or outside the
 /// mapping.
-pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
+pub(crate) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
     if flops(task.m(), task.n(), task.k()) < FLOP_THRESHOLD {
         return None;
     }
@@ -100,7 +100,7 @@ pub(super) fn gemm_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
 
 /// It runs a `f64` task through `cblas_dgemm`, with the same decline
 /// rules as the `f32` twin.
-pub(super) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
+pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
     if flops(task.m(), task.n(), task.k()) < FLOP_THRESHOLD {
         return None;
     }
@@ -153,7 +153,7 @@ pub(super) fn executed_f32(task: &GemmTask<'_, f32>) -> Option<Vec<f32>> {
 /// It maps one transcendental over an `f32` buffer through vForce,
 /// declining buffers too small to pay the call or too long for the
 /// interface's `i32` count.
-pub(super) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
+pub(crate) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f32>> {
     if elements.len() < MAP_THRESHOLD {
         return None;
     }
@@ -174,7 +174,7 @@ pub(super) fn map_f32(operation: MapOperation, elements: &[f32]) -> Option<Vec<f
 }
 
 /// The `f64` twin of [`map_f32`].
-pub(super) fn map_f64(operation: MapOperation, elements: &[f64]) -> Option<Vec<f64>> {
+pub(crate) fn map_f64(operation: MapOperation, elements: &[f64]) -> Option<Vec<f64>> {
     if elements.len() < MAP_THRESHOLD {
         return None;
     }
@@ -226,5 +226,5 @@ pub(super) fn executed_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 }
 
 #[cfg(test)]
-#[path = "tests/accelerate_tests.rs"]
+#[path = "../tests/accelerate_tests.rs"]
 mod tests;

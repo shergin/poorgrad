@@ -1,5 +1,4 @@
-use super::backend::Backend;
-use super::formula::{Formula, Precision};
+use super::formula::Precision;
 
 /// The certification bar a kernel clears against the oracle.
 ///
@@ -61,7 +60,9 @@ impl Precisions {
 /// job stays a run-time decline inside the offer (thresholds,
 /// stride mappings, device presence). The reference implementation
 /// is not a cell — it is the substrate every `Absent` answer falls
-/// to.
+/// to. Each implementer declares its own row in its module through
+/// the `Implementer` contract; the whole matrix answers through
+/// [`Backend::coverage`](crate::Backend::coverage).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cell {
     /// A kernel or translation exists, certified at `bar`, for the
@@ -110,125 +111,6 @@ pub enum Dispatch {
     /// Elected at emission time, translating the group into a
     /// foreign module another runtime executes.
     Translated,
-}
-
-/// Both precisions, for the hardware kernels that take either.
-const BOTH: Precisions = Precisions::Only(Precision::ALL);
-
-/// `f32` only, for Metal — the API has no `f64`.
-const F32_ONLY: Precisions = Precisions::Only(&[Precision::F32]);
-
-impl Backend {
-    /// The coverage matrix: whether this implementer has a kernel
-    /// for the formula, at what bar, for which precisions.
-    ///
-    /// This is the single declared truth the stack reads — offer
-    /// chains agree with it by test, the plan's election consults
-    /// [`Backend::Fused`]'s column, emission consults
-    /// [`Backend::StableHlo`]'s — and both matches are exhaustive on
-    /// purpose: a new formula or implementer cannot compile until
-    /// every new cell is decided.
-    pub fn coverage(self, formula: Formula) -> Cell {
-        match self {
-            Backend::Accelerate => match formula {
-                Formula::Gemm | Formula::Map => Cell::Serves {
-                    bar: Bar::Envelope,
-                    precisions: BOTH,
-                },
-                Formula::WindowProduct
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Absent,
-            },
-            Backend::Metal => match formula {
-                Formula::Gemm | Formula::Map => Cell::Serves {
-                    bar: Bar::Envelope,
-                    precisions: F32_ONLY,
-                },
-                Formula::WindowProduct
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Absent,
-            },
-            Backend::Cuda => match formula {
-                Formula::Gemm => Cell::Serves {
-                    bar: Bar::Envelope,
-                    precisions: BOTH,
-                },
-                // A cuda map would be PCIe-bound: copies alone sink
-                // an elementwise pass.
-                Formula::Map
-                | Formula::WindowProduct
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Absent,
-            },
-            Backend::Simd => match formula {
-                Formula::Gemm => Cell::Serves {
-                    bar: Bar::Envelope,
-                    precisions: BOTH,
-                },
-                // `matrixmultiply` is GEMM-only.
-                Formula::Map
-                | Formula::WindowProduct
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Absent,
-            },
-            Backend::Fused => match formula {
-                // `windowed_product` computes through the gemm seam
-                // in the recorded accumulation order: bit-identical
-                // under both postures, proven by the plan snapshots.
-                Formula::WindowProduct => Cell::Serves {
-                    bar: Bar::BitIdentical,
-                    precisions: Precisions::Any,
-                },
-                // The pool kernel waits on a profile (`max` is
-                // associative, so it could clear even the
-                // bit-identity bar); the batch-norm kernels would
-                // reassociate reductions and arrive envelope-only.
-                Formula::Gemm
-                | Formula::Map
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Absent,
-            },
-            // The translation column is total: every formula lowers,
-            // leaf entries as single operations and composed entries
-            // as raised library calls, under the envelope bar —
-            // nobody controls the foreign runtime's kernels.
-            Backend::StableHlo => match formula {
-                Formula::Gemm
-                | Formula::Map
-                | Formula::WindowProduct
-                | Formula::ReduceWindow
-                | Formula::BatchNormTraining
-                | Formula::BatchNormInference => Cell::Serves {
-                    bar: Bar::Envelope,
-                    precisions: Precisions::Any,
-                },
-            },
-        }
-    }
-
-    /// Whether this implementer has a kernel for the formula that
-    /// accepts jobs at this precision — designed coverage, the same
-    /// answer in every build; [`status`](Backend::status) answers
-    /// the orthogonal availability question.
-    pub fn serves(self, formula: Formula, precision: Precision) -> bool {
-        self.coverage(formula).admits(precision)
-    }
-
-    /// How this implementer's kernels are reached.
-    pub fn dispatch(self) -> Dispatch {
-        match self {
-            Backend::Accelerate | Backend::Metal | Backend::Cuda | Backend::Simd => {
-                Dispatch::Offered
-            }
-            Backend::Fused => Dispatch::Elected,
-            Backend::StableHlo => Dispatch::Translated,
-        }
-    }
 }
 
 #[cfg(test)]
