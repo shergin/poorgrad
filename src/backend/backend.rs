@@ -3,6 +3,8 @@ use std::fmt::{self, Display, Formatter};
 
 use static_assertions::assert_impl_all;
 
+use super::task::TaskKind;
+
 // Request-time thread-safety contract; the anchor rationale is
 // documented in `network.rs`.
 assert_impl_all!(Backend: Send, Sync);
@@ -53,6 +55,20 @@ impl Backend {
         Backend::Cuda,
         Backend::Simd,
     ];
+
+    /// Reports whether this backend has a kernel for the task kind:
+    /// designed coverage, answering the same in every build.
+    ///
+    /// Coverage derives from membership in the kind's
+    /// [`chain`](TaskKind::chain), so it cannot drift from dispatch.
+    /// [`status`](Backend::status) answers the orthogonal question —
+    /// whether this build on this machine could run the kernel — and
+    /// the two compose: a backend takes work exactly when it serves
+    /// the kind, its status is `Ok`, and the task clears its cost
+    /// thresholds.
+    pub fn serves(self, kind: TaskKind) -> bool {
+        kind.chain().contains(&self)
+    }
 
     /// Reports whether this backend would accept work in this build
     /// on this machine, forcing its lazy setup if it has one.

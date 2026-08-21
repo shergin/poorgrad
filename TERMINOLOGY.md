@@ -638,16 +638,23 @@ two hooks — `Elementary::gemm` for one dense product, consulted
 first by `Tensor`'s `matmul`, and `Elementary::map` for one
 whole-buffer transcendental (a `MapOperation`: `exp`, `ln`, `sqrt`,
 `tanh`), consulted by the tensor's elementwise operations for
-contiguous dense buffers. Both live in the payload tier, so
+contiguous dense buffers. The hooks crossed with the two forwarding
+element types are the chain's task vocabulary,
+[`TaskKind`](src/backend/task.rs). Both live in the payload tier, so
 `Operation` rules stay backend-blind (the columns-as-IR rule) and
 custom payload implementations keep the defaults. In topos:
 [`Elementary`](src/payload/elementary.rs).
 
 **Backend.** A provider of GEMM kernels compiled into the crate
-behind a cargo feature and tried in declaration order by the chain
-in [`backend`](src/backend/mod.rs); every backend may decline any
-task (wrong size, wrong platform, unavailable device), and the
-built-in paths answer when the whole chain declines. The chain is
+behind a cargo feature and tried by the chain in
+[`backend`](src/backend/mod.rs) in the order
+[`TaskKind::chain`](src/backend/task.rs) declares per task kind;
+every backend may decline any task (wrong size, wrong platform,
+unavailable device), and the built-in paths answer when the whole
+chain declines. The chain's structure is declared data: `TaskKind`
+names the task vocabulary, each kind's chain constant is the offer
+order, and membership in it is the coverage claim `Backend::serves`
+answers — so coverage cannot drift from dispatch. The chain is
 compile-time: enabling a feature is the activation, no per-call-site
 routing exists, and within one binary two identical runs can never
 disagree; the one run-scoped control is the `Numerics` posture
@@ -677,8 +684,9 @@ microkernels with runtime instruction-set dispatch (AVX-512F,
 AVX2+FMA, AVX, NEON) for both `f32` and `f64` — the portable rung,
 real on every platform where the Apple backends are macOS-only, and
 mop-up behind them on macOS. Whatever the whole chain declines
-lands on the built-in paths. [`Backend::status`] answers for
-every defined backend in every build — `NotCompiled` is an ordinary
+lands on the built-in paths. `Backend::serves` and
+[`Backend::status`] answer for every defined backend in every
+build — coverage as declared, and `NotCompiled` as an ordinary
 result, not a compile error — and the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
 build confines `unsafe` to the backend's module under a crate-wide

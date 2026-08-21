@@ -110,8 +110,9 @@ than switches:
 topos::Backend::Metal.status().expect("metal backend unavailable");
 ```
 
-`Backend::ALL` lists every defined backend in chain order, and
-`status` answers in every build — `NotCompiled` is an ordinary
+`Backend::ALL` lists every defined backend, `TaskKind::chain` each
+task kind's offer order, and `serves` and `status` answer in every
+build — coverage as declared and `NotCompiled` as an ordinary
 answer, not a compile error, so interrogating the chain never needs
 a `cfg`. For the `metal` feature, `status` doubles as warmup: it
 forces the one-time kernel compilation so the first large product
@@ -183,12 +184,15 @@ a numerics library degrades to slow, never to wrong.
 
 ## Routing
 
-Backends form a compile-time chain tried in declaration order and
-ordered per task family by measurement — products try `Accelerate`,
-then `Metal`, then `Cuda`, then `Simd`; elementwise maps try
-`Metal`, then `Accelerate`, the measured crossover — and each may
-decline any task: below its threshold, outside its stride mapping,
-beyond its integer range, or with its device gone. Whatever the whole chain declines
+Backends form a compile-time chain whose per-task order is declared
+data: `TaskKind::chain` lists each kind's members
+hardware-greediest first, by measurement — products try
+`Accelerate`, then `Metal`, then `Cuda`, then `Simd`; elementwise
+maps try `Metal`, then `Accelerate`, the measured crossover — and
+membership in a chain is the coverage claim `Backend::serves`
+answers. Each member may decline any task: below its threshold,
+outside its stride mapping, beyond its integer range, or with its
+device gone. Whatever the whole chain declines
 lands on the built-in paths, so every task computes correctly in
 every build; features change speed, never behavior classes.
 Selection is per-build (features) and per-task (thresholds, dtype —

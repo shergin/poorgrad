@@ -1,0 +1,90 @@
+use crate::{GemmTask, MapOperation};
+
+use super::{Numerics, NumericsScope, TaskKind, gemm_f32, gemm_f64, map_f32, map_f64};
+
+/// A square extent whose product's `2 * m * n * k` flops reach every
+/// backend's gemm threshold (the highest is metal's `1 << 25`,
+/// exactly this task's count), so any available chain member accepts.
+const GEMM_EXTENT: usize = 256;
+
+/// Enough elements to clear every backend's map gate (the highest is
+/// metal's `1 << 19` behind accelerate).
+const MAP_LENGTH: usize = 1 << 19;
+
+/// Returns whether any member of the kind's chain is available in
+/// this build on this machine.
+fn a_member_is_available(kind: TaskKind) -> bool {
+    kind.chain().iter().any(|backend| backend.status().is_ok())
+}
+
+#[test]
+fn the_chain_accepts_exactly_when_a_member_is_available() {
+    // The acceptance gate: the canonical tasks clear every member's
+    // cost threshold, so an available member that failed to accept
+    // would mean a chain entry with no kernel arm behind it — the
+    // one drift the declared data cannot exclude by construction.
+    // With no member available (the default build among others), the
+    // chain must answer `None`: the seam's fixed point.
+    let a32 = vec![0.5_f32; GEMM_EXTENT * GEMM_EXTENT];
+    let b32 = a32.clone();
+    let task32 = GemmTask::new(
+        &a32,
+        [GEMM_EXTENT, 1],
+        &b32,
+        [GEMM_EXTENT, 1],
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+    );
+    assert_eq!(
+        gemm_f32(&task32).is_some(),
+        a_member_is_available(TaskKind::GemmF32)
+    );
+
+    let a64 = vec![0.5_f64; GEMM_EXTENT * GEMM_EXTENT];
+    let b64 = a64.clone();
+    let task64 = GemmTask::new(
+        &a64,
+        [GEMM_EXTENT, 1],
+        &b64,
+        [GEMM_EXTENT, 1],
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+    );
+    assert_eq!(
+        gemm_f64(&task64).is_some(),
+        a_member_is_available(TaskKind::GemmF64)
+    );
+
+    let elements32 = vec![0.5_f32; MAP_LENGTH];
+    assert_eq!(
+        map_f32(MapOperation::Tanh, &elements32).is_some(),
+        a_member_is_available(TaskKind::MapF32)
+    );
+
+    let elements64 = vec![0.5_f64; MAP_LENGTH];
+    assert_eq!(
+        map_f64(MapOperation::Tanh, &elements64).is_some(),
+        a_member_is_available(TaskKind::MapF64)
+    );
+}
+
+#[test]
+fn the_exact_posture_declines_the_whole_chain() {
+    let _scope = NumericsScope::enter(Numerics::Exact);
+    let a = vec![0.5_f32; GEMM_EXTENT * GEMM_EXTENT];
+    let b = a.clone();
+    let task = GemmTask::new(
+        &a,
+        [GEMM_EXTENT, 1],
+        &b,
+        [GEMM_EXTENT, 1],
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+        GEMM_EXTENT,
+    );
+    assert_eq!(gemm_f32(&task), None);
+    let elements = vec![0.5_f32; MAP_LENGTH];
+    assert_eq!(map_f32(MapOperation::Tanh, &elements), None);
+}

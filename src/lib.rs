@@ -61,7 +61,7 @@ mod neural;
 mod notebook;
 mod payload;
 
-pub use backend::{Backend, BackendUnavailable, Numerics};
+pub use backend::{Backend, BackendUnavailable, Numerics, TaskKind};
 pub use emission::{EmitError, Emittable};
 pub use engine::{Plan, Request, Run};
 pub use graph::{Field, Gradients, Network, Parameters, Symbol, Tape, Value, concat, stack};
