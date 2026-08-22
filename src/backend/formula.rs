@@ -10,9 +10,9 @@ assert_impl_all!(Precision: Send, Sync);
 /// Every formula the acceleration stack knows by name: the one
 /// vocabulary, leaf and composed entries together.
 ///
-/// A leaf entry is a single payload job (`Gemm`, `Map`); a composed
+/// A leaf entry is a single payload task (`Gemm`, `Map`); a composed
 /// entry is a graph shape discovery recognizes (`WindowProduct` and
-/// its siblings). Each entry has up to two faces — a buffer job
+/// its siblings). Each entry has up to two faces — a buffer task
 /// offerable at run time and a graph shape electable at compile
 /// time — and the [`coverage`](Backend::coverage) matrix answers for
 /// every `(implementer, formula)` pair, so a new variant cannot
@@ -38,7 +38,7 @@ pub enum Formula {
 }
 
 /// The seam's forwarding precisions: the element types that route
-/// payload jobs to hardware kernels.
+/// payload tasks to hardware kernels.
 ///
 /// The set is closed on purpose and is not a payload enumeration:
 /// payloads stay open through `Elementary`, and a payload without a
@@ -63,7 +63,7 @@ impl Formula {
         Formula::BatchNormInference,
     ];
 
-    /// The offer chain for this formula's buffer jobs at one
+    /// The offer chain for this formula's buffer tasks at one
     /// precision: every offer-dispatched backend with a kernel for
     /// it, hardware-greediest first.
     ///
@@ -72,8 +72,8 @@ impl Formula {
     /// [`coverage`](Backend::coverage) matrix by test. Composed
     /// formulas answer the empty chain: their kernels are elected
     /// onto plans and into modules, never offered buffers — until
-    /// one earns a job face, which arrives as a chain here and a
-    /// job type beside it.
+    /// one earns a task face, which arrives as a chain here and a
+    /// task type beside it.
     pub const fn chain(self, precision: Precision) -> &'static [Backend] {
         match self {
             // Accelerate leads the gemm chains: the measured

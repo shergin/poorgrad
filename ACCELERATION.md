@@ -193,12 +193,12 @@ maps try `Metal`, then `Accelerate`, the measured crossover — and
 membership agrees with the `Backend::coverage` matrix, whose cells
 also carry each kernel's certification bar and forwarding
 precisions. Coverage declares *may*; the offer decides *will*: each
-member may decline any job — below its threshold, outside its
+member may decline any task — below its threshold, outside its
 stride mapping, beyond its integer range, or with its device gone —
 and whatever the whole chain declines lands on the built-in paths,
-so every job computes correctly in every build; features change
+so every task computes correctly in every build; features change
 speed, never behavior classes. Selection is per-build (features)
-and per-job (thresholds, precision — `f64` never reaches Metal),
+and per-task (thresholds, precision — `f64` never reaches Metal),
 never per-call-site. The one run-scoped control is a posture, not a
 router: `Numerics::Exact` demands the bit-identity bar, which no
 offer-dispatched kernel clears today, so those runs compute on the

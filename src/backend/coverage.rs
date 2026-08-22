@@ -32,7 +32,7 @@ impl Bar {
     }
 }
 
-/// The forwarding precisions a cell's kernel accepts.
+/// The forwarding precisions a covered kernel accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Precisions {
     /// Payload-generic: the kernel computes for every element type,
@@ -44,7 +44,7 @@ pub enum Precisions {
 }
 
 impl Precisions {
-    /// Whether the kernel accepts jobs at this precision.
+    /// Whether the kernel accepts tasks at this precision.
     pub fn admit(self, precision: Precision) -> bool {
         match self {
             Precisions::Any => true,
@@ -53,18 +53,18 @@ impl Precisions {
     }
 }
 
-/// One cell of the coverage matrix: whether an implementer has a
-/// kernel for a formula, and under what terms.
+/// One backend's coverage of one formula: whether it has a kernel,
+/// and under what terms.
 ///
-/// A cell declares *may*; whether a kernel *will* take a concrete
-/// job stays a run-time decline inside the offer (thresholds,
+/// Coverage declares *may*; whether a kernel *will* take a concrete
+/// task stays a run-time decline inside the offer (thresholds,
 /// stride mappings, device presence). The reference implementation
-/// is not a cell — it is the substrate every `Absent` answer falls
-/// to. Each implementer declares its own row in its module through
-/// the `Implementer` contract; the whole matrix answers through
-/// [`Backend::coverage`](crate::Backend::coverage).
+/// has no coverage — it is the substrate every `Absent` answer
+/// falls to. Each backend declares its own coverage in its module
+/// through the `Manifest` contract; the whole matrix answers
+/// through [`Backend::coverage`](crate::Backend::coverage).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cell {
+pub enum Coverage {
     /// A kernel or translation exists, certified at `bar`, for the
     /// precisions `precisions` admits.
     Serves {
@@ -77,34 +77,34 @@ pub enum Cell {
     Absent,
 }
 
-impl Cell {
+impl Coverage {
     /// Whether a kernel exists at all.
     pub fn serves(self) -> bool {
-        matches!(self, Cell::Serves { .. })
+        matches!(self, Coverage::Serves { .. })
     }
 
     /// Whether a kernel exists and its bar meets the demand.
-    pub fn serves_at(self, required: Bar) -> bool {
+    pub fn clears(self, required: Bar) -> bool {
         match self {
-            Cell::Serves { bar, .. } => bar.meets(required),
-            Cell::Absent => false,
+            Coverage::Serves { bar, .. } => bar.meets(required),
+            Coverage::Absent => false,
         }
     }
 
-    /// Whether a kernel exists and accepts jobs at this precision.
+    /// Whether a kernel exists and accepts tasks at this precision.
     pub fn admits(self, precision: Precision) -> bool {
         match self {
-            Cell::Serves { precisions, .. } => precisions.admit(precision),
-            Cell::Absent => false,
+            Coverage::Serves { precisions, .. } => precisions.admit(precision),
+            Coverage::Absent => false,
         }
     }
 }
 
-/// How an implementer's kernels are reached: the execution-context
+/// How a backend's kernels are reached: the execution-context
 /// attribute that replaced the home/abroad dichotomy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dispatch {
-    /// Offered buffer jobs down a formula's chain at run time.
+    /// Offered buffer tasks down a formula's chain at run time.
     Offered,
     /// Elected onto the plan at compile time, executing in-process.
     Elected,

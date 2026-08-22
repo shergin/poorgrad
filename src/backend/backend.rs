@@ -4,11 +4,11 @@ use std::fmt::{self, Display, Formatter};
 use static_assertions::assert_impl_all;
 
 use super::accelerate::Accelerate;
-use super::coverage::{Cell, Dispatch};
+use super::coverage::{Coverage, Dispatch};
 use super::cuda::Cuda;
 use super::formula::{Formula, Precision};
 use super::fused::Fused;
-use super::implementer::Implementer;
+use super::manifest::Manifest;
 use super::metal::Metal;
 use super::simd::Simd;
 use super::stablehlo::StableHlo;
@@ -26,8 +26,8 @@ assert_impl_all!(BackendUnavailable: Send, Sync);
 /// Variants name concrete implementations, so a future implementer
 /// arrives as a new variant, never as a broadening of an existing
 /// one. The enum is the public axis; every answer delegates to the
-/// variant's descriptor — a unit struct implementing the
-/// crate-internal `Implementer` contract in the backend's own
+/// variant's manifest — a unit struct implementing the
+/// crate-internal `Manifest` contract in the backend's own
 /// module, always compiled, while its kernels sit behind the
 /// feature `cfg`. The enum exists in every build: every question is
 /// an answer, not a compile error, so interrogating the stack never
@@ -90,11 +90,11 @@ impl Backend {
     /// for the formula, at what bar, for which precisions.
     ///
     /// Each row lives in its implementer's module and answers here
-    /// through the `Implementer` contract; offer chains agree with
+    /// through the `Manifest` contract; offer chains agree with
     /// the matrix by test, the plan's election reads
     /// [`Backend::Fused`]'s column, and emission reads
     /// [`Backend::StableHlo`]'s.
-    pub fn coverage(self, formula: Formula) -> Cell {
+    pub fn coverage(self, formula: Formula) -> Coverage {
         match self {
             Backend::Accelerate => Accelerate::coverage(formula),
             Backend::Metal => Metal::coverage(formula),
@@ -106,7 +106,7 @@ impl Backend {
     }
 
     /// Whether this implementer has a kernel for the formula that
-    /// accepts jobs at this precision — designed coverage, the same
+    /// accepts tasks at this precision — designed coverage, the same
     /// answer in every build; [`status`](Backend::status) answers
     /// the orthogonal availability question.
     pub fn serves(self, formula: Formula, precision: Precision) -> bool {

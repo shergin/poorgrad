@@ -11,33 +11,33 @@ use super::metal;
 #[cfg(feature = "simd")]
 use super::simd;
 
-/// A buffer job the chain can be offered: a formula's run-time
+/// A buffer task the chain can be offered: a formula's run-time
 /// face, carried by the task type itself.
 ///
-/// `FORMULA` and `PRECISION` name the chain the job dispatches
-/// under and `offer` is the job's entry into one backend, so a job
+/// `FORMULA` and `PRECISION` name the chain the task dispatches
+/// under and `offer` is the task's entry into one backend, so a task
 /// can only ever walk its own chain — the vocabulary-to-dispatch
 /// link holds by construction, not by convention. The
-/// implementations are the closed set of job types the chain
+/// implementations are the closed set of task types the chain
 /// understands; a composed formula earning an offerable kernel
 /// arrives as a new implementation beside its [`Formula`] entry.
-pub(crate) trait Job: Sized {
+pub(crate) trait Task: Sized {
     /// The element type of the computed result.
     type Product;
 
-    /// The vocabulary entry this job instantiates.
+    /// The vocabulary entry this task instantiates.
     const FORMULA: Formula;
 
-    /// The forwarding precision of this job's buffers.
+    /// The forwarding precision of this task's buffers.
     const PRECISION: Precision;
 
-    /// It offers this job to one backend; a backend missing from
+    /// It offers this task to one backend; a backend missing from
     /// the build answers `None`, the chain's fixed point.
     fn offer(&self, backend: Backend) -> Option<Vec<Self::Product>>;
 }
 
 /// One whole-buffer elementwise transcendental as an offerable
-/// job: a [`MapOperation`] paired with its elements, the map
+/// task: a [`MapOperation`] paired with its elements, the map
 /// chains' twin of [`GemmTask`].
 pub(crate) struct MapTask<'buffers, Element> {
     operation: MapOperation,
@@ -45,7 +45,7 @@ pub(crate) struct MapTask<'buffers, Element> {
 }
 
 impl<'buffers, Element> MapTask<'buffers, Element> {
-    /// Creates the job over a whole buffer.
+    /// Creates the task over a whole buffer.
     pub(crate) fn new(operation: MapOperation, elements: &'buffers [Element]) -> Self {
         Self {
             operation,
@@ -54,7 +54,7 @@ impl<'buffers, Element> MapTask<'buffers, Element> {
     }
 }
 
-impl Job for GemmTask<'_, f32> {
+impl Task for GemmTask<'_, f32> {
     type Product = f32;
 
     const FORMULA: Formula = Formula::Gemm;
@@ -75,7 +75,7 @@ impl Job for GemmTask<'_, f32> {
     }
 }
 
-impl Job for GemmTask<'_, f64> {
+impl Task for GemmTask<'_, f64> {
     type Product = f64;
 
     const FORMULA: Formula = Formula::Gemm;
@@ -94,7 +94,7 @@ impl Job for GemmTask<'_, f64> {
     }
 }
 
-impl Job for MapTask<'_, f32> {
+impl Task for MapTask<'_, f32> {
     type Product = f32;
 
     const FORMULA: Formula = Formula::Map;
@@ -114,7 +114,7 @@ impl Job for MapTask<'_, f32> {
     }
 }
 
-impl Job for MapTask<'_, f64> {
+impl Task for MapTask<'_, f64> {
     type Product = f64;
 
     const FORMULA: Formula = Formula::Map;

@@ -1,10 +1,10 @@
-//! The Accelerate implementer: the always-compiled descriptor, and
+//! The Accelerate implementer: the always-compiled manifest, and
 //! the BLAS/vForce kernels behind the `accelerate` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Cell, Dispatch, Precisions};
+use super::coverage::{Bar, Coverage, Dispatch, Precisions};
 use super::formula::{Formula, Precision};
-use super::implementer::Implementer;
+use super::manifest::Manifest;
 
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
 #[allow(unsafe_code)]
@@ -16,23 +16,23 @@ pub(super) use kernels::{gemm_f32, gemm_f64, map_f32, map_f64};
 /// Apple's Accelerate framework, described in every build.
 pub(super) struct Accelerate;
 
-impl Implementer for Accelerate {
+impl Manifest for Accelerate {
     const DISPATCH: Dispatch = Dispatch::Offered;
 
-    fn coverage(formula: Formula) -> Cell {
+    fn coverage(formula: Formula) -> Coverage {
         match formula {
             // One cblas call per product on the AMX/SME matrix
             // units, and vForce for whole-buffer transcendentals;
             // both take either precision and reorder sums, so the
             // bar is the envelope.
-            Formula::Gemm | Formula::Map => Cell::Serves {
+            Formula::Gemm | Formula::Map => Coverage::Serves {
                 bar: Bar::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
             Formula::WindowProduct
             | Formula::ReduceWindow
             | Formula::BatchNormTraining
-            | Formula::BatchNormInference => Cell::Absent,
+            | Formula::BatchNormInference => Coverage::Absent,
         }
     }
 

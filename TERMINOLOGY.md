@@ -622,15 +622,15 @@ state was the only thing ever worth copying.
 ## Acceleration
 
 **GEMM.** General matrix-matrix multiplication, the dense core of
-`matmul` and the unit of acceleration: one job multiplying an
+`matmul` and the unit of acceleration: one task multiplying an
 `m x k` operand by a `k x n` operand into a contiguous row-major
 product. In topos: [`GemmTask`](src/payload/gemm.rs), which
-describes the job as two spanning slices read through per-axis
+describes the task as two spanning slices read through per-axis
 strides — a transposed or narrowed view is a stride pattern, not a
 copy — plus the three extents, validated at construction and
 read-only thereafter.
 
-**Seam.** The point where payload math may hand a job to hardware
+**Seam.** The point where payload math may hand a task to hardware
 without the engine knowing: a provided `Elementary` method answers
 `None` (compute on the built-in paths) unless the element type
 forwards to the backend chain, as `f32` and `f64` do. The seam has
@@ -658,20 +658,20 @@ offer chains agree with by test, that the plan's election reads
 (the `Fused` column, under the bar the request's numerics demands),
 and that emission reads (the `StableHlo` column, total). Each
 implementer answers for itself through the crate-internal
-`Implementer` contract: a descriptor in the backend's own module,
+`Manifest` contract: a manifest in the backend's own module,
 always compiled — its coverage row, dispatch attribute, build
 facts, and status — with its kernels behind the feature `cfg` in a
 `kernels` submodule, so the enum stays the public axis and every
 answer is a plain-match delegation, no trait object anywhere. How
 kernels are reached is the `Dispatch` attribute: offered buffer
-jobs down `Formula::chain` at run time (the four hardware
+tasks down `Formula::chain` at run time (the four hardware
 implementers), elected onto plans at compile time (`Fused`), or
 translated into a foreign module (`StableHlo`). Every offered
-member may decline any job (wrong size, wrong platform, unavailable
+member may decline any task (wrong size, wrong platform, unavailable
 device), and the built-in paths answer when the whole chain
 declines: coverage declares *may*, the offer decides *will*, the
-reference paths define *is*. Each job type carries its formula and
-precision (the crate-internal `Job` contract), so a job can only
+reference paths define *is*. Each task type carries its formula and
+precision (the crate-internal `Task` contract), so a task can only
 walk its own chain. The chain is compile-time: enabling a feature
 is the activation, no per-call-site routing exists, and within one
 binary two identical runs can never disagree; election keys on
@@ -717,7 +717,7 @@ the default build still compiles
 no backend and keeps `#![forbid(unsafe_code)]` verbatim; a backend
 build confines `unsafe` to the backend's `kernels` submodule under
 a crate-wide `deny` with one scoped allow — the always-compiled
-descriptor half sits outside the allow.
+manifest half sits outside the allow.
 
 **Numerics (Exact / Fast).** The two-valued numerics posture of a
 plan's runs, chosen on the compile request and carried by the plan

@@ -144,7 +144,7 @@ impl<Data: Differentiable> Plan<Data> {
         let home = Catalog::elect(&candidates, |pattern| {
             !training
                 && fusable(pattern).is_some()
-                && Backend::Fused.coverage(pattern.formula()).serves_at(bar)
+                && Backend::Fused.coverage(pattern.formula()).clears(bar)
         });
 
         // Liveness: a slot may be freed by its highest consumer inside

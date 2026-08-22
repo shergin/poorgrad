@@ -1,10 +1,10 @@
-//! The cuda implementer: the always-compiled descriptor, and the
+//! The cuda implementer: the always-compiled manifest, and the
 //! cuBLAS kernels behind the `cuda` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Cell, Dispatch, Precisions};
+use super::coverage::{Bar, Coverage, Dispatch, Precisions};
 use super::formula::{Formula, Precision};
-use super::implementer::Implementer;
+use super::manifest::Manifest;
 
 #[cfg(all(feature = "cuda", target_os = "linux"))]
 #[allow(unsafe_code)]
@@ -16,15 +16,15 @@ pub(super) use kernels::{gemm_f32, gemm_f64};
 /// The NVIDIA rung for large products, described in every build.
 pub(super) struct Cuda;
 
-impl Implementer for Cuda {
+impl Manifest for Cuda {
     const DISPATCH: Dispatch = Dispatch::Offered;
 
-    fn coverage(formula: Formula) -> Cell {
+    fn coverage(formula: Formula) -> Coverage {
         match formula {
             // One cuBLAS call per product under the column-major
             // swap, both precisions; device sums reorder, so the bar
             // is the envelope.
-            Formula::Gemm => Cell::Serves {
+            Formula::Gemm => Coverage::Serves {
                 bar: Bar::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
@@ -34,7 +34,7 @@ impl Implementer for Cuda {
             | Formula::WindowProduct
             | Formula::ReduceWindow
             | Formula::BatchNormTraining
-            | Formula::BatchNormInference => Cell::Absent,
+            | Formula::BatchNormInference => Coverage::Absent,
         }
     }
 

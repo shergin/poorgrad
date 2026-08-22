@@ -1,4 +1,4 @@
-use crate::{Backend, Bar, Cell, Dispatch, Formula, Numerics, Precision, Precisions};
+use crate::{Backend, Bar, Coverage, Dispatch, Formula, Numerics, Precision, Precisions};
 
 #[test]
 fn the_matrix_pins_every_hardware_row() {
@@ -33,7 +33,7 @@ fn the_matrix_pins_every_hardware_row() {
             Formula::BatchNormTraining,
             Formula::BatchNormInference,
         ] {
-            assert_eq!(backend.coverage(formula), Cell::Absent);
+            assert_eq!(backend.coverage(formula), Coverage::Absent);
         }
     }
 }
@@ -42,7 +42,7 @@ fn the_matrix_pins_every_hardware_row() {
 fn fused_serves_the_window_product_bit_identically() {
     assert_eq!(
         Backend::Fused.coverage(Formula::WindowProduct),
-        Cell::Serves {
+        Coverage::Serves {
             bar: Bar::BitIdentical,
             precisions: Precisions::Any
         }
@@ -54,7 +54,7 @@ fn fused_serves_the_window_product_bit_identically() {
         Formula::BatchNormTraining,
         Formula::BatchNormInference,
     ] {
-        assert_eq!(Backend::Fused.coverage(formula), Cell::Absent);
+        assert_eq!(Backend::Fused.coverage(formula), Coverage::Absent);
     }
 }
 
@@ -65,7 +65,7 @@ fn the_stablehlo_column_is_total() {
     for formula in Formula::ALL {
         let cell = Backend::StableHlo.coverage(*formula);
         assert!(cell.serves(), "{formula:?} does not lower");
-        assert!(!cell.serves_at(Bar::BitIdentical));
+        assert!(!cell.clears(Bar::BitIdentical));
     }
 }
 

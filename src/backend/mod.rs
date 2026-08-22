@@ -3,19 +3,19 @@
 //!
 //! Coverage declares *may* — the [`Backend::coverage`] matrix over
 //! [`Formula`] and [`Precision`], with a certification [`Bar`] per
-//! cell. The offer decides *will* — [`offered`] walks a job's
+//! cell. The offer decides *will* — [`offered`] walks a task's
 //! declared chain, admitting each member by bar-meets-posture, and
 //! every member may still decline (thresholds, stride mappings,
 //! device presence). The oracle defines *is* — the reference paths
 //! are the substrate every decline falls to, in every build; on a
 //! build without backend features every offer answers `None`, the
-//! seam's fixed point, not dead code. Each job type carries its
-//! formula and precision through the crate-internal `Job` contract,
-//! so a job can only walk its own chain. Everything here exists in
+//! seam's fixed point, not dead code. Each task type carries its
+//! formula and precision through the crate-internal `Task` contract,
+//! so a task can only walk its own chain. Everything here exists in
 //! every build: interrogating the stack never needs a `cfg`.
 
-// Every implementer module is compiled in every build: it holds the
-// always-answering descriptor, and keeps its kernels (with their
+// Every backend module is compiled in every build: it holds the
+// always-answering manifest, and keeps its kernels (with their
 // scoped `unsafe` allow) behind the feature `cfg` internally.
 mod accelerate;
 #[allow(clippy::module_inception)]
@@ -24,10 +24,10 @@ mod coverage;
 mod cuda;
 mod formula;
 mod fused;
-mod implementer;
-mod job;
+mod manifest;
 mod metal;
 mod numerics;
+mod task;
 // Safe stride classification shared by the BLAS-shaped backends;
 // compiled exactly where one of them is.
 #[cfg(any(
@@ -39,29 +39,29 @@ mod simd;
 mod stablehlo;
 
 pub use backend::{Backend, BackendUnavailable};
-pub use coverage::{Bar, Cell, Dispatch, Precisions};
+pub use coverage::{Bar, Coverage, Dispatch, Precisions};
 pub use formula::{Formula, Precision};
 pub use numerics::Numerics;
 
-pub(crate) use job::MapTask;
 pub(crate) use numerics::NumericsScope;
+pub(crate) use task::MapTask;
 
-use job::Job;
+use task::Task;
 
-/// It offers a job down its formula's chain, answering `None` when
+/// It offers a task down its formula's chain, answering `None` when
 /// every member declines: the chain's one entry point, monomorphized
-/// per job type.
+/// per task type.
 ///
 /// Admission is the bar rule, not a posture special case: a chain
 /// member serves only if its coverage cell's bar meets the bar the
 /// current posture demands, so `Exact` excludes every envelope
 /// kernel and would admit a bit-certified one.
-pub(crate) fn offered<T: Job>(task: &T) -> Option<Vec<T::Product>> {
+pub(crate) fn offered<T: Task>(task: &T) -> Option<Vec<T::Product>> {
     let required = numerics::current().bar();
     T::FORMULA
         .chain(T::PRECISION)
         .iter()
-        .filter(|backend| backend.coverage(T::FORMULA).serves_at(required))
+        .filter(|backend| backend.coverage(T::FORMULA).clears(required))
         .find_map(|&backend| task.offer(backend))
 }
 

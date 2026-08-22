@@ -1,10 +1,10 @@
-//! The simd implementer: the always-compiled descriptor, and the
+//! The simd implementer: the always-compiled manifest, and the
 //! `matrixmultiply` kernels behind the `simd` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Cell, Dispatch, Precisions};
+use super::coverage::{Bar, Coverage, Dispatch, Precisions};
 use super::formula::{Formula, Precision};
-use super::implementer::Implementer;
+use super::manifest::Manifest;
 
 #[cfg(feature = "simd")]
 #[allow(unsafe_code)]
@@ -16,15 +16,15 @@ pub(super) use kernels::{gemm_f32, gemm_f64};
 /// The portable CPU rung, described in every build.
 pub(super) struct Simd;
 
-impl Implementer for Simd {
+impl Manifest for Simd {
     const DISPATCH: Dispatch = Dispatch::Offered;
 
-    fn coverage(formula: Formula) -> Cell {
+    fn coverage(formula: Formula) -> Coverage {
         match formula {
             // Tuned single-threaded microkernels for both
             // precisions; packing reorders sums, so the bar is the
             // envelope.
-            Formula::Gemm => Cell::Serves {
+            Formula::Gemm => Coverage::Serves {
                 bar: Bar::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
@@ -33,7 +33,7 @@ impl Implementer for Simd {
             | Formula::WindowProduct
             | Formula::ReduceWindow
             | Formula::BatchNormTraining
-            | Formula::BatchNormInference => Cell::Absent,
+            | Formula::BatchNormInference => Coverage::Absent,
         }
     }
 
