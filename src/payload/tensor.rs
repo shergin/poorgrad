@@ -823,25 +823,29 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             1,
             "batch_normalized epsilon must hold a single value"
         );
-        if let (Some(input), Some(scale_slice), Some(shift_slice), Some(eps)) = (
-            self.as_slice(),
-            scale.as_slice(),
-            shift.as_slice(),
-            epsilon.as_slice(),
-        ) && let Some(normalized) = Element::batch_norm(&BatchNormTask::new(
-            input,
-            scale_slice,
-            shift_slice,
-            eps[0].clone(),
-            batch,
-            features,
-        )) {
-            let feature_shape = Shape::new([features]);
-            return (
-                Self::dense(shape, normalized.output),
-                Self::dense(feature_shape.clone(), normalized.mean),
-                Self::dense(feature_shape, normalized.variance),
-            );
+        // Only the input must already be contiguous; the affine
+        // operands and the epsilon are `features`-sized at most, so
+        // materializing them (a constant `filled` scale, a strided
+        // view) costs nothing against the fused pass.
+        if let Some(input) = self.as_slice() {
+            let scale_elements = scale.to_vec();
+            let shift_elements = shift.to_vec();
+            let epsilon_value = epsilon.iter().next().expect("epsilon holds one value");
+            if let Some(normalized) = Element::batch_norm(&BatchNormTask::new(
+                input,
+                &scale_elements,
+                &shift_elements,
+                epsilon_value,
+                batch,
+                features,
+            )) {
+                let feature_shape = Shape::new([features]);
+                return (
+                    Self::dense(shape, normalized.output),
+                    Self::dense(feature_shape.clone(), normalized.mean),
+                    Self::dense(feature_shape, normalized.variance),
+                );
+            }
         }
         composed_batch_norm(self, scale, shift, epsilon)
     }

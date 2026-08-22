@@ -86,45 +86,65 @@ unsafe extern "C" {
     fn vvlog(mapped: *mut f64, elements: *const f64, count: *const i32);
     fn vvsqrt(mapped: *mut f64, elements: *const f64, count: *const i32);
     fn vvtanh(mapped: *mut f64, elements: *const f64, count: *const i32);
-    // vDSP: strided vector statistics and the fused multiply-add
-    // behind the batch-normalization kernel. Strides are in
-    // elements; counts are element counts.
-    fn vDSP_meanv(elements: *const f32, stride: isize, mean: *mut f32, count: usize);
-    fn vDSP_measqv(elements: *const f32, stride: isize, mean_square: *mut f32, count: usize);
-    fn vDSP_vsadd(
-        elements: *const f32,
-        stride: isize,
-        addend: *const f32,
-        shifted: *mut f32,
-        shifted_stride: isize,
+    // vDSP: the contiguous row passes behind the batch-normalization
+    // kernel. Strides are in elements; counts are element counts.
+    // Note the argument order of `vsub`: it computes `C = B - A`.
+    fn vDSP_vadd(
+        a: *const f32,
+        a_stride: isize,
+        b: *const f32,
+        b_stride: isize,
+        sum: *mut f32,
+        sum_stride: isize,
         count: usize,
     );
-    fn vDSP_vsmsa(
-        elements: *const f32,
-        stride: isize,
-        multiplier: *const f32,
-        addend: *const f32,
-        transformed: *mut f32,
-        transformed_stride: isize,
+    fn vDSP_vsub(
+        a: *const f32,
+        a_stride: isize,
+        b: *const f32,
+        b_stride: isize,
+        difference: *mut f32,
+        difference_stride: isize,
         count: usize,
     );
-    fn vDSP_meanvD(elements: *const f64, stride: isize, mean: *mut f64, count: usize);
-    fn vDSP_measqvD(elements: *const f64, stride: isize, mean_square: *mut f64, count: usize);
-    fn vDSP_vsaddD(
-        elements: *const f64,
-        stride: isize,
-        addend: *const f64,
-        shifted: *mut f64,
-        shifted_stride: isize,
+    fn vDSP_vma(
+        a: *const f32,
+        a_stride: isize,
+        b: *const f32,
+        b_stride: isize,
+        c: *const f32,
+        c_stride: isize,
+        result: *mut f32,
+        result_stride: isize,
         count: usize,
     );
-    fn vDSP_vsmsaD(
-        elements: *const f64,
-        stride: isize,
-        multiplier: *const f64,
-        addend: *const f64,
-        transformed: *mut f64,
-        transformed_stride: isize,
+    fn vDSP_vaddD(
+        a: *const f64,
+        a_stride: isize,
+        b: *const f64,
+        b_stride: isize,
+        sum: *mut f64,
+        sum_stride: isize,
+        count: usize,
+    );
+    fn vDSP_vsubD(
+        a: *const f64,
+        a_stride: isize,
+        b: *const f64,
+        b_stride: isize,
+        difference: *mut f64,
+        difference_stride: isize,
+        count: usize,
+    );
+    fn vDSP_vmaD(
+        a: *const f64,
+        a_stride: isize,
+        b: *const f64,
+        b_stride: isize,
+        c: *const f64,
+        c_stride: isize,
+        result: *mut f64,
+        result_stride: isize,
         count: usize,
     );
 }
@@ -134,10 +154,14 @@ unsafe extern "C" {
 /// the measurement plan runs.
 const BATCH_NORM_THRESHOLD: usize = 1 << 12;
 
-/// It runs a whole training-mode batch normalization through vDSP —
-/// per feature: a strided mean, the centered mean of squares (the
-/// biased variance), and the affine as one fused multiply-add — or
-/// declines with `None` below the threshold.
+/// It runs a whole training-mode batch normalization through vDSP,
+/// in row-major passes so every call is contiguous: accumulate the
+/// per-feature sums row by row, accumulate the centered squares for
+/// the biased variance, then apply the affine as one fused
+/// multiply-add per row — or declines with `None` below the
+/// threshold. A per-feature strided formulation measured flat
+/// against the composed path (one cache line per element); the row
+/// passes are what pay.
 pub(crate) fn batch_norm_f32(task: &BatchNormTask<'_, f32>) -> Option<Normalized<f32>> {
     let (batch, features) = (task.batch(), task.features());
     if batch * features < BATCH_NORM_THRESHOLD {
@@ -147,42 +171,80 @@ pub(crate) fn batch_norm_f32(task: &BatchNormTask<'_, f32>) -> Option<Normalized
     let scale = task.scale();
     let shift = task.shift();
     let epsilon = *task.epsilon();
-    let stride = features as isize;
     let mut output = vec![0.0_f32; batch * features];
     let mut mean = vec![0.0_f32; features];
     let mut variance = vec![0.0_f32; features];
-    let mut centered = vec![0.0_f32; batch];
-    for feature in 0..features {
-        let column = &input[feature..];
-        // SAFETY: `column` starts at this feature's first element of
-        // a slice the task constructor validated at
-        // `batch * features`, so every strided access
-        // `column[i * features]` for `i < batch` stays in bounds;
-        // `centered` and the output column are exclusively borrowed
-        // at the lengths the calls write; vDSP reads its inputs and
-        // count while writing only its output argument.
-        unsafe {
-            vDSP_meanv(column.as_ptr(), stride, &mut mean[feature], batch);
-            let negative = -mean[feature];
-            vDSP_vsadd(
-                column.as_ptr(),
-                stride,
-                &negative,
+    let mut centered = vec![0.0_f32; features];
+    // SAFETY: every pointer addresses a live buffer of at least
+    // `features` elements — rows of the validated
+    // `batch * features` input, or the `features`-sized scratch and
+    // output vectors — with unit strides, so each call touches
+    // exactly `features` contiguous elements; the accumulating
+    // calls write in place through the documented vDSP in-place
+    // contract (equal strides, output aliasing one input); all
+    // other outputs are exclusively borrowed.
+    unsafe {
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vadd(
+                elements,
+                1,
+                mean.as_ptr(),
+                1,
+                mean.as_mut_ptr(),
+                1,
+                features,
+            );
+        }
+        let inverse_batch = 1.0 / batch as f32;
+        for entry in &mut mean {
+            *entry *= inverse_batch;
+        }
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vsub(
+                mean.as_ptr(),
+                1,
+                elements,
+                1,
                 centered.as_mut_ptr(),
                 1,
-                batch,
+                features,
             );
-            vDSP_measqv(centered.as_ptr(), 1, &mut variance[feature], batch);
-            let normalizer = scale[feature] / (variance[feature] + epsilon).sqrt();
-            let offset = shift[feature] - mean[feature] * normalizer;
-            vDSP_vsmsa(
-                column.as_ptr(),
-                stride,
-                &normalizer,
-                &offset,
-                output[feature..].as_mut_ptr(),
-                stride,
-                batch,
+            vDSP_vma(
+                centered.as_ptr(),
+                1,
+                centered.as_ptr(),
+                1,
+                variance.as_ptr(),
+                1,
+                variance.as_mut_ptr(),
+                1,
+                features,
+            );
+        }
+        // The per-feature affine: `output = input * a + b` with
+        // `a = scale / sqrt(variance + epsilon)` and
+        // `b = shift - mean * a`.
+        let mut multiplier = vec![0.0_f32; features];
+        let mut addend = vec![0.0_f32; features];
+        for feature in 0..features {
+            variance[feature] *= inverse_batch;
+            multiplier[feature] = scale[feature] / (variance[feature] + epsilon).sqrt();
+            addend[feature] = shift[feature] - mean[feature] * multiplier[feature];
+        }
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vma(
+                elements,
+                1,
+                multiplier.as_ptr(),
+                1,
+                addend.as_ptr(),
+                1,
+                output[row * features..].as_mut_ptr(),
+                1,
+                features,
             );
         }
     }
@@ -203,38 +265,72 @@ pub(crate) fn batch_norm_f64(task: &BatchNormTask<'_, f64>) -> Option<Normalized
     let scale = task.scale();
     let shift = task.shift();
     let epsilon = *task.epsilon();
-    let stride = features as isize;
     let mut output = vec![0.0_f64; batch * features];
     let mut mean = vec![0.0_f64; features];
     let mut variance = vec![0.0_f64; features];
-    let mut centered = vec![0.0_f64; batch];
-    for feature in 0..features {
-        let column = &input[feature..];
-        // SAFETY: identical to `batch_norm_f32` — validated span,
-        // in-bounds strided accesses, exclusive outputs, and vDSP's
-        // read/write contract.
-        unsafe {
-            vDSP_meanvD(column.as_ptr(), stride, &mut mean[feature], batch);
-            let negative = -mean[feature];
-            vDSP_vsaddD(
-                column.as_ptr(),
-                stride,
-                &negative,
+    let mut centered = vec![0.0_f64; features];
+    // SAFETY: identical to `batch_norm_f32` — contiguous
+    // `features`-length rows of validated buffers, the documented
+    // in-place accumulation, exclusive outputs.
+    unsafe {
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vaddD(
+                elements,
+                1,
+                mean.as_ptr(),
+                1,
+                mean.as_mut_ptr(),
+                1,
+                features,
+            );
+        }
+        let inverse_batch = 1.0 / batch as f64;
+        for entry in &mut mean {
+            *entry *= inverse_batch;
+        }
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vsubD(
+                mean.as_ptr(),
+                1,
+                elements,
+                1,
                 centered.as_mut_ptr(),
                 1,
-                batch,
+                features,
             );
-            vDSP_measqvD(centered.as_ptr(), 1, &mut variance[feature], batch);
-            let normalizer = scale[feature] / (variance[feature] + epsilon).sqrt();
-            let offset = shift[feature] - mean[feature] * normalizer;
-            vDSP_vsmsaD(
-                column.as_ptr(),
-                stride,
-                &normalizer,
-                &offset,
-                output[feature..].as_mut_ptr(),
-                stride,
-                batch,
+            vDSP_vmaD(
+                centered.as_ptr(),
+                1,
+                centered.as_ptr(),
+                1,
+                variance.as_ptr(),
+                1,
+                variance.as_mut_ptr(),
+                1,
+                features,
+            );
+        }
+        let mut multiplier = vec![0.0_f64; features];
+        let mut addend = vec![0.0_f64; features];
+        for feature in 0..features {
+            variance[feature] *= inverse_batch;
+            multiplier[feature] = scale[feature] / (variance[feature] + epsilon).sqrt();
+            addend[feature] = shift[feature] - mean[feature] * multiplier[feature];
+        }
+        for row in 0..batch {
+            let elements = input[row * features..].as_ptr();
+            vDSP_vmaD(
+                elements,
+                1,
+                multiplier.as_ptr(),
+                1,
+                addend.as_ptr(),
+                1,
+                output[row * features..].as_mut_ptr(),
+                1,
+                features,
             );
         }
     }
