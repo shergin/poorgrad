@@ -166,6 +166,10 @@ path = "examples/mnist/grading.rs"
 name = "gpt2"
 path = "examples/gpt2/main.rs"
 
+[[example]]
+name = "tinyllama"
+path = "examples/tinyllama/main.rs"
+
 [[bench]]
 name = "record"
 harness = false
