@@ -11,7 +11,7 @@ use super::manifest::Manifest;
 mod kernels;
 
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
-pub(super) use kernels::{gemm_f32, gemm_f64, map_f32, map_f64};
+pub(super) use kernels::{batch_norm_f32, batch_norm_f64, gemm_f32, gemm_f64, map_f32, map_f64};
 
 /// Apple's Accelerate framework, described in every build.
 pub(super) struct Accelerate;
@@ -29,10 +29,17 @@ impl Manifest for Accelerate {
                 fidelity: Fidelity::Envelope,
                 precisions: Precision::ALL,
             },
-            Formula::WindowProduct
-            | Formula::ReduceWindow
-            | Formula::BatchNormTraining
-            | Formula::BatchNormInference => Coverage::Absent,
+            // One vDSP pass per feature — mean, centered variance,
+            // and the affine as a fused multiply-add — reordering
+            // the recorded reductions, so the fidelity is the
+            // envelope.
+            Formula::BatchNormTraining => Coverage::Serves {
+                fidelity: Fidelity::Envelope,
+                precisions: Precision::ALL,
+            },
+            Formula::WindowProduct | Formula::ReduceWindow | Formula::BatchNormInference => {
+                Coverage::Absent
+            }
         }
     }
 

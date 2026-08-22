@@ -1,7 +1,7 @@
 use smallvec::{SmallVec, smallvec};
 
-use crate::Differentiable;
 use crate::function::Function;
+use crate::{Differentiable, Tensorial};
 
 use super::candidates::Candidate;
 use super::pattern::Pattern;
@@ -12,12 +12,12 @@ use super::view::View;
 /// rooted at the trailing shift `Add`. Both modes share the group;
 /// the mode lives on the `Pattern` variant wrapping it. In training
 /// the statistics are the batch's own reductions and become the
-/// raise's named results: they may sit in the keep-set (training
-/// loops observe them for running estimates), and
+/// group's named results: they may sit in the keep-set (training
+/// loops observe them for running estimates),
 /// `stablehlo.batch_norm_training` writes their SSA names at the
-/// root. In inference they are supplied values, ordinary extra reads
-/// of `stablehlo.batch_norm_inference`. Forward runs execute the
-/// recorded formula unchanged either way — both variants are
+/// root, and a fusing forward run writes their slots back beside the
+/// root's. In inference they are supplied values, ordinary extra
+/// reads of `stablehlo.batch_norm_inference`, and the variant stays
 /// raise-only.
 #[derive(Debug, Clone)]
 pub(crate) struct BatchNormalization {
@@ -36,6 +36,26 @@ pub(crate) struct BatchNormalization {
     /// The `[features]` biased variance: a named result in training, a
     /// supplied extra read in inference.
     pub(crate) variance: usize,
+}
+
+impl BatchNormalization {
+    /// Returns the slots the fused call reads past the root's operand
+    /// links; liveness must keep them alive until the call.
+    pub(crate) fn reads(&self) -> [usize; 4] {
+        [self.input, self.scale, self.shift, self.epsilon]
+    }
+
+    /// Computes the fused call over the already-evaluated `values`:
+    /// the output with the batch statistics, the diamond between the
+    /// reads never materialized. The caller writes the statistics
+    /// back into their named-result slots.
+    pub(crate) fn apply<Data: Tensorial>(&self, values: &[Data]) -> (Data, Data, Data) {
+        values[self.input].batch_normalized(
+            &values[self.scale],
+            &values[self.shift],
+            &values[self.epsilon],
+        )
+    }
 }
 
 /// The shared tail both variants record: everything from the trailing

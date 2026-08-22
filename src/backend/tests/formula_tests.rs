@@ -39,16 +39,23 @@ fn chains_declare_the_measured_orders() {
         &[Backend::Metal, Backend::Accelerate]
     );
     assert_eq!(Formula::Map.chain(Precision::F64), &[Backend::Accelerate]);
+    // The first composed formula with a task face: vDSP takes the
+    // whole normalization at either precision.
+    for precision in Precision::ALL {
+        assert_eq!(
+            Formula::BatchNormTraining.chain(*precision),
+            &[Backend::Accelerate]
+        );
+    }
 }
 
 #[test]
-fn composed_formulas_have_no_offer_chain() {
+fn faceless_formulas_have_no_offer_chain() {
     // Their kernels are elected, never offered buffers — until one
-    // earns a job face.
+    // earns a task face.
     for formula in [
         Formula::WindowProduct,
         Formula::ReduceWindow,
-        Formula::BatchNormTraining,
         Formula::BatchNormInference,
     ] {
         for precision in Precision::ALL {

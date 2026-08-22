@@ -384,9 +384,12 @@ memory posture. Electing is claiming, first-wins; unsupported
 candidates never claim, so their regions stay free, and an unelected
 region simply runs or lowers its recorded primitives — a pattern is
 an offer, never an obligation. A repertoire is a kernel library with
-an admission fidelity: a home kernel must reproduce the recorded chain
-bit for bit under the run's `Numerics` posture, while a raise needs
-only emission's conformance envelope. Matchers share one `View` (wanted,
+an admission fidelity: a home kernel must meet the fidelity the
+run's `Numerics` posture demands — bit identity under `Exact`,
+where the fused fallbacks compose the recorded formula exactly, and
+the envelope under `Fast`, where an admitted hardware kernel may
+serve the group — while a raise needs only emission's conformance
+envelope. Matchers share one `View` (wanted,
 keep-set, consumer counts); dispatch everywhere is a plain enum
 `match`; the tape and the backends never see a pattern.
 
@@ -634,13 +637,16 @@ read-only thereafter.
 without the engine knowing: a provided `Elementary` method answers
 `None` (compute on the built-in paths) unless the element type
 forwards to the backend chain, as `f32` and `f64` do. The seam has
-two hooks — `Elementary::gemm` for one dense product, consulted
-first by `Tensor`'s `matmul`, and `Elementary::map` for one
+three hooks — `Elementary::gemm` for one dense product, consulted
+first by `Tensor`'s `matmul`; `Elementary::map` for one
 whole-buffer transcendental (a `MapOperation`: `exp`, `ln`, `sqrt`,
 `tanh`), consulted by the tensor's elementwise operations for
-contiguous dense buffers. The hooks crossed with the forwarding
-precisions are the leaf entries of the acceleration vocabulary,
-[`Formula`](src/backend/formula.rs). Both live in the payload tier, so
+contiguous dense buffers; and `Elementary::batch_norm` for one
+whole training-mode normalization (a `BatchNormTask`), consulted by
+the fused kernel behind the plan tier's batch-norm pattern — the
+first composed formula with a task face. The hooks crossed with the
+forwarding precisions index the acceleration vocabulary,
+[`Formula`](src/backend/formula.rs). All live in the payload tier, so
 `Operation` rules stay backend-blind (the columns-as-IR rule) and
 custom payload implementations keep the defaults. In topos:
 [`Elementary`](src/payload/elementary.rs).
@@ -683,10 +689,12 @@ order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
 dense `f32` and `f64` products above a small flop threshold through
 `cblas_sgemm`/`cblas_dgemm` (the AMX/SME matrix units on Apple
-Silicon), declining stride patterns BLAS cannot express, and maps
+Silicon), declining stride patterns BLAS cannot express, maps
 whole-buffer transcendentals through vForce
 (`vvtanhf`/`vvexpf`/`vvlogf`/`vvsqrtf` and their `f64` twins) — the
-vectorized form of the loops that scalar libm calls keep serial.
+vectorized form of the loops that scalar libm calls keep serial —
+and runs whole training-mode batch normalizations through vDSP, one
+strided statistics-and-affine pass per feature.
 `Backend::Metal` (the `metal` feature) runs large `f32` tasks on
 the GPU through hand-written simdgroup-matrix kernels compiled from
 source at first use — Metal has no `f64` — serving what BLAS
@@ -706,10 +714,11 @@ real on every platform where the Apple backends are macOS-only, and
 mop-up behind them on macOS. Whatever the whole chain declines
 lands on the built-in paths. The two in-process implementers stand
 outside the offer chains: `Backend::Fused` holds the crate's fused
-kernels for composed formulas (`windowed_product` today, the one
-cell at the bit-identity fidelity, since the oracle's bits live in this
-process), and `Backend::StableHlo` holds the total translation
-column emission elects by. `Backend::coverage`,
+kernels for composed formulas — `windowed_product` and
+`batch_normalized`, both cells at the bit-identity fidelity, since
+each computes through the seam and falls back to the recorded
+formula's exact bits — and `Backend::StableHlo` holds the total
+translation column emission elects by. `Backend::coverage`,
 `Backend::serves`, `Backend::compiled`, and [`Backend::status`]
 answer for every implementer in every build — coverage as declared,
 and `NotCompiled` as an ordinary result, not a compile error — and

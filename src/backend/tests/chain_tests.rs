@@ -1,4 +1,4 @@
-use crate::{GemmTask, MapOperation};
+use crate::{BatchNormTask, GemmTask, MapOperation};
 
 use super::{Formula, MapTask, Numerics, NumericsScope, Precision, offered};
 
@@ -70,6 +70,39 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
     assert_eq!(
         offered(&MapTask::new(MapOperation::Tanh, &elements64)).is_some(),
         a_member_is_available(Formula::Map, Precision::F64)
+    );
+
+    // The batch-norm canonical: 64 x 64 sits exactly at the vDSP
+    // threshold, so any available member accepts.
+    let normalize32: Vec<f32> = (0..64 * 64)
+        .map(|index| ((index * 7 % 23) as f32 - 11.0) / 4.0)
+        .collect();
+    let ones32 = vec![1.0_f32; 64];
+    assert_eq!(
+        offered(&BatchNormTask::new(
+            &normalize32,
+            &ones32,
+            &ones32,
+            1.0e-5_f32,
+            64,
+            64
+        ))
+        .is_some(),
+        a_member_is_available(Formula::BatchNormTraining, Precision::F32)
+    );
+    let normalize64: Vec<f64> = normalize32.iter().map(|&value| value as f64).collect();
+    let ones64 = vec![1.0_f64; 64];
+    assert_eq!(
+        offered(&BatchNormTask::new(
+            &normalize64,
+            &ones64,
+            &ones64,
+            1.0e-5_f64,
+            64,
+            64
+        ))
+        .is_some(),
+        a_member_is_available(Formula::BatchNormTraining, Precision::F64)
     );
 }
 

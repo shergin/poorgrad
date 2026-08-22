@@ -2,6 +2,7 @@ use crate::backend::{MapTask, offered};
 
 use super::Differentiable;
 use super::gemm::GemmTask;
+use super::normalized::{BatchNormTask, Normalized};
 
 /// One whole-buffer elementwise transcendental: the unit of the
 /// seam's elementwise sibling, mirroring [`GemmTask`] for the
@@ -92,6 +93,24 @@ pub trait Elementary: Differentiable {
         let _ = (operation, elements);
         None
     }
+
+    /// Offers a whole training-mode batch normalization to the
+    /// compiled backend chain: the seam's first composed-formula
+    /// hook.
+    ///
+    /// It answers `None` — compute the recorded formula — unless the
+    /// element type has a backend entry point; `f32` and `f64`
+    /// forward to the chain in `backend`. Answering `Some` asserts
+    /// the task's whole [`Normalized`] product within the envelope;
+    /// the chain's own admission keeps the `Exact` posture on the
+    /// recorded formula.
+    fn batch_norm(task: &BatchNormTask<'_, Self>) -> Option<Normalized<Self>>
+    where
+        Self: Sized,
+    {
+        let _ = task;
+        None
+    }
 }
 
 impl Elementary for f32 {
@@ -130,6 +149,10 @@ impl Elementary for f32 {
     fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
         offered(&MapTask::new(operation, elements))
     }
+
+    fn batch_norm(task: &BatchNormTask<'_, Self>) -> Option<Normalized<Self>> {
+        offered(task)
+    }
 }
 
 impl Elementary for f64 {
@@ -167,5 +190,9 @@ impl Elementary for f64 {
 
     fn map(operation: MapOperation, elements: &[Self]) -> Option<Vec<Self>> {
         offered(&MapTask::new(operation, elements))
+    }
+
+    fn batch_norm(task: &BatchNormTask<'_, Self>) -> Option<Normalized<Self>> {
+        offered(task)
     }
 }

@@ -16,7 +16,7 @@
 //! outside the allow.
 
 use crate::backend::operand::{Operand, classify};
-use crate::{GemmTask, MapOperation};
+use crate::{BatchNormTask, GemmTask, MapOperation, Normalized};
 
 // Row-major CBLAS constants.
 const ROW_MAJOR: i32 = 101;
@@ -86,6 +86,163 @@ unsafe extern "C" {
     fn vvlog(mapped: *mut f64, elements: *const f64, count: *const i32);
     fn vvsqrt(mapped: *mut f64, elements: *const f64, count: *const i32);
     fn vvtanh(mapped: *mut f64, elements: *const f64, count: *const i32);
+    // vDSP: strided vector statistics and the fused multiply-add
+    // behind the batch-normalization kernel. Strides are in
+    // elements; counts are element counts.
+    fn vDSP_meanv(elements: *const f32, stride: isize, mean: *mut f32, count: usize);
+    fn vDSP_measqv(elements: *const f32, stride: isize, mean_square: *mut f32, count: usize);
+    fn vDSP_vsadd(
+        elements: *const f32,
+        stride: isize,
+        addend: *const f32,
+        shifted: *mut f32,
+        shifted_stride: isize,
+        count: usize,
+    );
+    fn vDSP_vsmsa(
+        elements: *const f32,
+        stride: isize,
+        multiplier: *const f32,
+        addend: *const f32,
+        transformed: *mut f32,
+        transformed_stride: isize,
+        count: usize,
+    );
+    fn vDSP_meanvD(elements: *const f64, stride: isize, mean: *mut f64, count: usize);
+    fn vDSP_measqvD(elements: *const f64, stride: isize, mean_square: *mut f64, count: usize);
+    fn vDSP_vsaddD(
+        elements: *const f64,
+        stride: isize,
+        addend: *const f64,
+        shifted: *mut f64,
+        shifted_stride: isize,
+        count: usize,
+    );
+    fn vDSP_vsmsaD(
+        elements: *const f64,
+        stride: isize,
+        multiplier: *const f64,
+        addend: *const f64,
+        transformed: *mut f64,
+        transformed_stride: isize,
+        count: usize,
+    );
+}
+
+/// Below this many elements the per-feature vDSP call overhead
+/// outweighs the composed path; the constant is provisional until
+/// the measurement plan runs.
+const BATCH_NORM_THRESHOLD: usize = 1 << 12;
+
+/// It runs a whole training-mode batch normalization through vDSP —
+/// per feature: a strided mean, the centered mean of squares (the
+/// biased variance), and the affine as one fused multiply-add — or
+/// declines with `None` below the threshold.
+pub(crate) fn batch_norm_f32(task: &BatchNormTask<'_, f32>) -> Option<Normalized<f32>> {
+    let (batch, features) = (task.batch(), task.features());
+    if batch * features < BATCH_NORM_THRESHOLD {
+        return None;
+    }
+    let input = task.input();
+    let scale = task.scale();
+    let shift = task.shift();
+    let epsilon = *task.epsilon();
+    let stride = features as isize;
+    let mut output = vec![0.0_f32; batch * features];
+    let mut mean = vec![0.0_f32; features];
+    let mut variance = vec![0.0_f32; features];
+    let mut centered = vec![0.0_f32; batch];
+    for feature in 0..features {
+        let column = &input[feature..];
+        // SAFETY: `column` starts at this feature's first element of
+        // a slice the task constructor validated at
+        // `batch * features`, so every strided access
+        // `column[i * features]` for `i < batch` stays in bounds;
+        // `centered` and the output column are exclusively borrowed
+        // at the lengths the calls write; vDSP reads its inputs and
+        // count while writing only its output argument.
+        unsafe {
+            vDSP_meanv(column.as_ptr(), stride, &mut mean[feature], batch);
+            let negative = -mean[feature];
+            vDSP_vsadd(
+                column.as_ptr(),
+                stride,
+                &negative,
+                centered.as_mut_ptr(),
+                1,
+                batch,
+            );
+            vDSP_measqv(centered.as_ptr(), 1, &mut variance[feature], batch);
+            let normalizer = scale[feature] / (variance[feature] + epsilon).sqrt();
+            let offset = shift[feature] - mean[feature] * normalizer;
+            vDSP_vsmsa(
+                column.as_ptr(),
+                stride,
+                &normalizer,
+                &offset,
+                output[feature..].as_mut_ptr(),
+                stride,
+                batch,
+            );
+        }
+    }
+    Some(Normalized {
+        output,
+        mean,
+        variance,
+    })
+}
+
+/// The `f64` twin of [`batch_norm_f32`].
+pub(crate) fn batch_norm_f64(task: &BatchNormTask<'_, f64>) -> Option<Normalized<f64>> {
+    let (batch, features) = (task.batch(), task.features());
+    if batch * features < BATCH_NORM_THRESHOLD {
+        return None;
+    }
+    let input = task.input();
+    let scale = task.scale();
+    let shift = task.shift();
+    let epsilon = *task.epsilon();
+    let stride = features as isize;
+    let mut output = vec![0.0_f64; batch * features];
+    let mut mean = vec![0.0_f64; features];
+    let mut variance = vec![0.0_f64; features];
+    let mut centered = vec![0.0_f64; batch];
+    for feature in 0..features {
+        let column = &input[feature..];
+        // SAFETY: identical to `batch_norm_f32` — validated span,
+        // in-bounds strided accesses, exclusive outputs, and vDSP's
+        // read/write contract.
+        unsafe {
+            vDSP_meanvD(column.as_ptr(), stride, &mut mean[feature], batch);
+            let negative = -mean[feature];
+            vDSP_vsaddD(
+                column.as_ptr(),
+                stride,
+                &negative,
+                centered.as_mut_ptr(),
+                1,
+                batch,
+            );
+            vDSP_measqvD(centered.as_ptr(), 1, &mut variance[feature], batch);
+            let normalizer = scale[feature] / (variance[feature] + epsilon).sqrt();
+            let offset = shift[feature] - mean[feature] * normalizer;
+            vDSP_vsmsaD(
+                column.as_ptr(),
+                stride,
+                &normalizer,
+                &offset,
+                output[feature..].as_mut_ptr(),
+                stride,
+                batch,
+            );
+        }
+    }
+    Some(Normalized {
+        output,
+        mean,
+        variance,
+    })
 }
 
 /// It runs a `f32` task through `cblas_sgemm`, or declines with

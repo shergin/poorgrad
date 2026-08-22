@@ -2,11 +2,18 @@ use crate::{Backend, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision}
 
 #[test]
 fn the_matrix_pins_every_hardware_row() {
-    // Accelerate is the one hardware implementer with a kernel for
-    // both leaf formulas at both precisions.
+    // Accelerate is the one hardware implementer with kernels for
+    // both leaf formulas and the batch-norm task, at both
+    // precisions.
     for precision in Precision::ALL {
         assert!(Backend::Accelerate.serves(Formula::Gemm, *precision));
         assert!(Backend::Accelerate.serves(Formula::Map, *precision));
+        assert!(Backend::Accelerate.serves(Formula::BatchNormTraining, *precision));
+        assert!(
+            !Backend::Accelerate
+                .coverage(Formula::BatchNormTraining)
+                .meets(Fidelity::BitIdentical)
+        );
     }
     // Metal has no `f64` at all.
     assert!(Backend::Metal.serves(Formula::Gemm, Precision::F32));
@@ -20,7 +27,8 @@ fn the_matrix_pins_every_hardware_row() {
             assert!(!backend.serves(Formula::Map, *precision));
         }
     }
-    // No hardware implementer serves a composed formula.
+    // No other hardware implementer serves a composed formula, and
+    // nobody but the translation column serves the raise-only ones.
     for backend in [
         Backend::Accelerate,
         Backend::Metal,
@@ -30,28 +38,37 @@ fn the_matrix_pins_every_hardware_row() {
         for formula in [
             Formula::WindowProduct,
             Formula::ReduceWindow,
-            Formula::BatchNormTraining,
             Formula::BatchNormInference,
         ] {
             assert_eq!(backend.coverage(formula), Coverage::Absent);
         }
     }
+    for backend in [Backend::Metal, Backend::Cuda, Backend::Simd] {
+        assert_eq!(
+            backend.coverage(Formula::BatchNormTraining),
+            Coverage::Absent
+        );
+    }
 }
 
 #[test]
-fn fused_serves_the_window_product_bit_identically() {
-    assert_eq!(
-        Backend::Fused.coverage(Formula::WindowProduct),
-        Coverage::Serves {
-            fidelity: Fidelity::BitIdentical,
-            precisions: Precision::ALL
-        }
-    );
+fn fused_serves_its_two_kernels_bit_identically() {
+    // Both in-process kernels offer down the chain and fall back to
+    // bitwise references, so both cells clear bit identity; the
+    // envelope enters only through an admitted hardware kernel.
+    for formula in [Formula::WindowProduct, Formula::BatchNormTraining] {
+        assert_eq!(
+            Backend::Fused.coverage(formula),
+            Coverage::Serves {
+                fidelity: Fidelity::BitIdentical,
+                precisions: Precision::ALL
+            }
+        );
+    }
     for formula in [
         Formula::Gemm,
         Formula::Map,
         Formula::ReduceWindow,
-        Formula::BatchNormTraining,
         Formula::BatchNormInference,
     ] {
         assert_eq!(Backend::Fused.coverage(formula), Coverage::Absent);

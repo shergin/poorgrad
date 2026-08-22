@@ -139,7 +139,11 @@ dimensions without copies; stride patterns BLAS cannot express (a
 broadcast operand) decline down the chain. Whole-buffer `exp`,
 `ln`, `sqrt`, and `tanh` over contiguous tensors run through
 vForce's vectorized transcendentals — including over broadcast
-views, whose distinct-element windows are contiguous.
+views, whose distinct-element windows are contiguous. Whole
+training-mode batch normalizations, elected as fused groups on the
+plan, run through vDSP: one strided statistics-and-affine pass per
+feature, within the envelope, with the recorded formula as the
+in-process fallback wherever the task declines.
 
 **The `simd` feature** is the portable rung: the `matrixmultiply`
 crate's hand-tuned, single-threaded CPU microkernels, selecting

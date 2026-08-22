@@ -101,10 +101,12 @@ impl Formula {
                 Precision::F32 => &[Backend::Metal, Backend::Accelerate],
                 Precision::F64 => &[Backend::Accelerate],
             },
-            Formula::WindowProduct
-            | Formula::ReduceWindow
-            | Formula::BatchNormTraining
-            | Formula::BatchNormInference => &[],
+            // The first composed formula with a task face: vDSP takes
+            // the whole normalization in one offer. The CPU rungs
+            // stay out — the in-process composed fallback is already
+            // the CPU implementation.
+            Formula::BatchNormTraining => &[Backend::Accelerate],
+            Formula::WindowProduct | Formula::ReduceWindow | Formula::BatchNormInference => &[],
         }
     }
 }

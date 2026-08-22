@@ -26,15 +26,24 @@ impl Manifest for Fused {
                 fidelity: Fidelity::BitIdentical,
                 precisions: Precision::ALL,
             },
+            // `batch_normalized` offers the whole group down the
+            // chain and falls back to composing the recorded formula
+            // through the same payload operations the rules make —
+            // bitwise — so, like the window kernel, the cell clears
+            // bit identity: the chain's own admission keeps `Exact`
+            // runs on the reference, and the envelope enters only
+            // through an admitted hardware kernel under `Fast`.
+            Formula::BatchNormTraining => Coverage::Serves {
+                fidelity: Fidelity::BitIdentical,
+                precisions: Precision::ALL,
+            },
             // The pool kernel waits on a profile (`max` is
             // associative, so it could meet even bit-identity
-            // fidelity); the batch-norm kernels would reassociate
-            // reductions and arrive envelope-only.
-            Formula::Gemm
-            | Formula::Map
-            | Formula::ReduceWindow
-            | Formula::BatchNormTraining
-            | Formula::BatchNormInference => Coverage::Absent,
+            // fidelity); the inference-mode normalization stays
+            // raise-only until a consumer earns it.
+            Formula::Gemm | Formula::Map | Formula::ReduceWindow | Formula::BatchNormInference => {
+                Coverage::Absent
+            }
         }
     }
 

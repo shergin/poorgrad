@@ -6,31 +6,65 @@ use static_assertions::assert_impl_all;
 
 use crate::{Differentiable, Numerics, Shape, Tensorial};
 
-use crate::backend::{Backend, NumericsScope};
+use crate::backend::{Backend, Formula, NumericsScope, Precision};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{Candidates, Catalog, Pattern, View, WindowProduct};
+use super::pattern::{BatchNormalization, Candidates, Catalog, Pattern, View, WindowProduct};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
 // in `network.rs`.
 assert_impl_all!(Plan<f64>: Send, Sync);
 
+/// One elected group's fused action: which kernel a forward run
+/// replaces it with.
+enum Fusion<'plan> {
+    /// One windowed product from the source and kernel.
+    Window(&'plan WindowProduct),
+    /// One training-mode batch normalization, its statistics written
+    /// back into their named-result slots.
+    BatchNorm(&'plan BatchNormalization),
+}
+
+impl Fusion<'_> {
+    /// Returns the slots the fused call reads past the root's operand
+    /// links; liveness must keep them alive until the call.
+    fn reads(&self) -> SmallVec<[usize; 4]> {
+        match self {
+            Fusion::Window(group) => SmallVec::from_slice(&group.reads()),
+            Fusion::BatchNorm(group) => SmallVec::from_slice(&group.reads()),
+        }
+    }
+}
+
 /// The home consumer's kernel table: the patterns a forward run
 /// replaces with payload calls, and the group each replacement reads.
 /// Admission is not decided here — election reads the `Fused`
-/// implementer's coverage column under the request's fidelity — so this
-/// table holds only the actions, and it agrees with that column by
-/// test. The return type widens to an enum when a second entry
-/// lands.
-fn fusable(pattern: &Pattern) -> Option<&WindowProduct> {
+/// implementer's coverage column under the request's fidelity — so
+/// this table holds only the actions, and it agrees with that column
+/// by test.
+fn fusable(pattern: &Pattern) -> Option<Fusion<'_>> {
     match pattern {
-        Pattern::WindowProduct(group) => Some(group),
-        Pattern::ReduceWindow(_)
-        | Pattern::BatchNormTraining(_)
-        | Pattern::BatchNormInference(_) => None,
+        Pattern::WindowProduct(group) => Some(Fusion::Window(group)),
+        Pattern::BatchNormTraining(group) => Some(Fusion::BatchNorm(group)),
+        Pattern::ReduceWindow(_) | Pattern::BatchNormInference(_) => None,
     }
+}
+
+/// Whether fusing `formula` has anyone to feed. The in-process window
+/// kernel earns its fusion alone (the measured patch fill), while a
+/// kernel whose in-process fallback is the composed formula pays only
+/// when a compiled offer-dispatched backend covers the formula — a
+/// build fact, never a device probe, so plans stay machine-blind.
+fn fed(formula: Formula) -> bool {
+    matches!(formula, Formula::WindowProduct)
+        || Precision::ALL.iter().any(|&precision| {
+            formula
+                .chain(precision)
+                .iter()
+                .any(|backend| backend.compiled())
+        })
 }
 
 /// A compiled lowering of a recorded graph prefix: which nodes a run
@@ -39,7 +73,10 @@ fn fusable(pattern: &Pattern) -> Option<&WindowProduct> {
 ///
 /// A plan is the bit-exact tier of the lowering ladder: it never
 /// changes what is computed — plan runs reproduce the interpreter's
-/// results exactly, bit for bit — it only skips what the declared
+/// results exactly, bit for bit, wherever only bit-certified
+/// kernels serve, which is every `Exact` run in every build; under
+/// `Fast`, an admitted hardware kernel may take a fused group
+/// within its envelope — and it only skips what the declared
 /// targets cannot observe and releases what later nodes cannot need.
 /// The tape stays the specification; the plan is a derived execution
 /// schedule, and [`Plan::describe`] renders its decisions.
@@ -145,6 +182,7 @@ impl<Data: Differentiable> Plan<Data> {
             !training
                 && fusable(pattern).is_some()
                 && Backend::Fused.coverage(pattern.formula()).meets(fidelity)
+                && fed(pattern.formula())
         });
 
         // Liveness: a slot may be freed by its highest consumer inside
@@ -197,10 +235,10 @@ impl<Data: Differentiable> Plan<Data> {
         // them before the fused call. Raise-only consumers never touch
         // liveness — their chains actually run.
         for (index, pattern) in home.entries() {
-            let Some(group) = fusable(pattern) else {
+            let Some(fusion) = fusable(pattern) else {
                 continue;
             };
-            for slot in group.reads() {
+            for slot in fusion.reads() {
                 let latest = last_consumer[slot].unwrap_or(0).max(index);
                 last_consumer[slot] = Some(latest);
             }
@@ -391,7 +429,7 @@ impl<Data: Differentiable> Plan<Data> {
                 .get(index)
                 .expect("plan columns are fixed");
             let liveness = if self.home.interior(index) {
-                "fused (window-gemm)".to_string()
+                "fused".to_string()
             } else if self.readable[index] {
                 "kept".to_string()
             } else {
@@ -420,7 +458,7 @@ impl<Data: Differentiable> Plan<Data> {
         if groups > 0 {
             writeln!(
                 lines,
-                "fused {groups} window-gemm groups, {} interior nodes skipped",
+                "fused {groups} groups, {} nodes replaced",
                 (0..self.len())
                     .filter(|&index| self.home.interior(index))
                     .count(),
@@ -522,10 +560,20 @@ impl<Data: Tensorial> Plan<Data> {
         for index in 0..self.len() {
             let value = if !self.wanted[index] || self.home.interior(index) {
                 Data::counted(self.structure.shapes[index].clone(), 0)
-            } else if let Some(group) = self.home.at(index).and_then(fusable) {
+            } else if let Some(fusion) = self.home.at(index).and_then(fusable) {
                 // The fused call reads its sources directly; the chain
-                // between them was never materialized.
-                group.apply(&values)
+                // between them was never materialized. A multi-result
+                // group writes its named results back into their
+                // slots, so declared observability survives fusion.
+                match fusion {
+                    Fusion::Window(group) => group.apply(&values),
+                    Fusion::BatchNorm(group) => {
+                        let (output, mean, variance) = group.apply(&values);
+                        values[group.mean] = mean;
+                        values[group.variance] = variance;
+                        output
+                    }
+                }
             } else {
                 let function = self
                     .structure

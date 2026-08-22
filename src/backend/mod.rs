@@ -56,7 +56,7 @@ use task::Task;
 /// member serves only if its declared fidelity meets the fidelity the
 /// current posture demands, so `Exact` excludes every envelope
 /// kernel and would admit a bit-certified one.
-pub(crate) fn offered<T: Task>(task: &T) -> Option<Vec<T::Product>> {
+pub(crate) fn offered<T: Task>(task: &T) -> Option<T::Product> {
     let required = numerics::current().fidelity();
     T::FORMULA
         .chain(T::PRECISION)

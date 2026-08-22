@@ -140,6 +140,29 @@ pub trait Tensorial: Elementary {
         composed_windowed_patches(self, kernel_height, kernel_width, stride, padding)
     }
 
+    /// Returns the training-mode batch normalization of `self`
+    /// (`[batch, features]`) by its own batch statistics, with the
+    /// `[features]` affine `scale` and `shift` and the single-value
+    /// `epsilon`: the output together with the mean and biased
+    /// variance it normalized by — the recorded formula's root and
+    /// named results.
+    ///
+    /// It is the fused executor behind the plan tier's
+    /// batch-normalization pattern; the arguments are the group's
+    /// reads, so neither payloads nor backends ever see graph
+    /// structure. The default implementation composes the recorded
+    /// formula through the same payload operations the rules make,
+    /// in recorded order — the bitwise reference — and `Tensor`
+    /// overrides it to offer the whole task to the backend chain
+    /// first, whose admission keeps the `Exact` posture on this
+    /// reference.
+    fn batch_normalized(&self, scale: &Self, shift: &Self, epsilon: &Self) -> (Self, Self, Self)
+    where
+        Self: Sized,
+    {
+        composed_batch_norm(self, scale, shift, epsilon)
+    }
+
     /// Returns the rows of `self` selected by `selection` (a one-hot
     /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
     /// embedding-style row gather, `result[i] = self[selection_index(i)]`.
@@ -186,6 +209,32 @@ pub(crate) fn composed_windowed_patches<Data: Tensorial>(
         batch * out_height * out_width,
         channels * kernel_height * kernel_width,
     ]))
+}
+
+/// Composes the recorded batch-normalization formula — mean by
+/// `sum_along` over a counted divisor, centering, biased variance,
+/// the epsilon-stabilized deviation, and the learned affine — over
+/// any tensorial payload, in the exact operation order the tape
+/// records: the bitwise reference the fused fast paths are graded
+/// against, and the fallback for representations without one.
+pub(crate) fn composed_batch_norm<Data: Tensorial>(
+    input: &Data,
+    scale: &Data,
+    shift: &Data,
+    epsilon: &Data,
+) -> (Data, Data, Data) {
+    let shape = input.shape();
+    let batch = shape.axes()[0];
+    let reduced = shape.without_axis(0);
+    let mean = input.sum_along(0) / Data::counted(reduced.clone(), batch);
+    let centered = input.clone() - mean.broadcast_along(0, input);
+    let variance =
+        (centered.clone() * centered.clone()).sum_along(0) / Data::counted(reduced, batch);
+    let deviation = (variance.clone() + epsilon.broadcast_like(&variance)).sqrt();
+    let normalized = centered.clone() / deviation.broadcast_along(0, &centered);
+    let output =
+        normalized * scale.broadcast_along(0, &centered) + shift.broadcast_along(0, &centered);
+    (output, mean, variance)
 }
 
 impl Tensorial for f32 {

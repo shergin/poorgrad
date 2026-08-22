@@ -373,7 +373,7 @@ fn forward_only_plans_fuse_and_agree() {
     let parameters = network.parameters();
 
     let plan = network.compile(Request::roots([output]));
-    assert!(plan.describe().contains("fused 1 window-gemm"));
+    assert!(plan.describe().contains("fused 1 groups"));
 
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
@@ -405,12 +405,12 @@ fn describe_snapshots_the_fused_forward_plan() {
     let expected = "     0  Leaf           [2, 1, 4, 4]     freed after 11
      1  Leaf           [2, 1, 3, 3]     freed after 9
      2  Leaf           [2]              freed after 12
-     3  Pad            [2, 1, 6, 4]     fused (window-gemm)
-     4  Pad            [2, 1, 6, 6]     fused (window-gemm)
-     5  Unfold         [2, 1, 4, 3, 6]  fused (window-gemm)
-     6  Unfold         [2, 1, 4, 3, 4, 3] fused (window-gemm)
-     7  Permute        [2, 4, 4, 1, 3, 3] fused (window-gemm)
-     8  Reshape        [32, 9]          fused (window-gemm)
+     3  Pad            [2, 1, 6, 4]     fused
+     4  Pad            [2, 1, 6, 6]     fused
+     5  Unfold         [2, 1, 4, 3, 6]  fused
+     6  Unfold         [2, 1, 4, 3, 4, 3] fused
+     7  Permute        [2, 4, 4, 1, 3, 3] fused
+     8  Reshape        [32, 9]          fused
      9  Permute        [1, 3, 3, 2]     freed after 10
     10  Reshape        [9, 2]           freed after 11
     11  MatMul         [32, 2]          freed after 13
@@ -432,7 +432,7 @@ fn describe_snapshots_the_fused_forward_plan() {
     27  Maximum        [2, 2, 2, 2, 1]  freed after 28
     28  Reshape        [2, 2, 2, 2]     kept
 plan: forward; 29 of 29 nodes evaluated, 1 readable
-fused 1 window-gemm groups, 6 interior nodes skipped
+fused 1 groups, 6 nodes replaced
 live volume: peak 192 elements at node 13, retain-all 856
 ";
     assert_eq!(forward.describe(), expected);
@@ -468,11 +468,11 @@ fn kept_interiors_bar_fusion() {
     let parameters = network.parameters();
 
     let fused = network.compile(Request::roots([loss]));
-    assert!(fused.describe().contains("window-gemm"));
+    assert!(fused.describe().contains("fused"));
     // Engine-backward plans do not fuse at all: their memory
     // contract stays exact for the reverse scan.
     let engine = network.compile(Request::roots([loss]).backward());
-    assert!(!engine.describe().contains("window-gemm"));
+    assert!(!engine.describe().contains("fused"));
 
     let barred = network.compile(Request::roots([loss]).observe([patches]));
     assert!(!barred.describe().contains("window-gemm"));
@@ -587,5 +587,92 @@ fn the_numerics_posture_is_a_value_on_the_plan() {
             (fast_value - exact_value).abs() <= envelope,
             "fast {fast_value} strays past the envelope around exact {exact_value}"
         );
+    }
+}
+
+#[test]
+fn batch_norm_fuses_exactly_when_a_backend_can_feed() {
+    use crate::{BatchNorm, Formula, Precision};
+
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
+        [64, 64],
+        (0..64 * 64)
+            .map(|index| ((index * 7 % 23) as f64 - 11.0) / 4.0)
+            .collect::<Vec<_>>(),
+    ));
+    let layer = BatchNorm::new(
+        &tape,
+        Tensor::filled([64], 1.2_f64),
+        Tensor::filled([64], 0.3),
+        Tensor::filled([1], 1.0e-5),
+    );
+    let output = layer.express(&tape, input).output.symbol();
+    let network = tape.into_network();
+
+    // The fused batch-norm kernel's in-process fallback is the
+    // composed formula, so election pays only when a compiled
+    // offer-dispatched backend covers the formula — a build fact.
+    let plan = network.compile(Request::roots([output]));
+    let fed = Precision::ALL.iter().any(|&precision| {
+        Formula::BatchNormTraining
+            .chain(precision)
+            .iter()
+            .any(|backend| backend.compiled())
+    });
+    assert_eq!(plan.describe().contains("fused 1 groups"), fed);
+}
+
+#[test]
+fn fused_batch_norm_grades_against_the_oracle() {
+    use crate::BatchNorm;
+
+    let tape = Tape::new();
+    let input = tape.leaf(Tensor::new(
+        [64, 64],
+        (0..64 * 64)
+            .map(|index| ((index * 7 % 23) as f64 - 11.0) / 4.0)
+            .collect::<Vec<_>>(),
+    ));
+    let layer = BatchNorm::new(
+        &tape,
+        Tensor::filled([64], 1.2_f64),
+        Tensor::filled([64], 0.3),
+        Tensor::filled([1], 1.0e-5),
+    );
+    let normalization = layer.express(&tape, input);
+    let output = normalization.output.symbol();
+    let mean = normalization.mean.symbol();
+    let variance = normalization.variance.symbol();
+    let network = tape.into_network();
+    let parameters = network.parameters();
+
+    let fast = network.compile(Request::roots([output, mean, variance]));
+    let exact = network.compile(Request::roots([output, mean, variance]).numerics(Numerics::Exact));
+    let fast_run = fast.forward(&parameters, std::iter::empty());
+    let exact_run = exact.forward(&parameters, std::iter::empty());
+    let interpreted = network.forward(&parameters, []);
+
+    // `Exact` stays on the reference paths bit for bit, fused or
+    // not: the chain's admission filters the envelope kernel, and
+    // the fallback composes the recorded formula — including the
+    // named results a fusing run writes back into their slots.
+    for symbol in [output, mean, variance] {
+        assert_eq!(
+            exact_run.of(symbol).to_vec(),
+            interpreted.of(symbol).to_vec()
+        );
+    }
+    // `Fast` answers within the envelope of the oracle, whichever
+    // kernel served.
+    for symbol in [output, mean, variance] {
+        let fast_values = fast_run.of(symbol).to_vec();
+        let exact_values = exact_run.of(symbol).to_vec();
+        for (fast_value, exact_value) in fast_values.iter().zip(&exact_values) {
+            assert!(
+                (fast_value - exact_value).abs() <= 1.0e-9 * (1.0 + exact_value.abs()),
+                "{fast_value} differs from {exact_value} beyond the envelope"
+            );
+        }
     }
 }

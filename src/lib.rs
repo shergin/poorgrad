@@ -63,7 +63,6 @@ mod payload;
 
 pub use backend::{
     Backend, BackendUnavailable, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision,
-    Precisions,
 };
 pub use emission::{EmitError, Emittable};
 pub use engine::{Plan, Request, Run};
@@ -74,5 +73,6 @@ pub use neural::{
     cross_entropy, init, max_pool, named_parameters, parameters,
 };
 pub use payload::{
-    Bf16, Differentiable, Elementary, GemmTask, MapOperation, Shape, Tensor, Tensorial,
+    BatchNormTask, Bf16, Differentiable, Elementary, GemmTask, MapOperation, Normalized, Shape,
+    Tensor, Tensorial,
 };

@@ -1,4 +1,4 @@
-use crate::{GemmTask, MapOperation};
+use crate::{BatchNormTask, GemmTask, MapOperation, Normalized};
 
 #[cfg(all(feature = "accelerate", target_os = "macos"))]
 use super::accelerate;
@@ -22,7 +22,7 @@ use super::simd;
 /// understands; a composed formula earning an offerable kernel
 /// arrives as a new implementation beside its [`Formula`] entry.
 pub(crate) trait Task: Sized {
-    /// The element type of the computed result.
+    /// The task's whole result type.
     type Product;
 
     /// The vocabulary entry this task instantiates.
@@ -33,7 +33,7 @@ pub(crate) trait Task: Sized {
 
     /// It offers this task to one backend; a backend missing from
     /// the build answers `None`, the chain's fixed point.
-    fn offer(&self, backend: Backend) -> Option<Vec<Self::Product>>;
+    fn offer(&self, backend: Backend) -> Option<Self::Product>;
 }
 
 /// One whole-buffer elementwise transcendental as an offerable
@@ -55,7 +55,7 @@ impl<'buffers, Element> MapTask<'buffers, Element> {
 }
 
 impl Task for GemmTask<'_, f32> {
-    type Product = f32;
+    type Product = Vec<f32>;
 
     const FORMULA: Formula = Formula::Gemm;
     const PRECISION: Precision = Precision::F32;
@@ -76,7 +76,7 @@ impl Task for GemmTask<'_, f32> {
 }
 
 impl Task for GemmTask<'_, f64> {
-    type Product = f64;
+    type Product = Vec<f64>;
 
     const FORMULA: Formula = Formula::Gemm;
     const PRECISION: Precision = Precision::F64;
@@ -95,7 +95,7 @@ impl Task for GemmTask<'_, f64> {
 }
 
 impl Task for MapTask<'_, f32> {
-    type Product = f32;
+    type Product = Vec<f32>;
 
     const FORMULA: Formula = Formula::Map;
     const PRECISION: Precision = Precision::F32;
@@ -115,7 +115,7 @@ impl Task for MapTask<'_, f32> {
 }
 
 impl Task for MapTask<'_, f64> {
-    type Product = f64;
+    type Product = Vec<f64>;
 
     const FORMULA: Formula = Formula::Map;
     const PRECISION: Precision = Precision::F64;
@@ -128,6 +128,36 @@ impl Task for MapTask<'_, f64> {
                 let _ = (self.operation, self.elements);
                 None
             }
+        }
+    }
+}
+
+impl Task for BatchNormTask<'_, f32> {
+    type Product = Normalized<f32>;
+
+    const FORMULA: Formula = Formula::BatchNormTraining;
+    const PRECISION: Precision = Precision::F32;
+
+    fn offer(&self, backend: Backend) -> Option<Normalized<f32>> {
+        match backend {
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            Backend::Accelerate => accelerate::batch_norm_f32(self),
+            _ => None,
+        }
+    }
+}
+
+impl Task for BatchNormTask<'_, f64> {
+    type Product = Normalized<f64>;
+
+    const FORMULA: Formula = Formula::BatchNormTraining;
+    const PRECISION: Precision = Precision::F64;
+
+    fn offer(&self, backend: Backend) -> Option<Normalized<f64>> {
+        match backend {
+            #[cfg(all(feature = "accelerate", target_os = "macos"))]
+            Backend::Accelerate => accelerate::batch_norm_f64(self),
+            _ => None,
         }
     }
 }

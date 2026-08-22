@@ -6,8 +6,9 @@ use static_assertions::assert_impl_all;
 use super::elementary::MapOperation;
 use super::gemm;
 use super::layout::{Layout, Strides};
+use super::normalized::BatchNormTask;
 use super::storage::Storage;
-use super::tensorial::composed_windowed_patches;
+use super::tensorial::{composed_batch_norm, composed_windowed_patches};
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -788,6 +789,63 @@ impl<Element: Elementary> Elementary for Tensor<Element> {
 }
 
 impl<Element: Elementary> Tensorial for Tensor<Element> {
+    /// Returns the batch normalization through the payload seam: when
+    /// every operand is a contiguous dense buffer the whole group is
+    /// offered to the backend chain as one task, and the composed
+    /// bitwise reference computes when the chain declines or an
+    /// operand is a view or constant.
+    ///
+    /// # Panics
+    /// Panics if `self` is not rank 2 `[batch, features]`, the affine
+    /// operands do not hold `features` values, or `epsilon` holds
+    /// more than one value.
+    fn batch_normalized(&self, scale: &Self, shift: &Self, epsilon: &Self) -> (Self, Self, Self) {
+        let shape = self.logical_shape().clone();
+        let axes = shape.axes();
+        assert_eq!(
+            axes.len(),
+            2,
+            "batch_normalized input must be rank 2 [batch, features], got {shape}"
+        );
+        let (batch, features) = (axes[0], axes[1]);
+        assert_eq!(
+            scale.logical_shape().volume(),
+            features,
+            "batch_normalized scale must hold {features} features"
+        );
+        assert_eq!(
+            shift.logical_shape().volume(),
+            features,
+            "batch_normalized shift must hold {features} features"
+        );
+        assert_eq!(
+            epsilon.logical_shape().volume(),
+            1,
+            "batch_normalized epsilon must hold a single value"
+        );
+        if let (Some(input), Some(scale_slice), Some(shift_slice), Some(eps)) = (
+            self.as_slice(),
+            scale.as_slice(),
+            shift.as_slice(),
+            epsilon.as_slice(),
+        ) && let Some(normalized) = Element::batch_norm(&BatchNormTask::new(
+            input,
+            scale_slice,
+            shift_slice,
+            eps[0].clone(),
+            batch,
+            features,
+        )) {
+            let feature_shape = Shape::new([features]);
+            return (
+                Self::dense(shape, normalized.output),
+                Self::dense(feature_shape.clone(), normalized.mean),
+                Self::dense(feature_shape, normalized.variance),
+            );
+        }
+        composed_batch_norm(self, scale, shift, epsilon)
+    }
+
     /// Returns the matrix product of two rank-2 tensors.
     ///
     /// Dense operands, including strided views (a transposed operand,

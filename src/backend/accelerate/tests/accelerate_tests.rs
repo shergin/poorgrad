@@ -1,10 +1,13 @@
 use std::ops::{Add, Mul};
 
 use crate::{
-    Differentiable, Elementary, GemmTask, MapOperation, Shape, Tape, Tensor, Tensorial, init,
+    BatchNormTask, Differentiable, Elementary, GemmTask, MapOperation, Shape, Tape, Tensor,
+    Tensorial, init,
 };
 
-use super::{executed_f32, executed_f64, gemm_f32, map_f32, map_f64};
+use super::{
+    batch_norm_f32, batch_norm_f64, executed_f32, executed_f64, gemm_f32, map_f32, map_f64,
+};
 
 /// Computes the product of two row-major matrices in the logical
 /// path's accumulation order: the reference every case compares to,
@@ -314,4 +317,53 @@ fn training_runs_through_the_backend_end_to_end() {
         last_loss < 1.0,
         "training through the backend did not converge: {last_loss}"
     );
+}
+
+#[test]
+fn batch_norm_matches_the_hand_rolled_reference() {
+    let (batch, features) = (64, 64);
+    let input: Vec<f64> = (0..batch * features)
+        .map(|index| ((index * 7 % 23) as f64 - 11.0) / 4.0)
+        .collect();
+    let scale: Vec<f64> = (0..features).map(|j| 0.5 + (j as f64) / 100.0).collect();
+    let shift: Vec<f64> = (0..features).map(|j| (j as f64) / 50.0 - 0.5).collect();
+    let epsilon = 1.0e-5;
+    let task = BatchNormTask::new(&input, &scale, &shift, epsilon, batch, features);
+    let normalized = batch_norm_f64(&task).expect("the task clears the threshold");
+    for feature in 0..features {
+        let mut mean = 0.0;
+        for row in 0..batch {
+            mean += input[row * features + feature];
+        }
+        mean /= batch as f64;
+        let mut variance = 0.0;
+        for row in 0..batch {
+            let centered = input[row * features + feature] - mean;
+            variance += centered * centered;
+        }
+        variance /= batch as f64;
+        let close = |actual: f64, expected: f64| {
+            (actual - expected).abs() <= 1.0e-9 * (1.0 + expected.abs())
+        };
+        assert!(close(normalized.mean[feature], mean));
+        assert!(close(normalized.variance[feature], variance));
+        for row in 0..batch {
+            let expected = (input[row * features + feature] - mean) / (variance + epsilon).sqrt()
+                * scale[feature]
+                + shift[feature];
+            assert!(close(normalized.output[row * features + feature], expected));
+        }
+    }
+}
+
+#[test]
+fn batch_norm_declines_below_the_threshold() {
+    let input32 = vec![0.5_f32; 4];
+    let ones32 = vec![1.0_f32; 2];
+    let task32 = BatchNormTask::new(&input32, &ones32, &ones32, 1.0e-5_f32, 2, 2);
+    assert!(batch_norm_f32(&task32).is_none());
+    let input64 = vec![0.5_f64; 4];
+    let ones64 = vec![1.0_f64; 2];
+    let task64 = BatchNormTask::new(&input64, &ones64, &ones64, 1.0e-5_f64, 2, 2);
+    assert!(batch_norm_f64(&task64).is_none());
 }
