@@ -1,17 +1,19 @@
-//! Generates text with the released TinyLlama (1.1B) weights — the
-//! whole Llama architecture a module tree recorded on the tape from
-//! the existing op surface.
+//! Generates text with released Llama-family weights — the whole
+//! architecture a module tree recorded on the tape from the existing
+//! op surface.
 //!
 //! The model lives in `model.rs` as ordinary [`Module`]
-//! implementations: twenty-two pre-norm blocks (structs of bias-free
-//! projections and `RmsNorm`s around a grouped-query attention
-//! module) stacked in a `Sequential`, with rotary position embeddings
-//! as precomputed cosine and sine leaves and the SwiGLU MLP spelling
-//! SiLU from the op surface — no new opcodes. The tree's `visit`
-//! paths mirror the checkpoint's own tensor names, so loading is one
-//! `named_restore` over the safetensors name map. The embedded token
-//! window arrives as a per-run input (the vocabulary lookup is
-//! loop-land data preparation, a row copy), and the untied
+//! implementations: pre-norm blocks (structs of bias-free projections
+//! and `RmsNorm`s around a grouped-query attention module) stacked in
+//! a `Sequential`, with rotary position embeddings as precomputed
+//! cosine and sine leaves and the SwiGLU MLP spelling SiLU from the
+//! op surface — no new opcodes. The architecture is one and a model
+//! is data: a `Family` descriptor picks TinyLlama 1.1B (the default)
+//! or Llama 2 7B, and the same structs record either. The tree's
+//! `visit` paths mirror the checkpoints' own tensor names, so loading
+//! is one `named_restore` over tensors streamed shard by shard. The
+//! embedded token window arrives as a per-run input (the vocabulary
+//! lookup is loop-land data preparation, a row copy), and the untied
 //! language-model head records after the prediction row's one-hot
 //! extraction. One forward-only plan at a fixed context serves every
 //! generation step, so generating never regrows the tape.
@@ -20,12 +22,14 @@
 //! topos's own interpreter over f32, and `bf16` records the identical
 //! module tree over `Tensor<Bf16>` — the genericity the module tier
 //! promises, with the matmuls accumulating in f32 by the payload's
-//! contract.
+//! contract. At 7B, `bf16` is also the practical engine: it keeps the
+//! resident parameters near 13 GB where f32 wants 27.
 //!
-//! The checkpoint (4.1 GB) and tokenizer download and cache on first
-//! run. Run with:
-//! `cargo run --release --features accelerate --example tinyllama -- "prompt" 40`
+//! The checkpoint and tokenizer download and cache on first run. Run
+//! with:
+//! `cargo run --release --features accelerate --example llama -- "prompt" 40 bf16 llama2`
 
+mod family;
 mod model;
 mod tokenizer;
 mod weights;
@@ -35,7 +39,8 @@ use std::time::Instant;
 
 use topos::{Bf16, Elementary, Module, Plan, Request, Symbol, Tape, Tensor};
 
-use model::{CONTEXT_LEN, EMBED_DIM, TinyLlama, load};
+use family::{Family, LLAMA2_7B, TINYLLAMA};
+use model::{CONTEXT_LEN, Llama, load};
 use tokenizer::Tokenizer;
 use weights::{Weights, cached_text};
 
@@ -57,9 +62,13 @@ struct Sampler {
 /// untied head over the extracted row.
 fn record<E: Elementary + From<f32> + 'static>(
     tape: &Tape<Tensor<E>>,
-    model: &TinyLlama<E>,
+    family: Family,
+    model: &Llama<E>,
 ) -> Sampler {
-    let embedded = tape.input(Tensor::filled([CONTEXT_LEN, EMBED_DIM], E::from(0.0)));
+    let embedded = tape.input(Tensor::filled(
+        [CONTEXT_LEN, family.embed_dim],
+        E::from(0.0),
+    ));
     let extraction = tape.input(Tensor::selection(vec![0], CONTEXT_LEN, E::from(1.0)));
     let last = model.express(tape, embedded).gather(extraction);
     let logits = model.predict(tape, last);
@@ -100,27 +109,27 @@ fn draw(logits: &[f32], temperature: f64, top: usize, state: &mut u64) -> usize 
     ranked[0].0
 }
 
-/// Loads the checkpoint into a module tree of element type `E`,
-/// compiles the sampling plan, and generates `count` tokens after
-/// `prompt`, reporting timings as `label`.
-fn run<E>(prompt: &str, count: usize, label: &str)
+/// Loads `family`'s checkpoint into a module tree of element type
+/// `E`, compiles the sampling plan, and generates `count` tokens
+/// after `prompt`, reporting timings as `label`.
+fn run<E>(family: Family, prompt: &str, count: usize, label: &str)
 where
     E: Elementary + From<f32> + Copy + 'static,
     f32: From<E>,
 {
     let loading = Instant::now();
-    let tokenizer = Tokenizer::new(&cached_text("tokenizer.json"));
-    let weights = Weights::load();
+    let tokenizer = Tokenizer::new(&cached_text(&family, "tokenizer.json"));
+    let weights = Weights::open(&family);
 
     // The module tree and the sampling expression record on one tape;
     // sealing yields the immutable spec, and the named restore builds
     // the parameter state that carries the checkpoint, converting
     // elements at the precision boundary.
     let tape = Tape::new();
-    let tiny_llama = TinyLlama::<E>::new(&tape);
-    let sampler = record(&tape, &tiny_llama);
+    let llama = Llama::<E>::new(&tape, family);
+    let sampler = record(&tape, family, &llama);
     let network = tape.into_network();
-    let parameters = load(&network.parameters(), &tiny_llama, &weights);
+    let parameters = load(&network.parameters(), &llama, &weights);
     drop(weights);
     println!(
         "loaded the checkpoint in {:.1}s",
@@ -150,12 +159,13 @@ where
     // The vocabulary lookup is data preparation: the window embeds by
     // row copies from the table; position enters inside the plan
     // through the rotary leaves.
-    let table = parameters.of(tiny_llama.embeddings()).to_vec();
+    let embed_dim = family.embed_dim;
+    let table = parameters.of(llama.embeddings()).to_vec();
     let embedded = |window: &[usize]| {
-        let mut stream = vec![E::from(0.0); CONTEXT_LEN * EMBED_DIM];
+        let mut stream = vec![E::from(0.0); CONTEXT_LEN * embed_dim];
         for (row, &token) in window.iter().enumerate() {
-            stream[row * EMBED_DIM..(row + 1) * EMBED_DIM]
-                .copy_from_slice(&table[token * EMBED_DIM..(token + 1) * EMBED_DIM]);
+            stream[row * embed_dim..(row + 1) * embed_dim]
+                .copy_from_slice(&table[token * embed_dim..(token + 1) * embed_dim]);
         }
         stream
     };
@@ -171,7 +181,7 @@ where
             [
                 (
                     sampler.stream,
-                    Tensor::new([CONTEXT_LEN, EMBED_DIM], stream),
+                    Tensor::new([CONTEXT_LEN, embed_dim], stream),
                 ),
                 (sampler.extraction, extraction),
             ],
@@ -210,10 +220,18 @@ fn main() {
     let engine = std::env::args()
         .nth(3)
         .unwrap_or_else(|| "tape".to_string());
+    let member = std::env::args()
+        .nth(4)
+        .unwrap_or_else(|| "tinyllama".to_string());
 
+    let family = match member.as_str() {
+        "tinyllama" => TINYLLAMA,
+        "llama2" => LLAMA2_7B,
+        other => panic!("unknown model `{other}`; use `tinyllama` or `llama2`"),
+    };
     match engine.as_str() {
-        "tape" => run::<f32>(&prompt, count, "tape"),
-        "bf16" => run::<Bf16>(&prompt, count, "bf16"),
+        "tape" => run::<f32>(family, &prompt, count, "tape"),
+        "bf16" => run::<Bf16>(family, &prompt, count, "bf16"),
         other => panic!("unknown engine `{other}`; use `tape` or `bf16`"),
     }
 }

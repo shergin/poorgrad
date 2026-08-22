@@ -1,23 +1,26 @@
-//! TinyLlama (1.1B) as a module tree: the Llama architecture over the
-//! released checkpoint's layout, expressed in topos's composition tier.
+//! The Llama architecture as a module tree, over the released
+//! checkpoints' layout, expressed in topos's composition tier.
 //!
 //! Every struct here is an ordinary [`Module`] implementation — the
 //! blocks are structs of bias-free projections and [`RmsNorm`]s around
-//! a grouped-query attention module, the stack of twenty-two is a
-//! [`Sequential`], and every Llama ingredient records from the public
-//! op surface: rotary position embeddings are precomputed cosine and
-//! sine leaves rotated by `narrow`/`neg`/`concat`, and the SwiGLU MLP
-//! spells SiLU as `x / (1 + exp(-x))`. The tree's `visit` paths mirror
-//! the checkpoint's own tensor names (`model.layers.{i}.self_attn.q_proj`,
-//! `lm_head`, ...), so loading the pretrained weights is one
+//! a grouped-query attention module, the stack is a [`Sequential`],
+//! and every Llama ingredient records from the public op surface:
+//! rotary position embeddings are precomputed cosine and sine leaves
+//! rotated by `narrow`/`neg`/`concat`, and the SwiGLU MLP spells SiLU
+//! as `x / (1 + exp(-x))`. The tree's `visit` paths mirror the
+//! checkpoints' own tensor names (`model.layers.{i}.self_attn.q_proj`,
+//! `lm_head`, ...), so loading pretrained weights is one
 //! [`named_restore`] over the paths the model announces itself; the
 //! adapter shrinks to the leaf spellings and the projection transpose
-//! the module tier and the checkpoint disagree on.
+//! the module tier and the checkpoints disagree on.
 //!
-//! The tree is generic over the element type: the same structs record
-//! the f32 model and the `Bf16` one, which is the genericity the
-//! module design promises.
+//! The architecture is one and a model is data: a [`Family`] carries
+//! the dimensions, so the same structs record TinyLlama 1.1B and
+//! Llama 2 7B. The tree is also generic over the element type: the
+//! same structs record the f32 model and the `Bf16` one, which is the
+//! genericity the module design promises.
 
+use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use topos::checkpoint::named_restore;
@@ -26,36 +29,16 @@ use topos::{
     Tape, Tensor, Value, Visitor, concat, named_parameters,
 };
 
+use crate::family::Family;
 use crate::weights::Weights;
 
 /// How many tokens of context the recorded graph attends over.
 pub const CONTEXT_LEN: usize = 256;
 
-/// How many dimensions the residual stream has.
-pub const EMBED_DIM: usize = 2048;
-
-/// How many query heads split the stream.
-const HEAD_COUNT: usize = 32;
-
-/// How many key/value heads the query heads share, in groups.
-const KV_HEAD_COUNT: usize = 4;
-
-/// How many dimensions each head reads and writes.
-const HEAD_DIM: usize = EMBED_DIM / HEAD_COUNT;
-
-/// How many query heads read each key/value head.
-const GROUP_SIZE: usize = HEAD_COUNT / KV_HEAD_COUNT;
-
-/// How many dimensions the MLP's hidden layer has.
-const HIDDEN_DIM: usize = 5632;
-
-/// How many transformer blocks the model stacks.
-const LAYER_COUNT: usize = 22;
-
-/// How many tokens the vocabulary holds.
+/// How many tokens the vocabulary holds, for every family member.
 pub const VOCABULARY_LEN: usize = 32000;
 
-/// The rotary base the checkpoint was trained with.
+/// The rotary base the checkpoints were trained with.
 const ROPE_BASE: f64 = 10000.0;
 
 /// A bias-free linear map: one `[inputs, outputs]` parameter recorded
@@ -94,27 +77,28 @@ impl<E: Elementary> Module<Tensor<E>> for Projection<E> {
 }
 
 /// Rotary position embeddings (Su et al., 2021) in the converted
-/// checkpoint's rotate-half convention: the cosine and sine tables are
-/// `[context, head]` leaves shared by every layer, precomputed because
-/// they depend only on position and column — the record-time analog of
-/// GPT-2's causal mask.
+/// checkpoints' rotate-half convention: the cosine and sine tables
+/// are `[context, head]` leaves shared by every layer, precomputed
+/// because they depend only on position and column — the record-time
+/// analog of GPT-2's causal mask.
 #[derive(Clone, Copy)]
 struct Rope {
     cos: Symbol,
     sin: Symbol,
+    head_dim: usize,
 }
 
 impl Rope {
-    fn new<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> Self {
-        let half = HEAD_DIM / 2;
-        let mut cosines = Vec::with_capacity(CONTEXT_LEN * HEAD_DIM);
-        let mut sines = Vec::with_capacity(CONTEXT_LEN * HEAD_DIM);
+    fn new<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>, head_dim: usize) -> Self {
+        let half = head_dim / 2;
+        let mut cosines = Vec::with_capacity(CONTEXT_LEN * head_dim);
+        let mut sines = Vec::with_capacity(CONTEXT_LEN * head_dim);
         for position in 0..CONTEXT_LEN {
-            for column in 0..HEAD_DIM {
+            for column in 0..head_dim {
                 // Column `j` and column `j + half` share the frequency
                 // `base^(-2 (j mod half) / head)`, the duplicated-halves
                 // layout the rotate-half convention pairs with.
-                let exponent = -2.0 * (column % half) as f64 / HEAD_DIM as f64;
+                let exponent = -2.0 * (column % half) as f64 / head_dim as f64;
                 let angle = position as f64 * ROPE_BASE.powf(exponent);
                 cosines.push(E::from(angle.cos() as f32));
                 sines.push(E::from(angle.sin() as f32));
@@ -122,11 +106,12 @@ impl Rope {
         }
         Self {
             cos: tape
-                .leaf(Tensor::new([CONTEXT_LEN, HEAD_DIM], cosines))
+                .leaf(Tensor::new([CONTEXT_LEN, head_dim], cosines))
                 .symbol(),
             sin: tape
-                .leaf(Tensor::new([CONTEXT_LEN, HEAD_DIM], sines))
+                .leaf(Tensor::new([CONTEXT_LEN, head_dim], sines))
                 .symbol(),
+            head_dim,
         }
     }
 
@@ -138,7 +123,7 @@ impl Rope {
         tape: &'tape Tape<Tensor<E>>,
         value: Value<'tape, Tensor<E>>,
     ) -> Value<'tape, Tensor<E>> {
-        let half = HEAD_DIM / 2;
+        let half = self.head_dim / 2;
         let cos = tape.resolve(self.cos);
         let sin = tape.resolve(self.sin);
         let flipped = concat(&[-value.narrow(1, half, half), value.narrow(1, 0, half)], 1);
@@ -146,10 +131,12 @@ impl Rope {
     }
 }
 
-/// Grouped-query causal self-attention: thirty-two query heads read
-/// four shared key/value heads, every head a rank-2 `narrow` of the
-/// separate projections, rotated by [`Rope`] before the scores.
+/// Grouped-query causal self-attention: the query heads read shared
+/// key/value heads, every head a rank-2 `narrow` of the separate
+/// projections, rotated by [`Rope`] before the scores. Plain
+/// multi-head attention is the one-head-per-group special case.
 struct Attention<E> {
+    family: Family,
     query: Projection<E>,
     key: Projection<E>,
     value: Projection<E>,
@@ -162,12 +149,20 @@ struct Attention<E> {
 impl<E: Elementary + From<f32>> Attention<E> {
     /// Allocates the projections with placeholder payloads; `rope`,
     /// `mask`, and `scale` are leaves shared by every block.
-    fn new(tape: &Tape<Tensor<E>>, rope: Rope, mask: Symbol, scale: Symbol) -> Self {
+    fn new(
+        tape: &Tape<Tensor<E>>,
+        family: Family,
+        rope: Rope,
+        mask: Symbol,
+        scale: Symbol,
+    ) -> Self {
+        let key_value_dim = family.key_value_head_count * family.head_dim();
         Self {
-            query: Projection::new(tape, EMBED_DIM, EMBED_DIM),
-            key: Projection::new(tape, EMBED_DIM, KV_HEAD_COUNT * HEAD_DIM),
-            value: Projection::new(tape, EMBED_DIM, KV_HEAD_COUNT * HEAD_DIM),
-            output: Projection::new(tape, EMBED_DIM, EMBED_DIM),
+            family,
+            query: Projection::new(tape, family.embed_dim, family.embed_dim),
+            key: Projection::new(tape, family.embed_dim, key_value_dim),
+            value: Projection::new(tape, family.embed_dim, key_value_dim),
+            output: Projection::new(tape, family.embed_dim, family.embed_dim),
             rope,
             mask,
             scale,
@@ -181,6 +176,7 @@ impl<E: Elementary> Module<Tensor<E>> for Attention<E> {
         tape: &'tape Tape<Tensor<E>>,
         input: Value<'tape, Tensor<E>>,
     ) -> Value<'tape, Tensor<E>> {
+        let head_dim = self.family.head_dim();
         let mask = tape.resolve(self.mask);
         let scale = tape.resolve(self.scale);
         let queries = self.query.express(tape, input);
@@ -189,23 +185,23 @@ impl<E: Elementary> Module<Tensor<E>> for Attention<E> {
 
         // Each key/value head rotates and transposes once and serves
         // its whole group of query heads.
-        let keyed: Vec<Value<'tape, Tensor<E>>> = (0..KV_HEAD_COUNT)
+        let keyed: Vec<Value<'tape, Tensor<E>>> = (0..self.family.key_value_head_count)
             .map(|group| {
                 self.rope
-                    .rotate(tape, keys.narrow(1, group * HEAD_DIM, HEAD_DIM))
+                    .rotate(tape, keys.narrow(1, group * head_dim, head_dim))
                     .transpose()
             })
             .collect();
 
-        let heads: Vec<Value<'tape, Tensor<E>>> = (0..HEAD_COUNT)
+        let heads: Vec<Value<'tape, Tensor<E>>> = (0..self.family.head_count)
             .map(|head| {
-                let group = head / GROUP_SIZE;
+                let group = head / self.family.group_size();
                 let query = self
                     .rope
-                    .rotate(tape, queries.narrow(1, head * HEAD_DIM, HEAD_DIM));
+                    .rotate(tape, queries.narrow(1, head * head_dim, head_dim));
                 let scores = query.matmul(keyed[group]);
                 let weights = (scores * scale.broadcast_like(scores) + mask).softmax(1);
-                weights.matmul(values.narrow(1, group * HEAD_DIM, HEAD_DIM))
+                weights.matmul(values.narrow(1, group * head_dim, head_dim))
             })
             .collect();
         self.output.express(tape, concat(&heads, 1))
@@ -239,11 +235,11 @@ struct FeedForward<E> {
 impl<E: Elementary + From<f32>> FeedForward<E> {
     /// Allocates the projections with placeholder payloads; `one` is a
     /// scalar leaf shared by every block.
-    fn new(tape: &Tape<Tensor<E>>, one: Symbol) -> Self {
+    fn new(tape: &Tape<Tensor<E>>, family: Family, one: Symbol) -> Self {
         Self {
-            gate: Projection::new(tape, EMBED_DIM, HIDDEN_DIM),
-            up: Projection::new(tape, EMBED_DIM, HIDDEN_DIM),
-            down: Projection::new(tape, HIDDEN_DIM, EMBED_DIM),
+            gate: Projection::new(tape, family.embed_dim, family.hidden_dim),
+            up: Projection::new(tape, family.embed_dim, family.hidden_dim),
+            down: Projection::new(tape, family.hidden_dim, family.embed_dim),
             one,
         }
     }
@@ -287,12 +283,19 @@ struct Block<E> {
 }
 
 impl<E: Elementary + From<f32>> Block<E> {
-    fn new(tape: &Tape<Tensor<E>>, rope: Rope, mask: Symbol, scale: Symbol, one: Symbol) -> Self {
+    fn new(
+        tape: &Tape<Tensor<E>>,
+        family: Family,
+        rope: Rope,
+        mask: Symbol,
+        scale: Symbol,
+        one: Symbol,
+    ) -> Self {
         Self {
-            attention_norm: rms_norm(tape),
-            attention: Attention::new(tape, rope, mask, scale),
-            hidden_norm: rms_norm(tape),
-            feed_forward: FeedForward::new(tape, one),
+            attention_norm: rms_norm(tape, family.embed_dim),
+            attention: Attention::new(tape, family, rope, mask, scale),
+            hidden_norm: rms_norm(tape, family.embed_dim),
+            feed_forward: FeedForward::new(tape, family, one),
         }
     }
 }
@@ -330,11 +333,14 @@ impl<E: Elementary> Module<Tensor<E>> for Block<E> {
 }
 
 /// Builds an RMS norm with the conventional placeholder payload and
-/// the epsilon the checkpoint was trained with.
-fn rms_norm<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> RmsNorm<Tensor<E>> {
+/// the epsilon the checkpoints were trained with.
+fn rms_norm<E: Elementary + From<f32>>(
+    tape: &Tape<Tensor<E>>,
+    embed_dim: usize,
+) -> RmsNorm<Tensor<E>> {
     RmsNorm::new(
         tape,
-        Tensor::filled([EMBED_DIM], E::from(1.0)),
+        Tensor::filled([embed_dim], E::from(1.0)),
         Tensor::filled([], E::from(1e-5)),
     )
 }
@@ -342,14 +348,14 @@ fn rms_norm<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> RmsNorm<Tensor
 /// The whole model: the token table, the block stack, the final norm,
 /// and the untied language-model head — Llama has no position table;
 /// position enters through [`Rope`] inside every attention.
-pub struct TinyLlama<E> {
+pub struct Llama<E> {
     embeddings: Symbol,
     blocks: Sequential<Tensor<E>>,
     final_norm: RmsNorm<Tensor<E>>,
     head: Projection<E>,
 }
 
-impl<E: Elementary + From<f32> + 'static> TinyLlama<E> {
+impl<E: Elementary + From<f32> + 'static> Llama<E> {
     /// Allocates the model's parameters with placeholder payloads, in
     /// visit order.
     ///
@@ -357,16 +363,19 @@ impl<E: Elementary + From<f32> + 'static> TinyLlama<E> {
     /// arguments are the parameters in recording order, so recording
     /// them in visit order makes the positional snapshot exactly the
     /// emitted argument list.
-    pub fn new(tape: &Tape<Tensor<E>>) -> Self {
+    pub fn new(tape: &Tape<Tensor<E>>, family: Family) -> Self {
         let embeddings = tape
-            .parameter(Tensor::filled([VOCABULARY_LEN, EMBED_DIM], E::from(0.0)))
+            .parameter(Tensor::filled(
+                [VOCABULARY_LEN, family.embed_dim],
+                E::from(0.0),
+            ))
             .symbol();
 
         // The rotary tables, the causal mask, the head scale, and the
-        // SiLU's unit are leaves shared by all twenty-two blocks;
-        // leaves embed in the plan as constants, so none of them join
-        // the argument list.
-        let rope = Rope::new(tape);
+        // SiLU's unit are leaves shared by every block; leaves embed
+        // in the plan as constants, so none of them join the argument
+        // list.
+        let rope = Rope::new(tape, family.head_dim());
         let mask_elements: Vec<E> = (0..CONTEXT_LEN * CONTEXT_LEN)
             .map(|at| {
                 if at % CONTEXT_LEN <= at / CONTEXT_LEN {
@@ -380,19 +389,22 @@ impl<E: Elementary + From<f32> + 'static> TinyLlama<E> {
             .leaf(Tensor::new([CONTEXT_LEN, CONTEXT_LEN], mask_elements))
             .symbol();
         let scale = tape
-            .leaf(Tensor::filled([], E::from(1.0 / (HEAD_DIM as f32).sqrt())))
+            .leaf(Tensor::filled(
+                [],
+                E::from(1.0 / (family.head_dim() as f32).sqrt()),
+            ))
             .symbol();
         let one = tape.leaf(Tensor::filled([], E::from(1.0))).symbol();
 
         let mut blocks = Sequential::new();
-        for _ in 0..LAYER_COUNT {
-            blocks = blocks.then(Block::new(tape, rope, mask, scale, one));
+        for _ in 0..family.layer_count {
+            blocks = blocks.then(Block::new(tape, family, rope, mask, scale, one));
         }
         Self {
             embeddings,
             blocks,
-            final_norm: rms_norm(tape),
-            head: Projection::new(tape, EMBED_DIM, VOCABULARY_LEN),
+            final_norm: rms_norm(tape, family.embed_dim),
+            head: Projection::new(tape, family.embed_dim, VOCABULARY_LEN),
         }
     }
 
@@ -413,7 +425,7 @@ impl<E: Elementary + From<f32> + 'static> TinyLlama<E> {
     }
 }
 
-impl<E: Elementary> Module<Tensor<E>> for TinyLlama<E> {
+impl<E: Elementary> Module<Tensor<E>> for Llama<E> {
     /// Records the model over the embedded `[context, embed]` window:
     /// the block stack, then the final norm.
     fn express<'tape>(
@@ -443,9 +455,9 @@ impl<E: Elementary> Module<Tensor<E>> for TinyLlama<E> {
     }
 }
 
-/// Renders `path` as the checkpoint's tensor name. The tree mirrors
+/// Renders `path` as the checkpoints' tensor name. The tree mirrors
 /// the released layout, so only the leaf spellings differ: the module
-/// tier's `weights` and `scale` are the checkpoint's `weight`.
+/// tier's `weights` and `scale` are the checkpoints' `weight`.
 fn foreign_name(path: &Path) -> String {
     let segments = path.segments();
     let mut name = String::new();
@@ -484,7 +496,14 @@ fn transposed(tensor: &Tensor<f32>) -> Tensor<f32> {
 /// `model`'s tree restored by name, converted into the tree's element
 /// type at the precision boundary.
 ///
-/// The checkpoint stores every `nn.Linear` weight as
+/// The iteration is the checkpoint's, not the tree's: [`Weights`]
+/// streams tensors shard by shard so only one shard's bytes are ever
+/// resident — at 7B the pull-style alternative would hold the whole
+/// widened checkpoint next to the restored parameters. Tensors the
+/// tree never asked for (the older conversions ship per-layer
+/// `rotary_emb.inv_freq` tables) fall out of the map and are skipped.
+///
+/// The checkpoints store every `nn.Linear` weight as
 /// `[outputs, inputs]`; topos's projections multiply as
 /// `[inputs, outputs]`, so projection weights transpose once at this
 /// boundary. The embedding table is a lookup, not a matmul, and stays
@@ -492,21 +511,24 @@ fn transposed(tensor: &Tensor<f32>) -> Tensor<f32> {
 /// [`named_restore`]'s shape validation rejects it.
 pub fn load<E: Elementary + From<f32>>(
     parameters: &Parameters<Tensor<E>>,
-    model: &TinyLlama<E>,
+    model: &Llama<E>,
     weights: &Weights,
 ) -> Parameters<Tensor<E>> {
-    let entries: Vec<(Path, Tensor<E>)> = named_parameters(model)
+    let mut wanted: HashMap<String, Path> = named_parameters(model)
         .into_iter()
-        .map(|(path, _)| {
-            let name = foreign_name(&path);
-            let released = weights.tensor(&name);
-            let payload = if name.ends_with("proj.weight") || name == "lm_head.weight" {
-                transposed(&released)
-            } else {
-                released
-            };
-            (path, payload.convert::<E>())
-        })
+        .map(|(path, _)| (foreign_name(&path), path))
         .collect();
+    let mut entries: Vec<(Path, Tensor<E>)> = Vec::with_capacity(wanted.len());
+    weights.for_each(|name, released| {
+        let Some(path) = wanted.remove(name) else {
+            return;
+        };
+        let payload = if name.ends_with("proj.weight") || name == "lm_head.weight" {
+            transposed(&released)
+        } else {
+            released
+        };
+        entries.push((path, payload.convert::<E>()));
+    });
     named_restore(parameters, model, entries)
 }

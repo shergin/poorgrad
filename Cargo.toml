@@ -167,8 +167,8 @@ name = "gpt2"
 path = "examples/gpt2/main.rs"
 
 [[example]]
-name = "tinyllama"
-path = "examples/tinyllama/main.rs"
+name = "llama"
+path = "examples/llama/main.rs"
 
 [[bench]]
 name = "record"
