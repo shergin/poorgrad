@@ -362,7 +362,7 @@ fn probe_case() -> Case {
         .symbol();
     let network = tape.into_network();
     let plan = network.compile(Request::roots([scores]));
-    assert_eq!(plan.home().groups(), 1, "the conv chain fuses");
+    assert_eq!(plan.home().groups(), 2, "the conv chain and the pool fuse");
     let run = plan.forward(&network.parameters(), []);
     Case {
         name: "probe",

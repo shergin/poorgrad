@@ -1,7 +1,7 @@
 use smallvec::SmallVec;
 
-use crate::Differentiable;
 use crate::function::Function;
+use crate::{Differentiable, Tensorial};
 
 use super::candidates::Candidate;
 use super::pattern::Pattern;
@@ -10,8 +10,9 @@ use super::view::View;
 /// A matched max-pool window group: the recorded left fold of
 /// `maximum` over the window lanes, rooted at the facade's squeeze
 /// reshape. Emission raises the group to `stablehlo.reduce_window`
-/// over the rank-4 source; forward runs execute the recorded fold
-/// unchanged — the pattern is raise-only.
+/// over the rank-4 source; a fusing forward run replaces it with
+/// one direct window walk in the same lane order, bit-identical to
+/// the recorded fold.
 ///
 /// Matching is structural and provenance-blind: any recording of the
 /// canonical `max_pool` composition matches — two square unfolds, the
@@ -26,6 +27,21 @@ pub(crate) struct ReduceWindow {
     pub(crate) size: usize,
     /// The window step along both spatial axes.
     pub(crate) stride: usize,
+}
+
+impl ReduceWindow {
+    /// Returns the slots the fused call reads past the root's operand
+    /// links; liveness must keep them alive until the call.
+    pub(crate) fn reads(&self) -> [usize; 1] {
+        [self.source]
+    }
+
+    /// Computes the fused call over the already-evaluated `values`:
+    /// one direct window walk from the source, the lane views between
+    /// them never materialized.
+    pub(crate) fn apply<Data: Tensorial>(&self, values: &[Data]) -> Data {
+        values[self.source].max_pooled(self.size, self.stride)
+    }
 }
 
 /// Returns the lane start of `index` if it is a `narrow(4, start, 1)`

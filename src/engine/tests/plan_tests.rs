@@ -373,7 +373,7 @@ fn forward_only_plans_fuse_and_agree() {
     let parameters = network.parameters();
 
     let plan = network.compile(Request::roots([output]));
-    assert!(plan.describe().contains("fused 1 groups"));
+    assert!(plan.describe().contains("fused 2 groups"));
 
     let planned = plan.forward(&parameters, std::iter::empty());
     let interpreted = network.forward(&parameters, []);
@@ -418,28 +418,28 @@ fn describe_snapshots_the_fused_forward_plan() {
     13  Add            [32, 2]          freed after 14
     14  Reshape        [2, 4, 4, 2]     freed after 15
     15  Permute        [2, 2, 4, 4]     freed after 16
-    16  Relu           [2, 2, 4, 4]     freed after 17
-    17  Unfold         [2, 2, 2, 2, 4]  freed after 18
-    18  Unfold         [2, 2, 2, 2, 2, 2] freed after 19
-    19  Permute        [2, 2, 2, 2, 2, 2] freed after 20
-    20  Reshape        [2, 2, 2, 2, 4]  freed after 26
-    21  Narrow         [2, 2, 2, 2, 1]  freed after 23
-    22  Narrow         [2, 2, 2, 2, 1]  freed after 23
-    23  Maximum        [2, 2, 2, 2, 1]  freed after 25
-    24  Narrow         [2, 2, 2, 2, 1]  freed after 25
-    25  Maximum        [2, 2, 2, 2, 1]  freed after 27
-    26  Narrow         [2, 2, 2, 2, 1]  freed after 27
-    27  Maximum        [2, 2, 2, 2, 1]  freed after 28
+    16  Relu           [2, 2, 4, 4]     freed after 28
+    17  Unfold         [2, 2, 2, 2, 4]  fused
+    18  Unfold         [2, 2, 2, 2, 2, 2] fused
+    19  Permute        [2, 2, 2, 2, 2, 2] fused
+    20  Reshape        [2, 2, 2, 2, 4]  fused
+    21  Narrow         [2, 2, 2, 2, 1]  fused
+    22  Narrow         [2, 2, 2, 2, 1]  fused
+    23  Maximum        [2, 2, 2, 2, 1]  fused
+    24  Narrow         [2, 2, 2, 2, 1]  fused
+    25  Maximum        [2, 2, 2, 2, 1]  fused
+    26  Narrow         [2, 2, 2, 2, 1]  fused
+    27  Maximum        [2, 2, 2, 2, 1]  fused
     28  Reshape        [2, 2, 2, 2]     kept
 plan: forward; 29 of 29 nodes evaluated, 1 readable
-fused 1 groups, 6 nodes replaced
-live volume: peak 192 elements at node 13, retain-all 856
+fused 2 groups, 17 nodes replaced
+live volume: peak 192 elements at node 13, retain-all 488
 ";
     assert_eq!(forward.describe(), expected);
 
     // The posture gate: the same tape compiled engine-backward stores
-    // no window-GEMM group.
-    assert_eq!(forward.home().groups(), 1);
+    // no fused group at all.
+    assert_eq!(forward.home().groups(), 2);
     let backward = network.compile(Request::roots([output]).backward());
     assert_eq!(backward.home().groups(), 0);
 }
@@ -673,6 +673,47 @@ fn fused_batch_norm_grades_against_the_oracle() {
                 (fast_value - exact_value).abs() <= 1.0e-9 * (1.0 + exact_value.abs()),
                 "{fast_value} differs from {exact_value} beyond the envelope"
             );
+        }
+    }
+}
+
+#[test]
+fn fused_max_pool_matches_the_interpreter_bitwise() {
+    use crate::max_pool;
+
+    // Signed values with repeated ties, so the fold order is load
+    // bearing; overlapping windows in the second case.
+    for (size, stride) in [(2, 2), (3, 1)] {
+        let tape = Tape::new();
+        let input = tape.leaf(Tensor::new(
+            [2, 3, 6, 6],
+            (0..216)
+                .map(|index| ((index * 5 % 13) as f64 - 6.0) / 4.0)
+                .collect::<Vec<_>>(),
+        ));
+        let output = max_pool(input, size, stride).symbol();
+        let network = tape.into_network();
+        let parameters = network.parameters();
+        let interpreted = network.forward(&parameters, []);
+        // The direct walk reduces in the recorded lane order, so the
+        // fused plan is bit-identical under either posture.
+        for numerics in [Numerics::Fast, Numerics::Exact] {
+            let plan = network.compile(Request::roots([output]).numerics(numerics));
+            assert!(plan.describe().contains("fused 1 groups"));
+            let planned = plan.forward(&parameters, std::iter::empty());
+            let planned_bits: Vec<u64> = planned
+                .of(output)
+                .to_vec()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect();
+            let interpreted_bits: Vec<u64> = interpreted
+                .of(output)
+                .to_vec()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect();
+            assert_eq!(planned_bits, interpreted_bits);
         }
     }
 }

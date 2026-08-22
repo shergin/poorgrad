@@ -37,13 +37,17 @@ impl Manifest for Fused {
                 fidelity: Fidelity::BitIdentical,
                 precisions: Precision::ALL,
             },
-            // The pool kernel waits on a profile (`max` is
-            // associative, so it could meet even bit-identity
-            // fidelity); the inference-mode normalization stays
-            // raise-only until a consumer earns it.
-            Formula::Gemm | Formula::Map | Formula::ReduceWindow | Formula::BatchNormInference => {
-                Coverage::Absent
-            }
+            // `max_pooled` folds each window with `maximum` in the
+            // recorded lane order — a direct walk that materializes
+            // no lane views — so its bits match the composed fold in
+            // every build, under either posture.
+            Formula::ReduceWindow => Coverage::Serves {
+                fidelity: Fidelity::BitIdentical,
+                precisions: Precision::ALL,
+            },
+            // The inference-mode normalization stays raise-only
+            // until a consumer earns it.
+            Formula::Gemm | Formula::Map | Formula::BatchNormInference => Coverage::Absent,
         }
     }
 

@@ -10,7 +10,9 @@ use crate::backend::{Backend, Formula, NumericsScope, Precision};
 use crate::function::Function;
 use crate::graph::{Network, Operands, Origin, Parameters, SlotStore, Structure, Symbol};
 
-use super::pattern::{BatchNormalization, Candidates, Catalog, Pattern, View, WindowProduct};
+use super::pattern::{
+    BatchNormalization, Candidates, Catalog, Pattern, ReduceWindow, View, WindowProduct,
+};
 use super::{Posture, Request, Run};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -22,6 +24,8 @@ assert_impl_all!(Plan<f64>: Send, Sync);
 enum Fusion<'plan> {
     /// One windowed product from the source and kernel.
     Window(&'plan WindowProduct),
+    /// One direct max-pool window walk from the source.
+    Reduce(&'plan ReduceWindow),
     /// One training-mode batch normalization, its statistics written
     /// back into their named-result slots.
     BatchNorm(&'plan BatchNormalization),
@@ -33,6 +37,7 @@ impl Fusion<'_> {
     fn reads(&self) -> SmallVec<[usize; 4]> {
         match self {
             Fusion::Window(group) => SmallVec::from_slice(&group.reads()),
+            Fusion::Reduce(group) => SmallVec::from_slice(&group.reads()),
             Fusion::BatchNorm(group) => SmallVec::from_slice(&group.reads()),
         }
     }
@@ -47,18 +52,20 @@ impl Fusion<'_> {
 fn fusable(pattern: &Pattern) -> Option<Fusion<'_>> {
     match pattern {
         Pattern::WindowProduct(group) => Some(Fusion::Window(group)),
+        Pattern::ReduceWindow(group) => Some(Fusion::Reduce(group)),
         Pattern::BatchNormTraining(group) => Some(Fusion::BatchNorm(group)),
-        Pattern::ReduceWindow(_) | Pattern::BatchNormInference(_) => None,
+        Pattern::BatchNormInference(_) => None,
     }
 }
 
 /// Whether fusing `formula` has anyone to feed. The in-process window
-/// kernel earns its fusion alone (the measured patch fill), while a
-/// kernel whose in-process fallback is the composed formula pays only
-/// when a compiled offer-dispatched backend covers the formula — a
-/// build fact, never a device probe, so plans stay machine-blind.
+/// and pool kernels earn their fusion alone — direct walks that skip
+/// the general odometer access — while a kernel whose in-process
+/// fallback is the composed formula pays only when a compiled
+/// offer-dispatched backend covers the formula: a build fact, never a
+/// device probe, so plans stay machine-blind.
 fn fed(formula: Formula) -> bool {
-    matches!(formula, Formula::WindowProduct)
+    matches!(formula, Formula::WindowProduct | Formula::ReduceWindow)
         || Precision::ALL.iter().any(|&precision| {
             formula
                 .chain(precision)
@@ -567,6 +574,7 @@ impl<Data: Tensorial> Plan<Data> {
                 // slots, so declared observability survives fusion.
                 match fusion {
                     Fusion::Window(group) => group.apply(&values),
+                    Fusion::Reduce(group) => group.apply(&values),
                     Fusion::BatchNorm(group) => {
                         let (output, mean, variance) = group.apply(&values);
                         values[group.mean] = mean;

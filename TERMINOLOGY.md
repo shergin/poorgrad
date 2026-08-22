@@ -411,21 +411,24 @@ engine-backward plan emits `stablehlo.convolution` exactly like its
 forward twin. `describe` prints the groups; recognition proposes,
 payloads and backends dispose — neither ever sees graph structure.
 
-**Pool window (reduce_window).** The catalog's first raise-only
-pattern: the canonical `max_pool` spelling — two square
-unfolds, the lane permute and reshape, the left-associated `maximum`
-fold in lane order, the trailing squeeze — rooted at the squeeze
-reshape. It has no home action: it sits outside the home repertoire,
-so forward runs execute the recorded fold unchanged on every memory
-posture. Emission raises the group
-to `stablehlo.reduce_window` over the rank-4 source, so the unfolded
-lanes never cross the boundary. A balanced fold tree, a permuted lane
-order, or an omitted squeeze is a documented false negative;
-`describe` never mentions raise-only matches.
+**Pool window (reduce_window).** The canonical `max_pool` spelling —
+two square unfolds, the lane permute and reshape, the
+left-associated `maximum` fold in lane order, the trailing squeeze —
+rooted at the squeeze reshape. Its home action is
+`Tensorial::max_pooled`, a direct window walk applying `maximum` in
+the same lane order, bit-identical to the recorded fold while
+materializing no lane views, so fusing forward runs elect it under
+either posture. Emission raises the group to
+`stablehlo.reduce_window` over the rank-4 source, so the unfolded
+lanes never cross the boundary. A balanced fold tree, a permuted
+lane order, or an omitted squeeze is a documented false negative.
 
 **Batch-norm raise (batch_norm_training / batch_norm_inference).**
-Two raise-only catalog patterns over the recorded `BatchNorm` formulas,
-rooted at the trailing shift `Add`. The training variant matches the
+Two catalog patterns over the recorded `BatchNorm` formulas, rooted
+at the trailing shift `Add`; the training variant also fuses at
+home (`Tensorial::batch_normalized`, elected when a compiled
+backend can take the task), while the inference variant stays
+raise-only. The training variant matches the
 batch's own statistics — each `mean_along` verified as
 `Div(SumAlong, counted leaf)` through `Differentiable::is_counted`,
 so an unverified divisor (an unbiased variance) never raises — and
@@ -714,11 +717,12 @@ real on every platform where the Apple backends are macOS-only, and
 mop-up behind them on macOS. Whatever the whole chain declines
 lands on the built-in paths. The two in-process implementers stand
 outside the offer chains: `Backend::Fused` holds the crate's fused
-kernels for composed formulas — `windowed_product` and
-`batch_normalized`, both cells at the bit-identity fidelity, since
-each computes through the seam and falls back to the recorded
-formula's exact bits — and `Backend::StableHlo` holds the total
-translation column emission elects by. `Backend::coverage`,
+kernels for composed formulas — `windowed_product`,
+`batch_normalized`, and `max_pooled`, every cell at the
+bit-identity fidelity, since each either reduces in the recorded
+order or falls back to the recorded formula's exact bits — and
+`Backend::StableHlo` holds the total translation column emission
+elects by. `Backend::coverage`,
 `Backend::serves`, `Backend::compiled`, and [`Backend::status`]
 answer for every implementer in every build — coverage as declared,
 and `NotCompiled` as an ordinary result, not a compile error — and

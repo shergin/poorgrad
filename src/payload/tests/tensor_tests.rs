@@ -1292,3 +1292,38 @@ fn windowed_product_falls_back_for_strided_views() {
     let composed = composed_windowed_patches(&view, 3, 3, 1, 1).matmul(&kernel);
     assert_eq!(fast.to_vec(), composed.to_vec());
 }
+
+#[test]
+fn max_pooled_direct_walk_matches_the_composed_fold_bitwise() {
+    use super::composed_max_pool;
+
+    // Ties between +0.0 and -0.0 make the fold order observable in
+    // the bits, so the direct walk must reduce in the recorded lane
+    // order, not merely compute an equal maximum.
+    for (height, width, size, stride) in [(6, 6, 2, 2), (7, 5, 3, 1), (8, 8, 3, 2), (5, 5, 5, 1)] {
+        let elements: Vec<f64> = (0..2 * 3 * height * width)
+            .map(|index| match index % 7 {
+                0 => 0.0,
+                1 => -0.0,
+                other => ((other * 5 % 13) as f64 - 6.0) / 4.0,
+            })
+            .collect();
+        let tensor = Tensor::new([2, 3, height, width], elements);
+        let direct = tensor.max_pooled(size, stride);
+        let composed = composed_max_pool(&tensor, size, stride);
+        let direct_bits: Vec<u64> = direct
+            .to_vec()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect();
+        let composed_bits: Vec<u64> = composed
+            .to_vec()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect();
+        assert_eq!(
+            direct_bits, composed_bits,
+            "{height}x{width} size {size} stride {stride}"
+        );
+    }
+}

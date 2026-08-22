@@ -52,11 +52,16 @@ fn the_matrix_pins_every_hardware_row() {
 }
 
 #[test]
-fn fused_serves_its_two_kernels_bit_identically() {
-    // Both in-process kernels offer down the chain and fall back to
-    // bitwise references, so both cells clear bit identity; the
-    // envelope enters only through an admitted hardware kernel.
-    for formula in [Formula::WindowProduct, Formula::BatchNormTraining] {
+fn fused_serves_its_kernels_bit_identically() {
+    // Every in-process kernel either reduces in the recorded order
+    // or falls back to composing the recorded formula, so every cell
+    // clears bit identity; the envelope enters only through an
+    // admitted hardware kernel.
+    for formula in [
+        Formula::WindowProduct,
+        Formula::ReduceWindow,
+        Formula::BatchNormTraining,
+    ] {
         assert_eq!(
             Backend::Fused.coverage(formula),
             Coverage::Serves {
@@ -65,12 +70,7 @@ fn fused_serves_its_two_kernels_bit_identically() {
             }
         );
     }
-    for formula in [
-        Formula::Gemm,
-        Formula::Map,
-        Formula::ReduceWindow,
-        Formula::BatchNormInference,
-    ] {
+    for formula in [Formula::Gemm, Formula::Map, Formula::BatchNormInference] {
         assert_eq!(Backend::Fused.coverage(formula), Coverage::Absent);
     }
 }

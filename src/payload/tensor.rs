@@ -8,7 +8,7 @@ use super::gemm;
 use super::layout::{Layout, Strides};
 use super::normalized::BatchNormTask;
 use super::storage::Storage;
-use super::tensorial::{composed_batch_norm, composed_windowed_patches};
+use super::tensorial::{composed_batch_norm, composed_max_pool, composed_windowed_patches};
 use super::{Differentiable, Elementary, Shape, Tensorial};
 
 // Request-time thread-safety contract; the anchor rationale is documented
@@ -844,6 +844,63 @@ impl<Element: Elementary> Tensorial for Tensor<Element> {
             );
         }
         composed_batch_norm(self, scale, shift, epsilon)
+    }
+
+    /// Returns the max pool through a direct window walk: each
+    /// output element folds its window with `maximum` in the same
+    /// row-major lane order as the recorded formula, so the walk is
+    /// bit-identical to the composed fold while materializing no
+    /// lane views. Non-contiguous inputs and non-dense storages take
+    /// the composed reference path.
+    ///
+    /// # Panics
+    /// Panics if `self` is not rank 4, `size` or `stride` is zero,
+    /// or a window does not fit the spatial extents.
+    fn max_pooled(&self, size: usize, stride: usize) -> Self {
+        let shape = self.logical_shape();
+        let axes = shape.axes();
+        assert_eq!(
+            axes.len(),
+            4,
+            "max_pooled input must be rank 4 [batch, channels, height, width], got {shape}"
+        );
+        assert!(
+            size > 0 && stride > 0,
+            "max_pooled needs positive size and stride"
+        );
+        let (batch, channels, height, width) = (axes[0], axes[1], axes[2], axes[3]);
+        assert!(
+            size <= height && size <= width,
+            "max_pooled window {size} does not fit {shape}"
+        );
+        let Some(elements) = self.as_slice() else {
+            return composed_max_pool(self, size, stride);
+        };
+        let out_height = (height - size) / stride + 1;
+        let out_width = (width - size) / stride + 1;
+        let mut pooled = Vec::with_capacity(batch * channels * out_height * out_width);
+        for image in 0..batch {
+            for channel in 0..channels {
+                let plane = (image * channels + channel) * height;
+                for out_y in 0..out_height {
+                    for out_x in 0..out_width {
+                        let corner = (plane + out_y * stride) * width + out_x * stride;
+                        let mut largest = elements[corner].clone();
+                        for lane_y in 0..size {
+                            let row = corner + lane_y * width;
+                            for lane_x in 0..size {
+                                if lane_y == 0 && lane_x == 0 {
+                                    continue;
+                                }
+                                largest = largest.maximum(&elements[row + lane_x]);
+                            }
+                        }
+                        pooled.push(largest);
+                    }
+                }
+            }
+        }
+        Self::dense(Shape::new([batch, channels, out_height, out_width]), pooled)
     }
 
     /// Returns the matrix product of two rank-2 tensors.

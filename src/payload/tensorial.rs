@@ -163,6 +163,26 @@ pub trait Tensorial: Elementary {
         composed_batch_norm(self, scale, shift, epsilon)
     }
 
+    /// Returns the max pool of `self` (`[batch, channels, height,
+    /// width]`) over square `size` windows stepped by `stride`, with
+    /// no padding: `[batch, channels, out_h, out_w]`.
+    ///
+    /// It is the fused executor behind the plan tier's reduce-window
+    /// pattern; the arguments are the descriptor, so neither
+    /// payloads nor backends ever see graph structure. The default
+    /// implementation composes the recorded formula — two unfolds,
+    /// the lane permute and reshape, the left-associated `maximum`
+    /// fold in lane order, and the squeeze — and is the bitwise
+    /// reference; `Tensor` overrides it with a direct window walk
+    /// that applies `maximum` in the same lane order, so the
+    /// override is bit-identical while materializing nothing.
+    fn max_pooled(&self, size: usize, stride: usize) -> Self
+    where
+        Self: Sized,
+    {
+        composed_max_pool(self, size, stride)
+    }
+
     /// Returns the rows of `self` selected by `selection` (a one-hot
     /// `[count, vocab]` whose vocabulary matches `self`'s first axis): the
     /// embedding-style row gather, `result[i] = self[selection_index(i)]`.
@@ -235,6 +255,36 @@ pub(crate) fn composed_batch_norm<Data: Tensorial>(
     let output =
         normalized * scale.broadcast_along(0, &centered) + shift.broadcast_along(0, &centered);
     (output, mean, variance)
+}
+
+/// Composes the recorded max-pool formula — two square unfolds, the
+/// lane permute and merging reshape, a left-associated `maximum`
+/// fold in row-major lane order, and the trailing squeeze — over any
+/// tensorial payload, in the exact operation order the tape records:
+/// the bitwise reference the fused direct walk is graded against,
+/// and the fallback for representations without one.
+pub(crate) fn composed_max_pool<Data: Tensorial>(input: &Data, size: usize, stride: usize) -> Data {
+    let shape = input.shape();
+    let axes = shape.axes();
+    let (batch, channels, height, width) = (axes[0], axes[1], axes[2], axes[3]);
+    let out_height = (height - size) / stride + 1;
+    let out_width = (width - size) / stride + 1;
+    let lanes = input
+        .unfold(2, size, stride, 1)
+        .unfold(4, size, stride, 1)
+        .permute(&[0, 1, 2, 4, 3, 5])
+        .reshape(Shape::new([
+            batch,
+            channels,
+            out_height,
+            out_width,
+            size * size,
+        ]));
+    let mut largest = lanes.narrow(4, 0, 1);
+    for lane in 1..size * size {
+        largest = largest.maximum(&lanes.narrow(4, lane, 1));
+    }
+    largest.reshape(Shape::new([batch, channels, out_height, out_width]))
 }
 
 impl Tensorial for f32 {
