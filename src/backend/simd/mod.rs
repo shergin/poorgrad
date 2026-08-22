@@ -2,7 +2,7 @@
 //! `matrixmultiply` kernels behind the `simd` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -22,10 +22,10 @@ impl Manifest for Simd {
     fn coverage(formula: Formula) -> Coverage {
         match formula {
             // Tuned single-threaded microkernels for both
-            // precisions; packing reorders sums, so the bar is the
+            // precisions; packing reorders sums, so the fidelity is the
             // envelope.
             Formula::Gemm => Coverage::Serves {
-                bar: Bar::Envelope,
+                fidelity: Fidelity::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
             // `matrixmultiply` is GEMM-only.

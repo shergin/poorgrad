@@ -384,7 +384,7 @@ memory posture. Electing is claiming, first-wins; unsupported
 candidates never claim, so their regions stay free, and an unelected
 region simply runs or lowers its recorded primitives — a pattern is
 an offer, never an obligation. A repertoire is a kernel library with
-an admission bar: a home kernel must reproduce the recorded chain
+an admission fidelity: a home kernel must reproduce the recorded chain
 bit for bit under the run's `Numerics` posture, while a raise needs
 only emission's conformance envelope. Matchers share one `View` (wanted,
 keep-set, consumer counts); dispatch everywhere is a plain enum
@@ -651,11 +651,11 @@ kernels (`Backend::Fused`), and the StableHLO translation library
 (`Backend::StableHlo`) are one axis, in
 [`backend`](src/backend/mod.rs). What an implementer can do is the
 coverage matrix (`Backend::coverage`): one cell per
-[`Formula`](src/backend/formula.rs), declaring the certification
-bar (`Bar::BitIdentical` or `Bar::Envelope`) and the forwarding
+[`Formula`](src/backend/formula.rs), declaring the certified
+fidelity (`Fidelity::BitIdentical` or `Fidelity::Envelope`) and the forwarding
 precisions its kernels accept — the single declared truth that
 offer chains agree with by test, that the plan's election reads
-(the `Fused` column, under the bar the request's numerics demands),
+(the `Fused` column, under the fidelity the request's numerics demands),
 and that emission reads (the `StableHlo` column, total). Each
 implementer answers for itself through the crate-internal
 `Manifest` contract: a manifest in the backend's own module,
@@ -677,7 +677,7 @@ is the activation, no per-call-site routing exists, and within one
 binary two identical runs can never disagree; election keys on
 `Backend::compiled` (build facts), never on device presence, so a
 plan's shape depends only on the binary. The one run-scoped control
-is the `Numerics` posture below — admission by bar, never
+is the `Numerics` posture below — admission by fidelity, never
 re-routing. The offer chains have four hardware residents, tried in
 order.
 `Backend::Accelerate` (the `accelerate` feature) leads: it takes
@@ -707,7 +707,7 @@ mop-up behind them on macOS. Whatever the whole chain declines
 lands on the built-in paths. The two in-process implementers stand
 outside the offer chains: `Backend::Fused` holds the crate's fused
 kernels for composed formulas (`windowed_product` today, the one
-cell at the bit-identity bar, since the oracle's bits live in this
+cell at the bit-identity fidelity, since the oracle's bits live in this
 process), and `Backend::StableHlo` holds the total translation
 column emission elects by. `Backend::coverage`,
 `Backend::serves`, `Backend::compiled`, and [`Backend::status`]
@@ -725,7 +725,7 @@ and its runs (`Request::numerics`, `Plan::numerics`). `Fast` — the
 default, and the fixed posture of interpreter runs and host-side
 payload calls — is the backend chain as compiled, its per-task flop
 thresholds serving as cost heuristics inside the posture. `Exact`
-demands the bit-identity bar (`Numerics::bar`): only kernels
+demands bit-identity fidelity (`Numerics::fidelity`): only kernels
 certified bit-identical to the reference may serve — today the
 fused window kernel and nothing offer-dispatched — so chain work
 computes on the built-in reference paths: the same bits as the

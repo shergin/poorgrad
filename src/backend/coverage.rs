@@ -1,16 +1,16 @@
 use super::formula::Precision;
 
-/// The certification bar a kernel clears against the oracle.
+/// The certified fidelity a kernel meets against the oracle.
 ///
 /// Every implementer is a shortcut over the reference
-/// implementation, and the bar states how faithful the shortcut is
+/// implementation, and its fidelity states how faithful the shortcut is
 /// proven to be. Admission is one comparison — a kernel serves a
-/// run when its bar [`meets`](Bar::meets) the bar the run's
+/// run when its fidelity [`meets`](Fidelity::meets) the fidelity the run's
 /// [`Numerics`](crate::Numerics) posture demands — so `Exact`
 /// excluding reordering kernels is a consequence, not a special
 /// case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Bar {
+pub enum Fidelity {
     /// Certified to answer the reference implementation's exact
     /// bits, proven by differential test.
     BitIdentical,
@@ -19,15 +19,15 @@ pub enum Bar {
     Envelope,
 }
 
-impl Bar {
+impl Fidelity {
     /// Whether a kernel certified at `self` may serve where
     /// `required` is demanded: bit-identity serves everywhere, an
     /// envelope serves only envelope demands.
-    pub fn meets(self, required: Bar) -> bool {
+    pub fn meets(self, required: Fidelity) -> bool {
         match (self, required) {
-            (Bar::BitIdentical, _) => true,
-            (Bar::Envelope, Bar::Envelope) => true,
-            (Bar::Envelope, Bar::BitIdentical) => false,
+            (Fidelity::BitIdentical, _) => true,
+            (Fidelity::Envelope, Fidelity::Envelope) => true,
+            (Fidelity::Envelope, Fidelity::BitIdentical) => false,
         }
     }
 }
@@ -65,11 +65,11 @@ impl Precisions {
 /// through [`Backend::coverage`](crate::Backend::coverage).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Coverage {
-    /// A kernel or translation exists, certified at `bar`, for the
+    /// A kernel or translation exists, certified at a fidelity, for the
     /// precisions `precisions` admits.
     Serves {
-        /// The certification bar the kernel clears.
-        bar: Bar,
+        /// The certified fidelity the kernel meets.
+        fidelity: Fidelity,
         /// The forwarding precisions the kernel accepts.
         precisions: Precisions,
     },
@@ -83,10 +83,10 @@ impl Coverage {
         matches!(self, Coverage::Serves { .. })
     }
 
-    /// Whether a kernel exists and its bar meets the demand.
-    pub fn clears(self, required: Bar) -> bool {
+    /// Whether a kernel exists and its fidelity meets the demand.
+    pub fn meets(self, required: Fidelity) -> bool {
         match self {
-            Coverage::Serves { bar, .. } => bar.meets(required),
+            Coverage::Serves { fidelity, .. } => fidelity.meets(required),
             Coverage::Absent => false,
         }
     }

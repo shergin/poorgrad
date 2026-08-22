@@ -1,15 +1,15 @@
 use std::cell::Cell;
 
-use super::coverage::Bar;
+use super::coverage::Fidelity;
 
-/// The numerics posture of an execution scope: which certification
-/// bar a kernel must clear to serve.
+/// The numerics posture of an execution scope: the fidelity
+/// it demands of every kernel.
 ///
-/// `Exact` demands the bit-identity bar — the reference *bits*, in
-/// every build. Today no offer-dispatched kernel clears it, so chain
+/// `Exact` demands the bit-identity fidelity — the reference *bits*, in
+/// every build. Today no offer-dispatched kernel meets it, so chain
 /// work computes on the built-in reference paths, and the one
 /// bit-certified kernel (the fused window product) serves under both
-/// postures. `Fast` demands only the envelope bar: the chain as
+/// postures. `Fast` demands only the envelope fidelity: the chain as
 /// compiled, backends engaging above their per-task thresholds,
 /// which are cost heuristics inside this posture, never correctness
 /// boundaries.
@@ -32,11 +32,11 @@ pub enum Numerics {
 }
 
 impl Numerics {
-    /// The certification bar this posture demands of every kernel.
-    pub fn bar(self) -> Bar {
+    /// The certified fidelity this posture demands of every kernel.
+    pub fn fidelity(self) -> Fidelity {
         match self {
-            Numerics::Exact => Bar::BitIdentical,
-            Numerics::Fast => Bar::Envelope,
+            Numerics::Exact => Fidelity::BitIdentical,
+            Numerics::Fast => Fidelity::Envelope,
         }
     }
 }

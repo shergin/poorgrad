@@ -1,5 +1,5 @@
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::Formula;
 use super::manifest::Manifest;
 
@@ -20,15 +20,15 @@ impl Manifest for Fused {
             // `windowed_product` computes through the gemm seam in
             // the recorded accumulation order: bit-identical under
             // both postures, proven by the plan snapshots — the one
-            // cell at the bit-identity bar, since the oracle's bits
+            // cell at the bit-identity fidelity, since the oracle's bits
             // live in this process.
             Formula::WindowProduct => Coverage::Serves {
-                bar: Bar::BitIdentical,
+                fidelity: Fidelity::BitIdentical,
                 precisions: Precisions::Any,
             },
             // The pool kernel waits on a profile (`max` is
-            // associative, so it could clear even the bit-identity
-            // bar); the batch-norm kernels would reassociate
+            // associative, so it could meet even bit-identity
+            // fidelity); the batch-norm kernels would reassociate
             // reductions and arrive envelope-only.
             Formula::Gemm
             | Formula::Map

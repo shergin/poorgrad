@@ -63,15 +63,15 @@ pub enum Backend {
     /// The crate's own fused kernels for composed formulas, elected
     /// onto plans at compile time and executing in-process through
     /// the payload seam — `windowed_product` today. Always compiled,
-    /// always resident; the only implementer that can clear the
-    /// bit-identity bar, because the oracle's bits live in this
+    /// always resident; the only implementer that can meet
+    /// bit-identity fidelity, because the oracle's bits live in this
     /// process.
     Fused,
     /// The StableHLO translation library: elected groups and leaf
     /// operations lower into a module a foreign runtime (XLA today)
     /// executes. Always compiled, always able to emit; running the
     /// module is that runtime's business, and its kernels answer
-    /// under the envelope bar only.
+    /// under the envelope fidelity only.
     StableHlo,
 }
 
@@ -87,7 +87,7 @@ impl Backend {
     ];
 
     /// The coverage matrix: whether this implementer has a kernel
-    /// for the formula, at what bar, for which precisions.
+    /// for the formula, at what fidelity, for which precisions.
     ///
     /// Each row lives in its implementer's module and answers here
     /// through the `Manifest` contract; offer chains agree with

@@ -75,8 +75,8 @@ fn the_chain_accepts_exactly_when_a_member_is_available() {
 
 #[test]
 fn the_exact_posture_admits_no_envelope_kernel() {
-    // Every chain member's cell is envelope-bar today, so under
-    // `Exact` the bar rule empties the chain and the reference paths
+    // Every chain member's cell is envelope-fidelity today, so under
+    // `Exact` the fidelity rule empties the chain and the reference paths
     // compute — the old decline-by-fiat, now a consequence.
     let _scope = NumericsScope::enter(Numerics::Exact);
     let a = vec![0.5_f32; GEMM_EXTENT * GEMM_EXTENT];

@@ -2,7 +2,7 @@
 //! the BLAS/vForce kernels behind the `accelerate` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -24,9 +24,9 @@ impl Manifest for Accelerate {
             // One cblas call per product on the AMX/SME matrix
             // units, and vForce for whole-buffer transcendentals;
             // both take either precision and reorder sums, so the
-            // bar is the envelope.
+            // fidelity is the envelope.
             Formula::Gemm | Formula::Map => Coverage::Serves {
-                bar: Bar::Envelope,
+                fidelity: Fidelity::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
             Formula::WindowProduct

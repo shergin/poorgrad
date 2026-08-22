@@ -2,7 +2,7 @@
 //! simdgroup-matrix GPU kernels behind the `metal` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -23,9 +23,9 @@ impl Manifest for Metal {
         match formula {
             // Hand-written simdgroup-matrix kernels for products and
             // elementwise maps; Metal has no `f64` at all, and the
-            // GPU sums in tile order, so the bar is the envelope.
+            // GPU sums in tile order, so the fidelity is the envelope.
             Formula::Gemm | Formula::Map => Coverage::Serves {
-                bar: Bar::Envelope,
+                fidelity: Fidelity::Envelope,
                 precisions: Precisions::Only(&[Precision::F32]),
             },
             Formula::WindowProduct

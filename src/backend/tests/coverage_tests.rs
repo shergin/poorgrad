@@ -1,4 +1,4 @@
-use crate::{Backend, Bar, Coverage, Dispatch, Formula, Numerics, Precision, Precisions};
+use crate::{Backend, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision, Precisions};
 
 #[test]
 fn the_matrix_pins_every_hardware_row() {
@@ -43,7 +43,7 @@ fn fused_serves_the_window_product_bit_identically() {
     assert_eq!(
         Backend::Fused.coverage(Formula::WindowProduct),
         Coverage::Serves {
-            bar: Bar::BitIdentical,
+            fidelity: Fidelity::BitIdentical,
             precisions: Precisions::Any
         }
     );
@@ -65,19 +65,19 @@ fn the_stablehlo_column_is_total() {
     for formula in Formula::ALL {
         let cell = Backend::StableHlo.coverage(*formula);
         assert!(cell.serves(), "{formula:?} does not lower");
-        assert!(!cell.clears(Bar::BitIdentical));
+        assert!(!cell.meets(Fidelity::BitIdentical));
     }
 }
 
 #[test]
-fn the_bar_rule_is_one_comparison() {
-    assert!(Bar::BitIdentical.meets(Bar::BitIdentical));
-    assert!(Bar::BitIdentical.meets(Bar::Envelope));
-    assert!(Bar::Envelope.meets(Bar::Envelope));
-    assert!(!Bar::Envelope.meets(Bar::BitIdentical));
+fn the_fidelity_rule_is_one_comparison() {
+    assert!(Fidelity::BitIdentical.meets(Fidelity::BitIdentical));
+    assert!(Fidelity::BitIdentical.meets(Fidelity::Envelope));
+    assert!(Fidelity::Envelope.meets(Fidelity::Envelope));
+    assert!(!Fidelity::Envelope.meets(Fidelity::BitIdentical));
     // The postures demand exactly the two bars.
-    assert_eq!(Numerics::Exact.bar(), Bar::BitIdentical);
-    assert_eq!(Numerics::Fast.bar(), Bar::Envelope);
+    assert_eq!(Numerics::Exact.fidelity(), Fidelity::BitIdentical);
+    assert_eq!(Numerics::Fast.fidelity(), Fidelity::Envelope);
 }
 
 #[test]

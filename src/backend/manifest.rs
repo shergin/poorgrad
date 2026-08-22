@@ -17,8 +17,8 @@ pub(crate) trait Manifest {
     /// How this backend's kernels are reached.
     const DISPATCH: Dispatch;
 
-    /// This backend's coverage of one formula: the certification
-    /// bar and the forwarding precisions its kernel accepts, or
+    /// This backend's coverage of one formula: the certified fidelity
+    /// and the forwarding precisions its kernel accepts, or
     /// `Absent`.
     ///
     /// The match must stay exhaustive — that is the compile-time

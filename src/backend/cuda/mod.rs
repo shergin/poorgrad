@@ -2,7 +2,7 @@
 //! cuBLAS kernels behind the `cuda` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -22,10 +22,10 @@ impl Manifest for Cuda {
     fn coverage(formula: Formula) -> Coverage {
         match formula {
             // One cuBLAS call per product under the column-major
-            // swap, both precisions; device sums reorder, so the bar
+            // swap, both precisions; device sums reorder, so the fidelity
             // is the envelope.
             Formula::Gemm => Coverage::Serves {
-                bar: Bar::Envelope,
+                fidelity: Fidelity::Envelope,
                 precisions: Precisions::Only(Precision::ALL),
             },
             // A cuda map would be PCIe-bound: copies alone sink an

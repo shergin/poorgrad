@@ -1,10 +1,10 @@
 //! The acceleration stack's one relation: an implementer may serve
-//! a named formula, under a bar, against the oracle.
+//! a named formula, at a fidelity, against the oracle.
 //!
 //! Coverage declares *may* — the [`Backend::coverage`] matrix over
-//! [`Formula`] and [`Precision`], with a certification [`Bar`] per
+//! [`Formula`] and [`Precision`], with a certified [`Fidelity`] per
 //! cell. The offer decides *will* — [`offered`] walks a task's
-//! declared chain, admitting each member by bar-meets-posture, and
+//! declared chain, admitting each member by fidelity-meets-posture, and
 //! every member may still decline (thresholds, stride mappings,
 //! device presence). The oracle defines *is* — the reference paths
 //! are the substrate every decline falls to, in every build; on a
@@ -39,7 +39,7 @@ mod simd;
 mod stablehlo;
 
 pub use backend::{Backend, BackendUnavailable};
-pub use coverage::{Bar, Coverage, Dispatch, Precisions};
+pub use coverage::{Coverage, Dispatch, Fidelity, Precisions};
 pub use formula::{Formula, Precision};
 pub use numerics::Numerics;
 
@@ -52,16 +52,16 @@ use task::Task;
 /// every member declines: the chain's one entry point, monomorphized
 /// per task type.
 ///
-/// Admission is the bar rule, not a posture special case: a chain
-/// member serves only if its coverage cell's bar meets the bar the
+/// Admission is the fidelity rule, not a posture special case: a chain
+/// member serves only if its declared fidelity meets the fidelity the
 /// current posture demands, so `Exact` excludes every envelope
 /// kernel and would admit a bit-certified one.
 pub(crate) fn offered<T: Task>(task: &T) -> Option<Vec<T::Product>> {
-    let required = numerics::current().bar();
+    let required = numerics::current().fidelity();
     T::FORMULA
         .chain(T::PRECISION)
         .iter()
-        .filter(|backend| backend.coverage(T::FORMULA).clears(required))
+        .filter(|backend| backend.coverage(T::FORMULA).meets(required))
         .find_map(|&backend| task.offer(backend))
 }
 

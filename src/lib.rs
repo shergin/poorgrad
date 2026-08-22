@@ -62,7 +62,8 @@ mod notebook;
 mod payload;
 
 pub use backend::{
-    Backend, BackendUnavailable, Bar, Coverage, Dispatch, Formula, Numerics, Precision, Precisions,
+    Backend, BackendUnavailable, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision,
+    Precisions,
 };
 pub use emission::{EmitError, Emittable};
 pub use engine::{Plan, Request, Run};

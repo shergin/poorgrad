@@ -1,5 +1,5 @@
 use super::backend::BackendUnavailable;
-use super::coverage::{Bar, Coverage, Dispatch, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
 use super::formula::Formula;
 use super::manifest::Manifest;
 
@@ -17,7 +17,7 @@ impl Manifest for StableHlo {
     fn coverage(formula: Formula) -> Coverage {
         // The translation column is total: every formula lowers,
         // leaf entries as single operations and composed entries as
-        // raised library calls, under the envelope bar — nobody
+        // raised library calls, under the envelope fidelity — nobody
         // controls the foreign runtime's kernels.
         match formula {
             Formula::Gemm
@@ -26,7 +26,7 @@ impl Manifest for StableHlo {
             | Formula::ReduceWindow
             | Formula::BatchNormTraining
             | Formula::BatchNormInference => Coverage::Serves {
-                bar: Bar::Envelope,
+                fidelity: Fidelity::Envelope,
                 precisions: Precisions::Any,
             },
         }

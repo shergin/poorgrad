@@ -112,7 +112,7 @@ topos::Backend::Metal.status().expect("metal backend unavailable");
 
 `Backend::ALL` lists every implementer, `Backend::coverage` the
 full matrix — formula by implementer, each cell carrying its
-certification bar and forwarding precisions — `Formula::chain` each
+certified fidelity and forwarding precisions — `Formula::chain` each
 offer order, and `serves`, `compiled`, and `status` answer in every
 build; `NotCompiled` is an ordinary answer, not a compile error, so
 interrogating the stack never needs a `cfg`. For the `metal` feature, `status` doubles as warmup: it
@@ -191,7 +191,7 @@ hardware-greediest first, by measurement — products try
 `Accelerate`, then `Metal`, then `Cuda`, then `Simd`; elementwise
 maps try `Metal`, then `Accelerate`, the measured crossover — and
 membership agrees with the `Backend::coverage` matrix, whose cells
-also carry each kernel's certification bar and forwarding
+also carry each kernel's certified fidelity and forwarding
 precisions. Coverage declares *may*; the offer decides *will*: each
 member may decline any task — below its threshold, outside its
 stride mapping, beyond its integer range, or with its device gone —
@@ -200,11 +200,11 @@ so every task computes correctly in every build; features change
 speed, never behavior classes. Selection is per-build (features)
 and per-task (thresholds, precision — `f64` never reaches Metal),
 never per-call-site. The one run-scoped control is a posture, not a
-router: `Numerics::Exact` demands the bit-identity bar, which no
-offer-dispatched kernel clears today, so those runs compute on the
+router: `Numerics::Exact` demands bit-identity fidelity, which no
+offer-dispatched kernel meets today, so those runs compute on the
 reference paths — the same bits as the default build, reachable in
 every build — while `Numerics::Fast` (the default) demands only the
-envelope bar: the chain exactly as described above, its thresholds
+envelope fidelity: the chain exactly as described above, its thresholds
 serving as cost heuristics inside the posture rather than
 correctness boundaries.
 
