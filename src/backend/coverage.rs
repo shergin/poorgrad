@@ -32,27 +32,6 @@ impl Fidelity {
     }
 }
 
-/// The forwarding precisions a covered kernel accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Precisions {
-    /// Payload-generic: the kernel computes for every element type,
-    /// as the in-crate fused kernels and the translation library do.
-    Any,
-    /// Bound to these forwarding precisions, as hardware kernels
-    /// are.
-    Only(&'static [Precision]),
-}
-
-impl Precisions {
-    /// Whether the kernel accepts tasks at this precision.
-    pub fn admit(self, precision: Precision) -> bool {
-        match self {
-            Precisions::Any => true,
-            Precisions::Only(list) => list.contains(&precision),
-        }
-    }
-}
-
 /// One backend's coverage of one formula: whether it has a kernel,
 /// and under what terms.
 ///
@@ -70,8 +49,13 @@ pub enum Coverage {
     Serves {
         /// The certified fidelity the kernel meets.
         fidelity: Fidelity,
-        /// The forwarding precisions the kernel accepts.
-        precisions: Precisions,
+        /// The forwarding precisions the kernel accepts. Coverage
+        /// speaks only for the forwarding set, so a payload-generic
+        /// kernel (the in-crate fused kernels, the translation
+        /// library) declares `Precision::ALL` — the matrix's whole
+        /// domain; its openness to non-forwarding payloads is a
+        /// property of its dispatch, not a coverage claim.
+        precisions: &'static [Precision],
     },
     /// No kernel; the formula computes in its composed form.
     Absent,
@@ -94,7 +78,7 @@ impl Coverage {
     /// Whether a kernel exists and accepts tasks at this precision.
     pub fn admits(self, precision: Precision) -> bool {
         match self {
-            Coverage::Serves { precisions, .. } => precisions.admit(precision),
+            Coverage::Serves { precisions, .. } => precisions.contains(&precision),
             Coverage::Absent => false,
         }
     }

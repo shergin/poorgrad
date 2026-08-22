@@ -39,7 +39,7 @@ mod simd;
 mod stablehlo;
 
 pub use backend::{Backend, BackendUnavailable};
-pub use coverage::{Coverage, Dispatch, Fidelity, Precisions};
+pub use coverage::{Coverage, Dispatch, Fidelity};
 pub use formula::{Formula, Precision};
 pub use numerics::Numerics;
 

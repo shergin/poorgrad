@@ -1,4 +1,4 @@
-use crate::{Backend, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision, Precisions};
+use crate::{Backend, Coverage, Dispatch, Fidelity, Formula, Numerics, Precision};
 
 #[test]
 fn the_matrix_pins_every_hardware_row() {
@@ -44,7 +44,7 @@ fn fused_serves_the_window_product_bit_identically() {
         Backend::Fused.coverage(Formula::WindowProduct),
         Coverage::Serves {
             fidelity: Fidelity::BitIdentical,
-            precisions: Precisions::Any
+            precisions: Precision::ALL
         }
     );
     for formula in [
@@ -75,7 +75,7 @@ fn the_fidelity_rule_is_one_comparison() {
     assert!(Fidelity::BitIdentical.meets(Fidelity::Envelope));
     assert!(Fidelity::Envelope.meets(Fidelity::Envelope));
     assert!(!Fidelity::Envelope.meets(Fidelity::BitIdentical));
-    // The postures demand exactly the two bars.
+    // The postures demand exactly the two fidelities.
     assert_eq!(Numerics::Exact.fidelity(), Fidelity::BitIdentical);
     assert_eq!(Numerics::Fast.fidelity(), Fidelity::Envelope);
 }
@@ -92,13 +92,4 @@ fn dispatch_names_each_execution_context() {
     }
     assert_eq!(Backend::Fused.dispatch(), Dispatch::Elected);
     assert_eq!(Backend::StableHlo.dispatch(), Dispatch::Translated);
-}
-
-#[test]
-fn precisions_admit_their_lists() {
-    assert!(Precisions::Any.admit(Precision::F32));
-    assert!(Precisions::Any.admit(Precision::F64));
-    let only = Precisions::Only(&[Precision::F32]);
-    assert!(only.admit(Precision::F32));
-    assert!(!only.admit(Precision::F64));
 }

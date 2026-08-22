@@ -1,6 +1,6 @@
 use super::backend::BackendUnavailable;
-use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
-use super::formula::Formula;
+use super::coverage::{Coverage, Dispatch, Fidelity};
+use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
 /// The StableHLO translation library: elected groups and leaf
@@ -27,7 +27,7 @@ impl Manifest for StableHlo {
             | Formula::BatchNormTraining
             | Formula::BatchNormInference => Coverage::Serves {
                 fidelity: Fidelity::Envelope,
-                precisions: Precisions::Any,
+                precisions: Precision::ALL,
             },
         }
     }

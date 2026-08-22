@@ -2,7 +2,7 @@
 //! cuBLAS kernels behind the `cuda` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -26,7 +26,7 @@ impl Manifest for Cuda {
             // is the envelope.
             Formula::Gemm => Coverage::Serves {
                 fidelity: Fidelity::Envelope,
-                precisions: Precisions::Only(Precision::ALL),
+                precisions: Precision::ALL,
             },
             // A cuda map would be PCIe-bound: copies alone sink an
             // elementwise pass.

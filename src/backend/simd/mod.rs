@@ -2,7 +2,7 @@
 //! `matrixmultiply` kernels behind the `simd` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -26,7 +26,7 @@ impl Manifest for Simd {
             // envelope.
             Formula::Gemm => Coverage::Serves {
                 fidelity: Fidelity::Envelope,
-                precisions: Precisions::Only(Precision::ALL),
+                precisions: Precision::ALL,
             },
             // `matrixmultiply` is GEMM-only.
             Formula::Map

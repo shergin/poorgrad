@@ -2,7 +2,7 @@
 //! the BLAS/vForce kernels behind the `accelerate` feature.
 
 use super::backend::BackendUnavailable;
-use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
+use super::coverage::{Coverage, Dispatch, Fidelity};
 use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
@@ -27,7 +27,7 @@ impl Manifest for Accelerate {
             // fidelity is the envelope.
             Formula::Gemm | Formula::Map => Coverage::Serves {
                 fidelity: Fidelity::Envelope,
-                precisions: Precisions::Only(Precision::ALL),
+                precisions: Precision::ALL,
             },
             Formula::WindowProduct
             | Formula::ReduceWindow

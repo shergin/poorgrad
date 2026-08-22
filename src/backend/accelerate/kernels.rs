@@ -226,5 +226,5 @@ pub(super) fn executed_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 }
 
 #[cfg(test)]
-#[path = "../tests/accelerate_tests.rs"]
+#[path = "tests/accelerate_tests.rs"]
 mod tests;

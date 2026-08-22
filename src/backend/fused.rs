@@ -1,6 +1,6 @@
 use super::backend::BackendUnavailable;
-use super::coverage::{Coverage, Dispatch, Fidelity, Precisions};
-use super::formula::Formula;
+use super::coverage::{Coverage, Dispatch, Fidelity};
+use super::formula::{Formula, Precision};
 use super::manifest::Manifest;
 
 /// The crate's own fused kernels for composed formulas, elected
@@ -24,7 +24,7 @@ impl Manifest for Fused {
             // live in this process.
             Formula::WindowProduct => Coverage::Serves {
                 fidelity: Fidelity::BitIdentical,
-                precisions: Precisions::Any,
+                precisions: Precision::ALL,
             },
             // The pool kernel waits on a profile (`max` is
             // associative, so it could meet even bit-identity

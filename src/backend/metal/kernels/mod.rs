@@ -14,15 +14,9 @@
 //! runtime command-buffer error poisons the module into declining
 //! forever, with the reason held for [`status`].
 
-// The kernel submodules keep their historical homes one level up;
-// `path` mounts them under this `cfg`-gated half.
-#[path = "context.rs"]
 mod context;
-#[path = "gemm.rs"]
 mod gemm;
-#[path = "map.rs"]
 mod map;
-#[path = "pool.rs"]
 mod pool;
 
 use std::sync::OnceLock;
@@ -138,5 +132,5 @@ fn fits_u32(task: &GemmTask<'_, f32>) -> bool {
 }
 
 #[cfg(test)]
-#[path = "tests/metal_tests.rs"]
+#[path = "../tests/metal_tests.rs"]
 mod tests;

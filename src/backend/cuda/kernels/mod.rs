@@ -15,13 +15,8 @@
 //! a runtime error poisons the module into declining forever, with
 //! the reason held for [`status`].
 
-// The kernel submodules keep their historical homes one level up;
-// `path` mounts them under this `cfg`-gated half.
-#[path = "context.rs"]
 mod context;
-#[path = "gemm.rs"]
 mod gemm;
-#[path = "pool.rs"]
 mod pool;
 
 use std::sync::OnceLock;
@@ -126,5 +121,5 @@ pub(crate) fn gemm_f64(task: &GemmTask<'_, f64>) -> Option<Vec<f64>> {
 }
 
 #[cfg(test)]
-#[path = "tests/cuda_tests.rs"]
+#[path = "../tests/cuda_tests.rs"]
 mod tests;
