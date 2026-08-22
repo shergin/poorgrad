@@ -4,37 +4,43 @@
 //!
 //! The model lives in `model.rs` as ordinary [`Module`]
 //! implementations: twelve pre-norm blocks (structs of `Linear`s and
-//! `LayerNorm`s around a custom attention module) stacked in a
-//! `Sequential`, with the GELU tanh approximation's constants held as
+//! `LayerNorm`s around a custom attention module) stacked in a plain
+//! `Vec`, with the GELU tanh approximation's constants held as
 //! scalar leaves — float constants are caller territory. The tree's
 //! `visit` paths mirror the checkpoint's own tensor names, so loading
 //! is one `named_restore` over the safetensors name map instead of a
-//! hand-rolled per-tensor loader. The embedded token window arrives
-//! as a per-run input (the vocabulary lookup is loop-land data
+//! hand-rolled per-tensor loader. The embedded token arrives as a
+//! per-run input (the vocabulary lookup is loop-land data
 //! preparation, a row copy), and the tied language-model head is the
-//! embedding table transposed. One forward-only plan at a fixed
-//! context serves every generation step, so generating never regrows
-//! the tape.
+//! embedding table transposed. Plans at a fixed context serve every
+//! generation step, so generating never regrows the tape.
 //!
-//! The same plan powers three runs. `tape` (the default) runs it on
-//! topos's own interpreter. `bf16` records the identical module
-//! tree over `Tensor<Bf16>` — the genericity the module tier
-//! promises, with the matmuls accumulating in f32 by the payload's
-//! contract; measured at 341 ms/token against the f32 tape's 195 on
-//! the same machine. `xla` emits the f32 plan as
+//! One tape records two expressions of the same parameters
+//! (`notes/carry.md`): the full-context window and a one-token decode
+//! step whose per-layer key and value caches are caller-carried
+//! per-run inputs — the [`Carry`], advanced from each run's declared
+//! cache outputs. The default `tape` engine generates through the
+//! decode plan (prefill is token-by-token through the same plan);
+//! `full` keeps the full-context loop for comparison. `bf16` records
+//! the identical module tree over `Tensor<Bf16>` — the genericity the
+//! module tier promises, with the matmuls accumulating in f32 by the
+//! payload's contract. `xla` emits the full-context f32 plan as
 //! StableHLO and holds a serving process
 //! (`tools/serve-stablehlo-xla.py`) that compiles it once, keeps the
 //! 124M parameters resident, and answers each step over binary pipes —
 //! the parameters cross the boundary once, each step ships only the
 //! embedded window. `TOPOS_XLA_PYTHON` names the Python (any with
 //! `jax`; default `python3`), and `JAX_PLATFORMS` picks the XLA
-//! backend. Stated as measured: XLA-CPU serves at 132 ms/token
-//! against the tape's 194 and reproduces its text; `JAX_PLATFORMS=METAL`
-//! under a `jax-metal` environment runs at 26 ms/token but
-//! miscomputes this module (Apple's experimental plugin; the small
-//! conformance modules pass, this one does not) — caught precisely
-//! because the tape, XLA-CPU, and the reference interpreter agree
-//! with each other.
+//! backend. Stated as measured, M1 Pro with `accelerate`: the decode
+//! plan generates at 18 ms/token f32 and 31 bf16 against the
+//! full-context loop's 193 and 341, reproducing its text token for
+//! token; XLA-CPU serves the full-context plan at 132 ms/token and
+//! reproduces the same text; `JAX_PLATFORMS=METAL` under a
+//! `jax-metal` environment runs at 26 ms/token but miscomputes this
+//! module (Apple's experimental plugin; the small conformance
+//! modules pass, this one does not) — caught precisely because the
+//! tape, XLA-CPU, and the reference interpreter agree with each
+//! other.
 //!
 //! The checkpoint (548 MB) and tokenizer download and cache on first
 //! run. Run with:
@@ -49,7 +55,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Instant;
 
 use topos::{
-    Bf16, Differentiable, Elementary, Emittable, Module, Plan, Request, Symbol, Tape, Tensor,
+    Bf16, Differentiable, Elementary, Emittable, Module, Plan, Request, Run, Symbol, Tape, Tensor,
     checkpoint,
 };
 
@@ -60,11 +66,15 @@ use weights::{Weights, cached_text};
 /// The end-of-text token that opens and closes generation.
 const END_OF_TEXT: usize = 50256;
 
-/// Which executor runs the compiled plan.
+/// Which executor and which plan run the generation loop.
 enum Engine {
-    /// Topos's own interpreter.
-    Tape,
-    /// The emitted StableHLO under a serving XLA process.
+    /// The one-token decode plan on topos's own interpreter.
+    Decode,
+    /// The full-context plan on topos's own interpreter, kept as the
+    /// decode loop's comparison baseline.
+    Full,
+    /// The full-context plan emitted as StableHLO under a serving XLA
+    /// process.
     Xla,
 }
 
@@ -87,6 +97,118 @@ fn record<E: Elementary + From<f32> + 'static>(tape: &Tape<Tensor<E>>, model: &G
         stream: embedded.symbol(),
         extraction: extraction.symbol(),
         logits: logits.symbol(),
+    }
+}
+
+/// One layer's cache symbols: the carried inputs and the updated
+/// outputs the run pairs them with.
+struct LayerCache {
+    keys_in: Symbol,
+    keys_out: Symbol,
+    values_in: Symbol,
+    values_out: Symbol,
+}
+
+/// The recorded decode step's feed and read symbols.
+struct Decoder {
+    stream: Symbol,
+    position: Symbol,
+    mask: Symbol,
+    logits: Symbol,
+    caches: Vec<LayerCache>,
+}
+
+/// Records the one-token decode step over `model`: the embedded row,
+/// the position one-hot (placing the cache appends and gathering the
+/// position row), the mask row, and the per-layer caches are per-run
+/// inputs. The logits are the tied head spelled `(wte . row^T)^T`, so
+/// no run materializes the transposed table.
+fn record_decode<E: Elementary + From<f32> + 'static>(
+    tape: &Tape<Tensor<E>>,
+    model: &Gpt2<E>,
+) -> Decoder {
+    let zeros = |shape: [usize; 2]| Tensor::filled(shape, E::from(0.0));
+    let stream = tape.input(zeros([1, EMBED_DIM]));
+    let position = tape.input(Tensor::selection(vec![0], CONTEXT_LEN, E::from(1.0)));
+    let mask = tape.input(zeros([1, CONTEXT_LEN]));
+    let pairs: Vec<_> = (0..model.layers())
+        .map(|_| {
+            (
+                tape.input(zeros([CONTEXT_LEN, EMBED_DIM])),
+                tape.input(zeros([CONTEXT_LEN, EMBED_DIM])),
+            )
+        })
+        .collect();
+    let (last, updated) = model.express_decode(tape, stream, &pairs, position, mask);
+    let logits = tape
+        .resolve(model.embeddings())
+        .matmul(last.transpose())
+        .transpose();
+    let caches = pairs
+        .iter()
+        .zip(&updated)
+        .map(
+            |((keys_in, values_in), (keys_out, values_out))| LayerCache {
+                keys_in: keys_in.symbol(),
+                keys_out: keys_out.symbol(),
+                values_in: values_in.symbol(),
+                values_out: values_out.symbol(),
+            },
+        )
+        .collect();
+    Decoder {
+        stream: stream.symbol(),
+        position: position.symbol(),
+        mask: mask.symbol(),
+        logits: logits.symbol(),
+        caches,
+    }
+}
+
+/// The decode loop's pending feeds: one payload per carried cache
+/// input, advanced from each run's declared cache outputs
+/// (`notes/carry.md`).
+///
+/// Feeding and advancing clone the caches; the zero-copy spelling (a
+/// consuming read on `Run`, the unfed-only default overlay in
+/// `Plan::forward`) was built and graded flat on both axes at this
+/// scale — ~57 MB of clones per step ride under the ~500 MB of
+/// weight traffic — so the simpler spelling stays, per the numbers.
+struct Carry<E> {
+    entries: Vec<(Symbol, Tensor<E>)>,
+}
+
+impl<E: Elementary + From<f32>> Carry<E> {
+    /// Returns the empty caches: generation's initial state.
+    fn new(caches: &[LayerCache]) -> Self {
+        let zeros = || Tensor::filled([CONTEXT_LEN, EMBED_DIM], E::from(0.0));
+        let entries = caches
+            .iter()
+            .flat_map(|cache| [(cache.keys_in, zeros()), (cache.values_in, zeros())])
+            .collect();
+        Self { entries }
+    }
+
+    /// Returns this step's cache feeds.
+    fn feeds(&self) -> impl Iterator<Item = (Symbol, Tensor<E>)> + '_ {
+        self.entries
+            .iter()
+            .map(|(symbol, payload)| (*symbol, payload.clone()))
+    }
+
+    /// Returns the carry advanced from `run`: each cache input's next
+    /// payload is its pair's output in the run.
+    fn advanced(run: &Run<Tensor<E>>, caches: &[LayerCache]) -> Self {
+        let entries = caches
+            .iter()
+            .flat_map(|cache| {
+                [
+                    (cache.keys_in, run.of(cache.keys_out).clone()),
+                    (cache.values_in, run.of(cache.values_out).clone()),
+                ]
+            })
+            .collect();
+        Self { entries }
     }
 }
 
@@ -229,6 +351,7 @@ where
     let tape = Tape::new();
     let gpt2 = Gpt2::<E>::new(&tape);
     let sampler = record(&tape, &gpt2);
+    let decoder = record_decode(&tape, &gpt2);
     let network = tape.into_network();
     let parameters = load(&network.parameters(), &gpt2, &weights);
     drop(weights);
@@ -248,6 +371,100 @@ where
         prompt,
         "the tokenizer round-trips the prompt"
     );
+
+    if let Engine::Decode = engine {
+        let compiling = Instant::now();
+        let outputs: Vec<Symbol> = decoder
+            .caches
+            .iter()
+            .flat_map(|cache| [cache.keys_out, cache.values_out])
+            .collect();
+        let plan: Plan<Tensor<E>> =
+            network.compile(Request::roots([decoder.logits]).observe(outputs));
+        println!(
+            "recorded {} nodes and compiled the decode plan in {:.1}s",
+            network.len(),
+            compiling.elapsed().as_secs_f64()
+        );
+
+        let table = parameters.of(gpt2.embeddings()).to_vec();
+        let row = |token: usize| {
+            Tensor::new(
+                [1, EMBED_DIM],
+                table[token * EMBED_DIM..(token + 1) * EMBED_DIM].to_vec(),
+            )
+        };
+        let mask_row = |until: usize| {
+            let elements: Vec<E> = (0..CONTEXT_LEN)
+                .map(|at| {
+                    if at <= until {
+                        E::from(0.0)
+                    } else {
+                        E::from(f32::NEG_INFINITY)
+                    }
+                })
+                .collect();
+            Tensor::new([1, CONTEXT_LEN], elements)
+        };
+        // One step: feed the carry and the row's transients, read the
+        // logits, advance the carry from the run's cache outputs.
+        let step = |carry: Carry<E>, token: usize, at: usize| -> (Vec<f32>, Carry<E>) {
+            let run = plan.forward(
+                &parameters,
+                carry.feeds().chain([
+                    (decoder.stream, row(token)),
+                    (
+                        decoder.position,
+                        Tensor::selection(vec![at], CONTEXT_LEN, E::from(1.0)),
+                    ),
+                    (decoder.mask, mask_row(at)),
+                ]),
+            );
+            let logits = run.of(decoder.logits).to_vec();
+            (
+                logits.iter().map(|&element| f32::from(element)).collect(),
+                Carry::advanced(&run, &decoder.caches),
+            )
+        };
+
+        // Prefill is token-by-token through the same plan: the carry
+        // is the only state the steps share.
+        let prefilling = Instant::now();
+        let mut carry = Carry::new(&decoder.caches);
+        let mut logits = Vec::new();
+        for (at, &token) in window.iter().enumerate() {
+            (logits, carry) = step(carry, token, at);
+        }
+        println!(
+            "prefilled {} tokens in {:.2}s",
+            window.len(),
+            prefilling.elapsed().as_secs_f64()
+        );
+
+        print!("{prompt}");
+        let mut state: u64 = 7;
+        let generation = Instant::now();
+        for index in 0..count {
+            let token = draw(&logits, 0.9, 40, &mut state);
+            if token == END_OF_TEXT {
+                break;
+            }
+            window.push(token);
+            print!("{}", tokenizer.decode(&[token]));
+            std::io::stdout().flush().expect("stdout flushes");
+            if index + 1 < count {
+                (logits, carry) = step(carry, token, window.len() - 1);
+            }
+        }
+        let elapsed = generation.elapsed().as_secs_f64();
+        let generated = window.len() - 1 - tokenizer.encode(prompt).len();
+        println!();
+        println!(
+            "generated {generated} tokens on the {label} engine in {elapsed:.1}s ({:.0} ms/token)",
+            elapsed / generated.max(1) as f64 * 1e3
+        );
+        return;
+    }
 
     let compiling = Instant::now();
     let plan: Plan<Tensor<E>> = network.compile(Request::roots([sampler.logits]));
@@ -273,7 +490,7 @@ where
     };
 
     let mut server = match engine {
-        Engine::Tape => None,
+        Engine::Decode | Engine::Full => None,
         Engine::Xla => {
             println!("starting the XLA server (compiling the emitted plan) ...");
             // The emitted module's leading arguments are the
@@ -342,9 +559,10 @@ fn main() {
         .unwrap_or_else(|| "tape".to_string());
 
     match engine.as_str() {
-        "tape" => run::<f32>(&prompt, count, Engine::Tape, "tape"),
+        "tape" => run::<f32>(&prompt, count, Engine::Decode, "tape"),
+        "full" => run::<f32>(&prompt, count, Engine::Full, "full"),
         "xla" => run::<f32>(&prompt, count, Engine::Xla, "xla"),
-        "bf16" => run::<Bf16>(&prompt, count, Engine::Tape, "bf16"),
-        other => panic!("unknown engine `{other}`; use `tape`, `xla`, or `bf16`"),
+        "bf16" => run::<Bf16>(&prompt, count, Engine::Decode, "bf16"),
+        other => panic!("unknown engine `{other}`; use `tape`, `full`, `xla`, or `bf16`"),
     }
 }

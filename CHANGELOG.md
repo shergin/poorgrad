@@ -9,6 +9,15 @@ The format is based on [Keep a Changelog], and this project adheres to
 
 ### Added
 
+- The gpt2 example generates through a one-token decode plan with
+  per-layer KV caches carried by the caller (a second expression of
+  the same parameters on the same tape; `scatter` appends the new
+  rows over a position one-hot). Measured on an M1 Pro with
+  `accelerate`: 18 ms/token f32 and 31 bf16 against the full-context
+  loop's 193 and 341, token-identical text; the retained
+  full-context loop is the `full` engine, and a plan test pins the
+  two graphs bit-for-bit at toy scale.
+
 - `Numerics`, the two-valued numerics posture on compile requests:
   `Request::numerics(Numerics::Exact)` makes the backend chain
   decline every task, so those runs compute on the built-in reference

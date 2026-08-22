@@ -1,4 +1,4 @@
-use crate::{Numerics, Request, Symbol, Tape, Tensor};
+use crate::{Numerics, Request, Symbol, Tape, Tensor, concat};
 
 /// The empty feed set, typed for the scalar tests.
 fn no_feeds() -> std::iter::Empty<(Symbol, f64)> {
@@ -715,5 +715,196 @@ fn fused_max_pool_matches_the_interpreter_bitwise() {
                 .collect();
             assert_eq!(planned_bits, interpreted_bits);
         }
+    }
+}
+
+#[test]
+fn decode_carry_matches_the_full_context_plan_bitwise() {
+    // Two graphs, one function (`notes/carry.md`): a full-context
+    // causal-attention stack and its one-token decode twin — carried
+    // capacity-shaped caches appended by `scatter` over a position
+    // one-hot — record on one tape sharing the parameters. Chaining
+    // the decode step must reproduce the full plan's row bit for bit
+    // at every step, with the full window padded by garbage rows so
+    // the identity also proves the mask isolates the past.
+    const CAPACITY: usize = 4;
+    const EMBED: usize = 4;
+    const HEADS: usize = 2;
+    const HEAD_DIM: usize = EMBED / HEADS;
+    const LAYERS: usize = 2;
+    let seeded = |seed: usize, count: usize| -> Vec<f32> {
+        (0..count)
+            .map(|at| (((at * 31 + seed * 17) % 23) as f32 - 11.0) / 16.0)
+            .collect()
+    };
+
+    let tape = Tape::new();
+    let layers: Vec<(Symbol, Symbol)> = (0..LAYERS)
+        .map(|layer| {
+            (
+                tape.parameter(Tensor::new(
+                    [EMBED, 3 * EMBED],
+                    seeded(layer * 2 + 1, EMBED * 3 * EMBED),
+                ))
+                .symbol(),
+                tape.parameter(Tensor::new(
+                    [EMBED, EMBED],
+                    seeded(layer * 2 + 2, EMBED * EMBED),
+                ))
+                .symbol(),
+            )
+        })
+        .collect();
+    let scale = tape
+        .leaf(Tensor::filled([], 1.0_f32 / (HEAD_DIM as f32).sqrt()))
+        .symbol();
+
+    // The full-context expression: the window input, a causal mask
+    // leaf, the residual attention stack.
+    let mask_elements: Vec<f32> = (0..CAPACITY * CAPACITY)
+        .map(|at| {
+            if at % CAPACITY <= at / CAPACITY {
+                0.0
+            } else {
+                f32::NEG_INFINITY
+            }
+        })
+        .collect();
+    let mask = tape.leaf(Tensor::new([CAPACITY, CAPACITY], mask_elements));
+    let window = tape.input(Tensor::filled([CAPACITY, EMBED], 0.0_f32));
+    let mut stream = window;
+    for &(fused_weights, projection) in &layers {
+        let fused = stream.matmul(tape.resolve(fused_weights));
+        let heads: Vec<_> = (0..HEADS)
+            .map(|head| {
+                let query = fused.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let key = fused.narrow(1, EMBED + head * HEAD_DIM, HEAD_DIM);
+                let value = fused.narrow(1, 2 * EMBED + head * HEAD_DIM, HEAD_DIM);
+                let scores = query.matmul(key.transpose());
+                let weights =
+                    (scores * tape.resolve(scale).broadcast_like(scores) + mask).softmax(1);
+                weights.matmul(value)
+            })
+            .collect();
+        stream = stream + concat(&heads, 1).matmul(tape.resolve(projection));
+    }
+    let full_out = stream.symbol();
+    let window = window.symbol();
+
+    // The decode twin over the same parameters: one row, per-layer
+    // cache inputs, the position one-hot placing the appends, the fed
+    // mask row.
+    let row_input = tape.input(Tensor::filled([1, EMBED], 0.0_f32));
+    let position_input = tape.input(Tensor::selection(vec![0], CAPACITY, 1.0_f32));
+    let mask_input = tape.input(Tensor::filled([1, CAPACITY], 0.0_f32));
+    let caches: Vec<_> = (0..LAYERS)
+        .map(|_| {
+            (
+                tape.input(Tensor::filled([CAPACITY, EMBED], 0.0_f32)),
+                tape.input(Tensor::filled([CAPACITY, EMBED], 0.0_f32)),
+            )
+        })
+        .collect();
+    let mut row = row_input;
+    let mut updated: Vec<(Symbol, Symbol)> = Vec::new();
+    for (&(fused_weights, projection), &(keys, values)) in layers.iter().zip(&caches) {
+        let fused = row.matmul(tape.resolve(fused_weights));
+        let keys = keys
+            + fused
+                .narrow(1, EMBED, EMBED)
+                .scatter(position_input, CAPACITY);
+        let values = values
+            + fused
+                .narrow(1, 2 * EMBED, EMBED)
+                .scatter(position_input, CAPACITY);
+        let heads: Vec<_> = (0..HEADS)
+            .map(|head| {
+                let query = fused.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let key = keys.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let value = values.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let scores = query.matmul(key.transpose());
+                let weights =
+                    (scores * tape.resolve(scale).broadcast_like(scores) + mask_input).softmax(1);
+                weights.matmul(value)
+            })
+            .collect();
+        row = row + concat(&heads, 1).matmul(tape.resolve(projection));
+        updated.push((keys.symbol(), values.symbol()));
+    }
+    let row_out = row.symbol();
+    let row_input = row_input.symbol();
+    let position_input = position_input.symbol();
+    let mask_input = mask_input.symbol();
+    let cache_inputs: Vec<(Symbol, Symbol)> = caches
+        .iter()
+        .map(|(keys, values)| (keys.symbol(), values.symbol()))
+        .collect();
+
+    let network = tape.into_network();
+    let parameters = network.parameters();
+    let full_plan = network.compile(Request::roots([full_out]));
+    let outputs: Vec<Symbol> = updated
+        .iter()
+        .flat_map(|&(keys, values)| [keys, values])
+        .collect();
+    let decode_plan = network.compile(Request::roots([row_out]).observe(outputs));
+
+    let rows: Vec<Vec<f32>> = (0..CAPACITY).map(|at| seeded(90 + at, EMBED)).collect();
+    let garbage = vec![7.5_f32; EMBED];
+    let mut carry: Vec<(Symbol, Tensor<f32>)> = cache_inputs
+        .iter()
+        .flat_map(|&(keys, values)| {
+            [
+                (keys, Tensor::filled([CAPACITY, EMBED], 0.0_f32)),
+                (values, Tensor::filled([CAPACITY, EMBED], 0.0_f32)),
+            ]
+        })
+        .collect();
+    for step in 0..CAPACITY {
+        let mut elements = Vec::new();
+        for at in 0..CAPACITY {
+            elements.extend(if at <= step { &rows[at] } else { &garbage });
+        }
+        let full_run = full_plan.forward(
+            &parameters,
+            [(window, Tensor::new([CAPACITY, EMBED], elements))],
+        );
+        let full_bits: Vec<u32> = full_run.of(full_out).to_vec()[step * EMBED..(step + 1) * EMBED]
+            .iter()
+            .map(|value| value.to_bits())
+            .collect();
+
+        let mask_row: Vec<f32> = (0..CAPACITY)
+            .map(|at| if at <= step { 0.0 } else { f32::NEG_INFINITY })
+            .collect();
+        let decode_run = decode_plan.forward(
+            &parameters,
+            carry.iter().cloned().chain([
+                (row_input, Tensor::new([1, EMBED], rows[step].clone())),
+                (
+                    position_input,
+                    Tensor::selection(vec![step], CAPACITY, 1.0_f32),
+                ),
+                (mask_input, Tensor::new([1, CAPACITY], mask_row)),
+            ]),
+        );
+        let decode_bits: Vec<u32> = decode_run
+            .of(row_out)
+            .to_vec()
+            .iter()
+            .map(|value| value.to_bits())
+            .collect();
+        assert_eq!(decode_bits, full_bits, "the rows disagree at step {step}");
+
+        carry = cache_inputs
+            .iter()
+            .zip(&updated)
+            .flat_map(|(&(keys_in, values_in), &(keys_out, values_out))| {
+                [
+                    (keys_in, decode_run.of(keys_out).clone()),
+                    (values_in, decode_run.of(values_out).clone()),
+                ]
+            })
+            .collect();
     }
 }

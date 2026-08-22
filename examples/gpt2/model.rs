@@ -2,14 +2,22 @@
 //! expressed in topos's composition tier.
 //!
 //! Every struct here is an ordinary [`Module`] implementation — the
-//! blocks are structs of [`Linear`]s and [`LayerNorm`]s, the stack of
-//! twelve is a [`Sequential`], and attention is a custom module built
-//! from two `Linear`s and the public op surface. The tree's `visit`
-//! paths mirror the checkpoint's own tensor names (`h.{i}.attn.c_attn`,
+//! blocks are structs of [`Linear`]s and [`LayerNorm`]s stacked in a
+//! plain `Vec`, and attention is a custom module built from two
+//! `Linear`s and the public op surface. The tree's `visit` paths
+//! mirror the checkpoint's own tensor names (`h.{i}.attn.c_attn`,
 //! `ln_f`, ...), so loading the pretrained weights is one
 //! [`named_restore`] over the paths the model announces itself; the
 //! adapter shrinks to the leaf spellings the module tier and the
 //! checkpoint disagree on.
+//!
+//! Beside the full-context `express`, the tree records a one-token
+//! decode step (`notes/carry.md`): each layer's keys and values live
+//! in caller-carried capacity-shaped caches, the step appends the new
+//! token's rows by a `scatter` over the position one-hot, and only
+//! one stream row flows through the stack. The two expressions share
+//! the same parameters on the same tape, so one `Parameters` value
+//! serves both plans.
 //!
 //! The tree is generic over the element type: the same structs record
 //! the f32 model and the `Bf16` one, which is the genericity the
@@ -17,8 +25,8 @@
 
 use topos::checkpoint::named_restore;
 use topos::{
-    Elementary, LayerNorm, Linear, Module, Parameters, Path, Segment, Sequential, Symbol, Tape,
-    Tensor, Value, Visitor, concat, named_parameters,
+    Elementary, LayerNorm, Linear, Module, Parameters, Path, Segment, Symbol, Tape, Tensor, Value,
+    Visitor, concat, named_parameters,
 };
 
 use crate::weights::Weights;
@@ -90,6 +98,14 @@ impl<E: Elementary> Module<Tensor<E>> for Gelu {
     }
 }
 
+/// One decode step's results: the output row and the caches with the
+/// step's key and value rows appended.
+struct Decoded<'tape, E> {
+    output: Value<'tape, Tensor<E>>,
+    keys: Value<'tape, Tensor<E>>,
+    values: Value<'tape, Tensor<E>>,
+}
+
 /// Multi-head causal self-attention over the fused query-key-value
 /// projection the checkpoint ships: every head is a rank-2 slice of
 /// one `c_attn` output, and the heads concatenate back through
@@ -112,6 +128,50 @@ impl<E: Elementary + From<f32>> Attention<E> {
             projection: Linear::new(tape, zeros([EMBED_DIM, EMBED_DIM]), bias(EMBED_DIM)),
             mask,
             scale,
+        }
+    }
+}
+
+impl<E: Elementary> Attention<E> {
+    /// Records the one-token decode step: the row's fused projection
+    /// appends its key and value rows into the caches (a `scatter`
+    /// by the position one-hot over a still-zero row, so the append
+    /// is a pure add), and the row's query attends over the whole
+    /// capacity under the fed mask row. The full-context `mask` leaf
+    /// plays no part here.
+    fn express_decode<'tape>(
+        &self,
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+        keys: Value<'tape, Tensor<E>>,
+        values: Value<'tape, Tensor<E>>,
+        position: Value<'tape, Tensor<E>>,
+        mask: Value<'tape, Tensor<E>>,
+    ) -> Decoded<'tape, E> {
+        let scale = tape.resolve(self.scale);
+        let fused = self.fused.express(tape, input);
+        let keys = keys
+            + fused
+                .narrow(1, EMBED_DIM, EMBED_DIM)
+                .scatter(position, CONTEXT_LEN);
+        let values = values
+            + fused
+                .narrow(1, 2 * EMBED_DIM, EMBED_DIM)
+                .scatter(position, CONTEXT_LEN);
+        let heads: Vec<Value<'tape, Tensor<E>>> = (0..HEAD_COUNT)
+            .map(|head| {
+                let query = fused.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let key = keys.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let value = values.narrow(1, head * HEAD_DIM, HEAD_DIM);
+                let scores = query.matmul(key.transpose());
+                let weights = (scores * scale.broadcast_like(scores) + mask).softmax(1);
+                weights.matmul(value)
+            })
+            .collect();
+        Decoded {
+            output: self.projection.express(tape, concat(&heads, 1)),
+            keys,
+            values,
         }
     }
 }
@@ -208,6 +268,39 @@ impl<E: Elementary + From<f32>> Block<E> {
     }
 }
 
+impl<E: Elementary> Block<E> {
+    /// Records the block's one-token decode step over the stream row:
+    /// the same pre-norm wiring as `express`, with attention reading
+    /// and updating the layer's caches.
+    fn express_decode<'tape>(
+        &self,
+        tape: &'tape Tape<Tensor<E>>,
+        input: Value<'tape, Tensor<E>>,
+        keys: Value<'tape, Tensor<E>>,
+        values: Value<'tape, Tensor<E>>,
+        position: Value<'tape, Tensor<E>>,
+        mask: Value<'tape, Tensor<E>>,
+    ) -> Decoded<'tape, E> {
+        let attended = self.attention.express_decode(
+            tape,
+            self.attention_norm.express(tape, input),
+            keys,
+            values,
+            position,
+            mask,
+        );
+        let stream = input + attended.output;
+        let lifted = self
+            .feed_forward
+            .express(tape, self.hidden_norm.express(tape, stream));
+        Decoded {
+            output: stream + lifted,
+            keys: attended.keys,
+            values: attended.values,
+        }
+    }
+}
+
 impl<E: Elementary> Module<Tensor<E>> for Block<E> {
     fn express<'tape>(
         &self,
@@ -258,7 +351,7 @@ fn layer_norm<E: Elementary + From<f32>>(tape: &Tape<Tensor<E>>) -> LayerNorm<Te
 pub struct Gpt2<E> {
     embeddings: Symbol,
     positions: Symbol,
-    blocks: Sequential<Tensor<E>>,
+    blocks: Vec<Block<E>>,
     final_norm: LayerNorm<Tensor<E>>,
 }
 
@@ -298,10 +391,9 @@ impl<E: Elementary + From<f32> + 'static> Gpt2<E> {
             .symbol();
         let activation = Gelu::new(tape);
 
-        let mut blocks = Sequential::new();
-        for _ in 0..LAYER_COUNT {
-            blocks = blocks.then(Block::new(tape, mask, scale, activation.clone()));
-        }
+        let blocks = (0..LAYER_COUNT)
+            .map(|_| Block::new(tape, mask, scale, activation.clone()))
+            .collect();
         Self {
             embeddings,
             positions,
@@ -317,6 +409,46 @@ impl<E: Elementary + From<f32> + 'static> Gpt2<E> {
     }
 }
 
+impl<E: Elementary> Gpt2<E> {
+    /// Returns how many blocks the model stacks: one cache pair per
+    /// block in the decode step.
+    pub fn layers(&self) -> usize {
+        self.blocks.len()
+    }
+
+    /// Records the one-token decode step over the embedded `[1, embed]`
+    /// row: the position row (gathered by the same one-hot that places
+    /// the cache appends), the block stack over the caches, the final
+    /// norm.
+    ///
+    /// `caches` pairs each layer's key and value cache inputs in block
+    /// order; the returned pairs are the updated caches in the same
+    /// order.
+    pub fn express_decode<'tape>(
+        &self,
+        tape: &'tape Tape<Tensor<E>>,
+        embedded: Value<'tape, Tensor<E>>,
+        caches: &[(Value<'tape, Tensor<E>>, Value<'tape, Tensor<E>>)],
+        position: Value<'tape, Tensor<E>>,
+        mask: Value<'tape, Tensor<E>>,
+    ) -> (
+        Value<'tape, Tensor<E>>,
+        Vec<(Value<'tape, Tensor<E>>, Value<'tape, Tensor<E>>)>,
+    ) {
+        assert_eq!(caches.len(), self.blocks.len(), "one cache pair per block");
+        let positions = tape.resolve(self.positions);
+        let row = positions.narrow(0, 0, CONTEXT_LEN).gather(position);
+        let mut stream = embedded + row;
+        let mut updated = Vec::with_capacity(caches.len());
+        for (block, &(keys, values)) in self.blocks.iter().zip(caches) {
+            let decoded = block.express_decode(tape, stream, keys, values, position, mask);
+            stream = decoded.output;
+            updated.push((decoded.keys, decoded.values));
+        }
+        (self.final_norm.express(tape, stream), updated)
+    }
+}
+
 impl<E: Elementary> Module<Tensor<E>> for Gpt2<E> {
     /// Records the model over the embedded `[context, embed]` window:
     /// positions in, the block stack, the final norm.
@@ -328,8 +460,11 @@ impl<E: Elementary> Module<Tensor<E>> for Gpt2<E> {
         let positions = tape.resolve(self.positions);
         let context = input.shape().axes()[0];
         let stream = input + positions.narrow(0, 0, context);
-        self.final_norm
-            .express(tape, self.blocks.express(tape, stream))
+        let stream = self
+            .blocks
+            .iter()
+            .fold(stream, |value, block| block.express(tape, value));
+        self.final_norm.express(tape, stream)
     }
 
     fn visit(&self, visitor: &mut dyn Visitor) {
@@ -340,7 +475,11 @@ impl<E: Elementary> Module<Tensor<E>> for Gpt2<E> {
         visitor.parameter("weights", self.positions);
         visitor.leave();
         visitor.enter(Segment::Name("h"));
-        self.blocks.visit(visitor);
+        for (index, block) in self.blocks.iter().enumerate() {
+            visitor.enter(Segment::Index(index));
+            block.visit(visitor);
+            visitor.leave();
+        }
         visitor.leave();
         visitor.enter(Segment::Name("ln_f"));
         self.final_norm.visit(visitor);

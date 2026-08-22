@@ -17,14 +17,15 @@ cargo run --release --features accelerate --example gpt2 -- "Once upon a time"
 The first run downloads and caches three artifacts from Hugging Face
 (`model.safetensors` at 548 MB, `vocab.json`, `merges.txt`) into
 `~/.cache/topos/gpt2` — shared by every checkout and worktree,
-never seen by git — then loads the checkpoint, records ~2800 nodes,
-compiles the sampling plan, and generates. Every later run starts in
+never seen by git — then loads the checkpoint, records ~5600 nodes
+(the full-context expression and its one-token decode twin on one
+tape), compiles a plan, and generates. Every later run starts in
 about a second.
 
 The `accelerate` feature is the right build on a Mac (about
-195 ms/token on an M1 Pro); `simd` is the portable rung elsewhere.
-The default build works too, just slower — the products fall to the
-safe slice path.
+18 ms/token on an M1 Pro through the decode plan); `simd` is the
+portable rung elsewhere. The default build works too, just slower —
+the products fall to the safe slice path.
 
 ## Arguments
 
@@ -36,7 +37,7 @@ cargo run --release --features accelerate --example gpt2 -- [PROMPT] [COUNT] [EN
 |---|---|---|
 | 1 | the prompt | `The library of the poor holds one book` |
 | 2 | how many tokens to generate | `40` |
-| 3 | the engine: `tape`, `bf16`, or `xla` | `tape` |
+| 3 | the engine: `tape`, `full`, `bf16`, or `xla` | `tape` |
 
 The recorded graph attends over a fixed 256-token context, so the
 prompt plus the generation count must fit inside it; the example
@@ -44,15 +45,25 @@ asserts this up front. Sampling is temperature 0.9 with top-k 40
 under a fixed seed, so a given prompt, count, and engine reproduce
 their text exactly.
 
-## The three engines
+## The four engines
 
-**`tape`** runs the plan on topos's own interpreter — the
-oracle. Everything happens in-process; the per-step feeds are the
-embedded token window and the prediction row's one-hot extraction,
-so generation never regrows the tape.
+**`tape`** generates through the one-token decode plan on topos's
+own interpreter — a KV cache with no new engine concept
+(`notes/carry.md`). Each layer's keys and values live in
+capacity-shaped caches that are ordinary per-run inputs; a step
+feeds the carry plus ~4 KB of transients (the embedded token row, a
+position one-hot, a mask row), appends the new rows by `scatter`,
+and reads the logits plus the updated caches back. Prefill is
+token-by-token through the same plan.
+
+**`full`** is the pre-cache loop kept as the baseline: the whole
+256-token window re-embedded and re-run for every token through the
+full-context plan. Same seed, same text — the decode plan
+reproduces it token for token, which is the cross-graph check the
+two expressions exist to make.
 
 **`bf16`** records the identical module tree over `Tensor<Bf16>`
-and runs it on the same interpreter: the model code is generic over
+and decodes on the same interpreter: the model code is generic over
 the element type, so the half-precision variant is one type
 argument, with the checkpoint converted at the precision boundary
 and every matmul accumulating in `f32` by the payload's contract.
@@ -85,14 +96,17 @@ Measured on an M1 Pro, same prompt and seed:
 
 | engine | ms/token | output |
 |---|---|---|
-| `tape` (+`accelerate`) | 194 | the reference text |
-| `bf16` (+`accelerate`) | 341 | its own text, by rounding |
-| `xla` on XLA-CPU | 132 | identical to the tape's |
+| `tape` (+`accelerate`, decode plan) | 18 | the reference text |
+| `full` (+`accelerate`) | 193 | identical to the tape's |
+| `bf16` (+`accelerate`, decode plan) | 31 | its own text, by rounding |
+| `xla` on XLA-CPU (full-context plan) | 132 | identical to the tape's |
 | `xla` on Metal (`jax-metal`) | 26 | wrong — see below |
 
-That the tape and XLA-CPU produce identical text is the point of
-having both: the same function, one interpreter and one industrial
-compiler, agreeing token for token.
+That the decode plan, the full-context plan, and XLA-CPU produce
+identical text is the point of having them all: the same function,
+two graphs and two executors, agreeing token for token — and an
+in-crate test (`decode_carry_matches_the_full_context_plan_bitwise`)
+pins the two graphs bit for bit at toy scale.
 
 ## The Metal cautionary tale
 
@@ -119,7 +133,7 @@ it is the whole conformance story in one command.
 
 The model lives in [`model.rs`](model.rs) as a module tree: twelve
 pre-norm blocks — each a struct of `Linear`s and `LayerNorm`s
-around a custom attention module — stacked in a `Sequential`, with
+around a custom attention module — stacked in a plain `Vec`, with
 the whole tree generic over the element type (that genericity is
 the `bf16` engine). Attention slices per-head rank-2 views by
 `narrow` out of one fused query-key-value `Linear`, joins the heads
@@ -130,7 +144,19 @@ a row copy from the table, like makemore's context assembly — so
 the plan's input is the embedded window and the vocabulary-sized
 one-hot never crosses any boundary. The tied language-model head is
 the embedding table transposed, read through the module's typed
-accessor. One forward-only plan serves every step of every engine.
+accessor (the decode step spells it `(wte . row^T)^T`, so no run
+materializes the transposed table). Forward-only plans compiled
+once serve every step of every engine.
+
+Beside `express`, each struct records a one-token decode step
+(`express_decode`): the caches arrive as inputs, the new key and
+value rows land by `scatter` over the position one-hot (the row
+being still zero, the append is a pure add), and the same one-hot
+gathers the position embedding row. The loop's only state is the
+`Carry` in [`main.rs`](main.rs) — the pending cache feeds, a plain
+caller-owned value advanced from each run's cache outputs, so two
+divergent continuations of one prefill are one `Carry` clone
+apart.
 
 The tree's `visit` paths mirror the checkpoint's own tensor names
 (`h.{i}.attn.c_attn`, `ln_f`, ...), so loading the pretrained
